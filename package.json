@@ -1,0 +1,48 @@
+{
+  "name": "amazon-ai-product-image-studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:host": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "type-check": "tsc -b --pretty false",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "docker:build:amd64": "docker buildx build --platform linux/amd64 -t amazon-ai-product-image-studio:linux-amd64 .",
+    "docker:package:amd64": "docker buildx build --platform linux/amd64 -t amazon-ai-product-image-studio:linux-amd64 --output type=docker,dest=amazon-ai-product-image-studio-linux-amd64.tar .",
+    "docker:package:amd64:mirror": "docker buildx build --platform linux/amd64 --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24-alpine --build-arg NGINX_IMAGE=docker.m.daocloud.io/library/nginx:1.29-alpine -t amazon-ai-product-image-studio:linux-amd64 --output type=docker,dest=amazon-ai-product-image-studio-linux-amd64.tar ."
+  },
+  "dependencies": {
+    "dexie": "^4.4.2",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^10.2.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "fake-indexeddb": "^6.2.5",
+    "globals": "^17.5.0",
+    "jsdom": "^27.0.1",
+    "postcss": "^8.5.13",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.58.2",
+    "vite": "^8.0.10",
+    "vitest": "^3.2.4"
+  }
+}
