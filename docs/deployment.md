@@ -1,5 +1,22 @@
 # Deployment Plan
 
+## Current state after P2
+
+The repository has a Docker Compose topology, but it is not yet a working full-stack deployment.
+
+Current verified state:
+
+- `docker compose -f deploy/docker-compose.yml config` passes.
+- Frontend local build and backend local Go builds pass.
+- `docker compose -f deploy/docker-compose.yml build backend-api` fails because `backend/Dockerfile` does not exist.
+
+Known runtime gaps:
+
+- Backend Compose services reference `backend/Dockerfile`, which must be added in P3.
+- Worker healthcheck expects `WORKER_HEALTHCHECK_FILE`, but the worker does not create it yet.
+- Frontend container must proxy `/api/` to `backend-api:8080`; otherwise the frontend API client default `/api/v1` path is not routable in Docker.
+- Frontend Nginx still contains legacy AI relay routing and must not proxy AI Provider traffic in the platform deployment.
+
 ## Services
 
 Docker Compose must support:
@@ -74,11 +91,37 @@ Frontend routes:
 
 - Static frontend assets.
 - SPA fallback.
+- `/api/*` proxy to `backend-api:8080` inside the Compose network.
 
 API routes:
 
 - `/api/v1/*` to backend API.
 - `/api/v1/events/*` must preserve streaming behavior and avoid buffering.
+
+Forbidden routing:
+
+- The frontend container must not proxy OpenAI, Gemini, OpenAI-compatible relay, or custom AI Provider traffic.
+- Nginx/static frontend deployment must not be used as an AI relay.
+
+## P3 deployment acceptance
+
+P3 is complete only when all of these pass from the repository root:
+
+```bash
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
+```
+
+Expected health state:
+
+- `mysql`, `redis`, and `minio` are healthy.
+- `backend-api` is healthy through `/healthz`.
+- `backend-worker` is healthy through the configured readiness mechanism.
+- `frontend` is healthy and serves the app.
+
+The P3 deployment check validates runtime wiring only. It does not require business APIs, database migrations, authentication, task execution, Provider calls, or MinIO asset flows to be implemented yet.
 
 ## Deployment verification
 
@@ -86,6 +129,7 @@ Minimum checks:
 
 ```bash
 docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
 docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 ```

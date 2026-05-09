@@ -13,6 +13,19 @@ The current repository is a pure frontend local app:
 
 This baseline must be preserved while the platform backend is added. Platformization is not a rewrite.
 
+## Current transition state after P2
+
+The repository is now structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has backend and frontend infrastructure foundations.
+
+Important transition facts:
+
+- The frontend still has legacy local Provider adapters, localStorage Provider settings, and IndexedDB image/history storage.
+- The backend currently has configuration, logging, router, health, response, and middleware foundations, but no business database, auth, Provider, asset, queue, or SSE server implementation yet.
+- The frontend has an API client and SSE client foundation, but the workbench still uses the legacy local generation flow.
+- Docker Compose has a service topology, but full backend image builds are blocked until P3 adds `backend/Dockerfile`.
+
+This transition state is allowed only as an incremental migration baseline. It is not the target architecture and must not be copied into new platform features.
+
 ## Target platform architecture
 
 The target platform is a multi-user, multi-tenant image generation platform:
@@ -94,3 +107,11 @@ MySQL is the final source of truth. Redis is only for queueing, locks, cache, ra
 - Existing prompt, upload, parameter, result, and history UI concepts remain.
 - Existing frontend Provider code becomes migration reference only, not production call path.
 - Existing local history may be used for an import or compatibility feature later, but not as primary platform data.
+
+## Transition guardrails
+
+- Do not add new browser-side AI Provider calls.
+- Do not add new frontend API key storage.
+- Do not expand legacy Nginx AI relay behavior.
+- Do not make IndexedDB the source of truth for any new platform feature.
+- New platform features must be designed around backend API, MySQL, Redis, MinIO, Provider Adapter, and SSE contracts.
