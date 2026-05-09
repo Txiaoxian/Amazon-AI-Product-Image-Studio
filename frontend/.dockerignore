@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.DS_Store
+*.log
+*.tar
+*.tar.gz
+npm-debug.log*
+coverage
+playwright-report
+test-results

@@ -1,6 +1,6 @@
 # Amazon AI Product Image Studio
 
-React + TypeScript + Vite 应用，用于亚马逊卖家的 AI 产品图片生成、参考图编辑、历史管理和本地保存。
+前端工程位于 `frontend/`，是 React + TypeScript + Vite 应用，用于亚马逊卖家的 AI 产品图片生成、参考图编辑、历史管理和本地保存。
 
 ## 技术栈
 
@@ -13,6 +13,7 @@ React + TypeScript + Vite 应用，用于亚马逊卖家的 AI 产品图片生�
 ## 本地开发
 
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
@@ -20,12 +21,14 @@ npm run dev
 手机在同一局域网访问开发服务：
 
 ```bash
+cd frontend
 npm run dev:host
 ```
 
 ## 检查命令
 
 ```bash
+cd frontend
 npm run lint
 npm run type-check
 npm run test
@@ -35,7 +38,7 @@ npm run build
 ## Docker 静态部署
 
 ```bash
-docker build -t amazon-ai-product-image-studio .
+docker build -t amazon-ai-product-image-studio frontend
 docker run --rm -p 8080:80 amazon-ai-product-image-studio
 ```
 
@@ -46,6 +49,7 @@ docker run --rm -p 8080:80 amazon-ai-product-image-studio
 部署机器是 x86_64 / amd64 时，在 Mac mini M4 上使用 Buildx 指定 `linux/amd64`：
 
 ```bash
+cd frontend
 npm run docker:package:amd64
 ```
 
@@ -54,6 +58,7 @@ npm run docker:package:amd64
 如果 Docker Hub 访问受限，可以使用国内镜像源构建：
 
 ```bash
+cd frontend
 npm run docker:package:amd64:mirror
 ```
 
