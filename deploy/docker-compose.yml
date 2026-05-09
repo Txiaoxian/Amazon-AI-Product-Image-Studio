@@ -6,11 +6,14 @@ services:
     build:
       context: ${FRONTEND_BUILD_CONTEXT:-../frontend}
       dockerfile: ${FRONTEND_DOCKERFILE:-Dockerfile}
+      args:
+        NODE_IMAGE: ${FRONTEND_NODE_IMAGE:-docker.m.daocloud.io/library/node:24-alpine}
+        NGINX_IMAGE: ${FRONTEND_NGINX_IMAGE:-docker.m.daocloud.io/library/nginx:1.29-alpine}
     depends_on:
       backend-api:
         condition: service_healthy
     environment:
-      VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL:-http://localhost:8081/api/v1}
+      VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL:-/api/v1}
     ports:
       - "${FRONTEND_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8080}:80"
     healthcheck:
@@ -29,6 +32,9 @@ services:
       context: ${BACKEND_BUILD_CONTEXT:-../backend}
       dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
       target: ${BACKEND_API_BUILD_TARGET:-api}
+      args:
+        GO_IMAGE: ${BACKEND_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.25-alpine}
+        ALPINE_IMAGE: ${BACKEND_ALPINE_IMAGE:-docker.m.daocloud.io/library/alpine:3.22}
     depends_on:
       mysql:
         condition: service_healthy
@@ -80,7 +86,7 @@ services:
     ports:
       - "${BACKEND_API_BIND_HOST:-127.0.0.1}:${BACKEND_API_PORT:-8081}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:$${BACKEND_HTTP_PORT:-8080}/healthz || curl -fsS http://127.0.0.1:$${BACKEND_HTTP_PORT:-8080}/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${BACKEND_HTTP_PORT:-8080}/healthz >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -96,6 +102,9 @@ services:
       context: ${BACKEND_BUILD_CONTEXT:-../backend}
       dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
       target: ${BACKEND_WORKER_BUILD_TARGET:-worker}
+      args:
+        GO_IMAGE: ${BACKEND_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.25-alpine}
+        ALPINE_IMAGE: ${BACKEND_ALPINE_IMAGE:-docker.m.daocloud.io/library/alpine:3.22}
     depends_on:
       backend-api:
         condition: service_healthy
@@ -143,7 +152,7 @@ services:
     restart: unless-stopped
 
   mysql:
-    image: mysql:8.4
+    image: ${MYSQL_IMAGE:-docker.m.daocloud.io/library/mysql:8.4}
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-local-mysql-root-password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-amazon_ai_image_studio}
@@ -168,7 +177,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4-alpine
+    image: ${REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7.4-alpine}
     command:
       - sh
       - -c
@@ -189,7 +198,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: ${MINIO_IMAGE:-docker.m.daocloud.io/minio/minio:RELEASE.2025-04-22T22-12-26Z}
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio-local-admin}
