@@ -35,6 +35,43 @@ func SecurityHeaders() gin.HandlerFunc {
 		headers.Set("X-Frame-Options", "DENY")
 		headers.Set("Referrer-Policy", "no-referrer")
 		headers.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		headers.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		c.Next()
+	}
+}
+
+func CORS(allowedOrigins []string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		allowed[origin] = struct{}{}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		_, isAllowed := allowed[origin]
+		if origin != "" && isAllowed {
+			headers := c.Writer.Header()
+			headers.Set("Access-Control-Allow-Origin", origin)
+			headers.Set("Access-Control-Allow-Credentials", "true")
+			headers.Set("Access-Control-Allow-Headers", "Content-Type, X-Request-ID, X-CSRF-Token")
+			headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			appendVary(headers, "Origin")
+		}
+
+		if c.Request.Method == http.MethodOptions && origin != "" {
+			if isAllowed {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+
 		c.Next()
 	}
 }
@@ -46,6 +83,11 @@ func Recovery(log *slog.Logger) gin.HandlerFunc {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				log.Error("panic recovered", slog.String("request_id", RequestIDFromContext(c)))
+				if c.Writer.Written() {
+					c.Abort()
+					return
+				}
+
 				AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
 			}
 		}()
@@ -107,6 +149,22 @@ func newRequestID() string {
 	}
 
 	return "req_" + hex.EncodeToString(bytes[:])
+}
+
+func appendVary(headers http.Header, value string) {
+	existing := headers.Get("Vary")
+	if existing == "" {
+		headers.Set("Vary", value)
+		return
+	}
+
+	for _, part := range strings.Split(existing, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), value) {
+			return
+		}
+	}
+
+	headers.Set("Vary", existing+", "+value)
 }
 
 func fallbackLogger(log *slog.Logger) *slog.Logger {

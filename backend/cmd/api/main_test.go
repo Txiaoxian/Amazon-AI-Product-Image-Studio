@@ -7,12 +7,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/gin-gonic/gin"
 )
 
 func TestNewRouterServesHealthRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := newRouter(slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	router := newRouter(config.Config{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 
 	for _, path := range []string{"/healthz", "/api/v1/healthz"} {
 		response := httptest.NewRecorder()

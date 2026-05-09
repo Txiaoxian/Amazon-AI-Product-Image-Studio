@@ -9,9 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/api"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
-	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
-	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/httpx"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -35,7 +34,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := newRouter(log)
+	router := newRouter(cfg, log)
 	server := &http.Server{
 		Addr:         cfg.API.Addr,
 		Handler:      router,
@@ -65,16 +64,9 @@ func main() {
 	log.Info("api stopped")
 }
 
-func newRouter(log *slog.Logger) *gin.Engine {
-	router := gin.New()
-	router.Use(httpx.RequestID())
-	router.Use(httpx.SecurityHeaders())
-	router.Use(httpx.Recovery(log))
-	router.Use(httpx.AccessLog(log))
-
-	healthHandler := health.Handler("api")
-	router.GET("/healthz", healthHandler)
-	router.Group("/api/v1").GET("/healthz", healthHandler)
-
-	return router
+func newRouter(cfg config.Config, log *slog.Logger) *gin.Engine {
+	return api.NewRouter(api.RouterOptions{
+		Config: cfg,
+		Logger: log,
+	})
 }
