@@ -15,7 +15,7 @@ type ErrorResponse struct {
 type ErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-	Details any    `json:"details,omitempty"`
+	Details any    `json:"details"`
 }
 
 func JSON(c *gin.Context, status int, data any) {
@@ -30,8 +30,16 @@ func AbortWithError(c *gin.Context, status int, code string, message string, det
 		Error: ErrorBody{
 			Code:    code,
 			Message: message,
-			Details: details,
+			Details: errorDetails(details),
 		},
 		RequestID: RequestIDFromContext(c),
 	})
+}
+
+func errorDetails(details any) any {
+	if details == nil {
+		return gin.H{}
+	}
+
+	return details
 }
