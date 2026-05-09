@@ -1,0 +1,220 @@
+name: ${COMPOSE_PROJECT_NAME:-amazon-ai-product-image-studio}
+
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:-amazon-ai-product-image-studio/frontend:local}
+    build:
+      context: ${FRONTEND_BUILD_CONTEXT:-../frontend}
+      dockerfile: ${FRONTEND_DOCKERFILE:-Dockerfile}
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    environment:
+      VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL:-http://localhost:8081/api/v1}
+    ports:
+      - "${FRONTEND_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - app
+    restart: unless-stopped
+
+  backend-api:
+    image: ${BACKEND_API_IMAGE:-amazon-ai-product-image-studio/backend-api:local}
+    build:
+      context: ${BACKEND_BUILD_CONTEXT:-../backend}
+      dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
+      target: ${BACKEND_API_BUILD_TARGET:-api}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BACKEND_HTTP_HOST: 0.0.0.0
+      BACKEND_HTTP_PORT: ${BACKEND_HTTP_PORT:-8080}
+      MIGRATIONS_MODE: ${MIGRATIONS_MODE:-startup-gate}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-amazon_ai_image_studio}
+      MYSQL_USER: ${MYSQL_USER:-studio_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me-local-mysql-password}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-local-redis-password}
+      REDIS_DB: ${REDIS_DB:-0}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio-local-admin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-change-me-local-minio-password}
+      MINIO_BUCKET_ORIGINALS: ${MINIO_BUCKET_ORIGINALS:-product-originals}
+      MINIO_BUCKET_GENERATED: ${MINIO_BUCKET_GENERATED:-product-generated}
+      MINIO_BUCKET_THUMBNAILS: ${MINIO_BUCKET_THUMBNAILS:-product-thumbnails}
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:-change-me-at-least-32-bytes-prod-must-replace}
+      JWT_ISSUER: ${JWT_ISSUER:-amazon-ai-product-image-studio}
+      JWT_ACCESS_TOKEN_TTL_MINUTES: ${JWT_ACCESS_TOKEN_TTL_MINUTES:-60}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      CSRF_ENABLED: ${CSRF_ENABLED:-true}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-change-me-32-byte-base64-key-prod-must-replace}
+      API_KEY_ENCRYPTION_KEY_ID: ${API_KEY_ENCRYPTION_KEY_ID:-local-dev-v1}
+      UPLOAD_MAX_FILE_SIZE_MB: ${UPLOAD_MAX_FILE_SIZE_MB:-25}
+      UPLOAD_MAX_WIDTH: ${UPLOAD_MAX_WIDTH:-8192}
+      UPLOAD_MAX_HEIGHT: ${UPLOAD_MAX_HEIGHT:-8192}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-40000000}
+      UPLOAD_ALLOWED_MIME_TYPES: ${UPLOAD_ALLOWED_MIME_TYPES:-image/jpeg,image/png,image/webp}
+      TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-image-tasks}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-120}
+      PROVIDER_MAX_RETRIES: ${PROVIDER_MAX_RETRIES:-2}
+      PROVIDER_ALLOW_PRIVATE_BASE_URLS: ${PROVIDER_ALLOW_PRIVATE_BASE_URLS:-false}
+    ports:
+      - "${BACKEND_API_BIND_HOST:-127.0.0.1}:${BACKEND_API_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:$${BACKEND_HTTP_PORT:-8080}/healthz || curl -fsS http://127.0.0.1:$${BACKEND_HTTP_PORT:-8080}/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - app
+      - data
+    restart: unless-stopped
+
+  backend-worker:
+    image: ${BACKEND_WORKER_IMAGE:-amazon-ai-product-image-studio/backend-worker:local}
+    build:
+      context: ${BACKEND_BUILD_CONTEXT:-../backend}
+      dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
+      target: ${BACKEND_WORKER_BUILD_TARGET:-worker}
+    depends_on:
+      backend-api:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-amazon_ai_image_studio}
+      MYSQL_USER: ${MYSQL_USER:-studio_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me-local-mysql-password}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-local-redis-password}
+      REDIS_DB: ${REDIS_DB:-0}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio-local-admin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-change-me-local-minio-password}
+      MINIO_BUCKET_ORIGINALS: ${MINIO_BUCKET_ORIGINALS:-product-originals}
+      MINIO_BUCKET_GENERATED: ${MINIO_BUCKET_GENERATED:-product-generated}
+      MINIO_BUCKET_THUMBNAILS: ${MINIO_BUCKET_THUMBNAILS:-product-thumbnails}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-change-me-32-byte-base64-key-prod-must-replace}
+      API_KEY_ENCRYPTION_KEY_ID: ${API_KEY_ENCRYPTION_KEY_ID:-local-dev-v1}
+      TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-image-tasks}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_HEALTHCHECK_FILE: ${WORKER_HEALTHCHECK_FILE:-/tmp/worker-ready}
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-120}
+      PROVIDER_MAX_RETRIES: ${PROVIDER_MAX_RETRIES:-2}
+      PROVIDER_ALLOW_PRIVATE_BASE_URLS: ${PROVIDER_ALLOW_PRIVATE_BASE_URLS:-false}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f \"$${WORKER_HEALTHCHECK_FILE:-/tmp/worker-ready}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - app
+      - data
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-local-mysql-root-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-amazon_ai_image_studio}
+      MYSQL_USER: ${MYSQL_USER:-studio_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me-local-mysql-password}
+      TZ: ${TZ:-UTC}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly "$${REDIS_APPENDONLY:-yes}" --requirepass "$$REDIS_PASSWORD"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-local-redis-password}
+      REDIS_APPENDONLY: ${REDIS_APPENDONLY:-yes}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio-local-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-local-minio-password}
+      MINIO_BROWSER: ${MINIO_BROWSER:-off}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+
+networks:
+  app:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
