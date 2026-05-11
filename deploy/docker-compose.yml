@@ -66,11 +66,14 @@ services:
       JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:-change-me-at-least-32-bytes-prod-must-replace}
       JWT_ISSUER: ${JWT_ISSUER:-amazon-ai-product-image-studio}
       JWT_ACCESS_TOKEN_TTL_MINUTES: ${JWT_ACCESS_TOKEN_TTL_MINUTES:-60}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-studio_auth}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       CSRF_ENABLED: ${CSRF_ENABLED:-true}
+      CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-studio_csrf}
+      CSRF_HEADER_NAME: ${CSRF_HEADER_NAME:-X-CSRF-Token}
       API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-change-me-32-byte-base64-key-prod-must-replace}
       API_KEY_ENCRYPTION_KEY_ID: ${API_KEY_ENCRYPTION_KEY_ID:-local-dev-v1}
       UPLOAD_MAX_FILE_SIZE_MB: ${UPLOAD_MAX_FILE_SIZE_MB:-25}

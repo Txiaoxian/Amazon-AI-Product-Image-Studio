@@ -28,6 +28,13 @@ const (
 	defaultDatabaseMaxIdleConns  = 5
 	defaultDatabaseConnLifetime  = 30 * time.Minute
 	defaultMigrationsMode        = "startup-gate"
+	defaultJWTSigningSecret      = "change-me-at-least-32-bytes-prod-must-replace"
+	defaultJWTIssuer             = "amazon-ai-product-image-studio"
+	defaultJWTAccessTokenTTL     = 60 * time.Minute
+	defaultAuthCookieName        = "studio_auth"
+	defaultCSRFCookieName        = "studio_csrf"
+	defaultCSRFHeaderName        = "X-CSRF-Token"
+	defaultCookieSameSite        = "Lax"
 )
 
 type Config struct {
@@ -36,6 +43,7 @@ type Config struct {
 	API      APIConfig
 	Worker   WorkerConfig
 	Database DatabaseConfig
+	Auth     AuthConfig
 }
 
 type APIConfig struct {
@@ -64,6 +72,27 @@ type DatabaseConfig struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	MigrationsMode  string
+}
+
+type AuthConfig struct {
+	JWTSigningSecret string
+	JWTIssuer        string
+	AccessTokenTTL   time.Duration
+	Cookie           CookieConfig
+	CSRF             CSRFConfig
+}
+
+type CookieConfig struct {
+	Name     string
+	Domain   string
+	Secure   bool
+	SameSite string
+}
+
+type CSRFConfig struct {
+	Enabled    bool
+	CookieName string
+	HeaderName string
 }
 
 func Load() (Config, error) {
@@ -122,6 +151,11 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	auth, err := authConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
@@ -139,6 +173,7 @@ func load(lookup lookupFunc) (Config, error) {
 			ShutdownTimeout: workerShutdownTimeout,
 		},
 		Database: database,
+		Auth:     auth,
 	}, nil
 }
 
@@ -345,6 +380,153 @@ func migrationsModeFromEnv(lookup lookupFunc) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid MIGRATIONS_MODE %q", mode)
 	}
+}
+
+func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
+	signingSecret := stringFromEnv(lookup, "JWT_SIGNING_SECRET", defaultJWTSigningSecret)
+	if len(signingSecret) < 32 {
+		return AuthConfig{}, fmt.Errorf("invalid JWT_SIGNING_SECRET: must be at least 32 characters")
+	}
+	if err := validateRequiredValue("JWT_SIGNING_SECRET", signingSecret); err != nil {
+		return AuthConfig{}, err
+	}
+
+	issuer := stringFromEnv(lookup, "JWT_ISSUER", defaultJWTIssuer)
+	if err := validateRequiredValue("JWT_ISSUER", issuer); err != nil {
+		return AuthConfig{}, err
+	}
+
+	ttlMinutes, err := positiveIntFromEnv(lookup, "JWT_ACCESS_TOKEN_TTL_MINUTES", int(defaultJWTAccessTokenTTL/time.Minute))
+	if err != nil {
+		return AuthConfig{}, err
+	}
+
+	cookieName := stringFromEnv(lookup, "AUTH_COOKIE_NAME", defaultAuthCookieName)
+	if err := validateCookieName("AUTH_COOKIE_NAME", cookieName); err != nil {
+		return AuthConfig{}, err
+	}
+
+	cookieDomain := stringFromEnv(lookup, "COOKIE_DOMAIN", "")
+	if err := validateCookieDomain(cookieDomain); err != nil {
+		return AuthConfig{}, err
+	}
+
+	cookieSecure, err := boolFromEnv(lookup, "COOKIE_SECURE", false)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+
+	sameSite, err := cookieSameSiteFromEnv(lookup)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	if strings.EqualFold(sameSite, "None") && !cookieSecure {
+		return AuthConfig{}, fmt.Errorf("invalid COOKIE_SAME_SITE: None requires COOKIE_SECURE=true")
+	}
+
+	csrfEnabled, err := boolFromEnv(lookup, "CSRF_ENABLED", true)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+
+	csrfCookieName := stringFromEnv(lookup, "CSRF_COOKIE_NAME", defaultCSRFCookieName)
+	if err := validateCookieName("CSRF_COOKIE_NAME", csrfCookieName); err != nil {
+		return AuthConfig{}, err
+	}
+	if csrfCookieName == cookieName {
+		return AuthConfig{}, fmt.Errorf("invalid CSRF_COOKIE_NAME: must differ from AUTH_COOKIE_NAME")
+	}
+
+	csrfHeaderName := stringFromEnv(lookup, "CSRF_HEADER_NAME", defaultCSRFHeaderName)
+	if err := validateHeaderName("CSRF_HEADER_NAME", csrfHeaderName); err != nil {
+		return AuthConfig{}, err
+	}
+
+	return AuthConfig{
+		JWTSigningSecret: signingSecret,
+		JWTIssuer:        issuer,
+		AccessTokenTTL:   time.Duration(ttlMinutes) * time.Minute,
+		Cookie: CookieConfig{
+			Name:     cookieName,
+			Domain:   cookieDomain,
+			Secure:   cookieSecure,
+			SameSite: sameSite,
+		},
+		CSRF: CSRFConfig{
+			Enabled:    csrfEnabled,
+			CookieName: csrfCookieName,
+			HeaderName: csrfHeaderName,
+		},
+	}, nil
+}
+
+func boolFromEnv(lookup lookupFunc, key string, fallback bool) (bool, error) {
+	raw := stringFromEnv(lookup, key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.ParseBool(strings.ToLower(raw))
+	if err != nil {
+		return false, fmt.Errorf("invalid %s: must be a boolean", key)
+	}
+
+	return value, nil
+}
+
+func cookieSameSiteFromEnv(lookup lookupFunc) (string, error) {
+	raw := stringFromEnv(lookup, "COOKIE_SAME_SITE", defaultCookieSameSite)
+	switch strings.ToLower(raw) {
+	case "lax":
+		return "Lax", nil
+	case "strict":
+		return "Strict", nil
+	case "none":
+		return "None", nil
+	default:
+		return "", fmt.Errorf("invalid COOKIE_SAME_SITE %q: must be Lax, Strict, or None", raw)
+	}
+}
+
+func validateCookieName(key, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("invalid %s: value is required", key)
+	}
+	for _, r := range name {
+		if r <= 32 || r >= 127 || strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
+			return fmt.Errorf("invalid %s: contains an illegal cookie name character", key)
+		}
+	}
+	return nil
+}
+
+func validateCookieDomain(domain string) error {
+	if domain == "" {
+		return nil
+	}
+	if strings.TrimSpace(domain) != domain {
+		return fmt.Errorf("invalid COOKIE_DOMAIN: domain must not contain surrounding whitespace")
+	}
+	for _, r := range domain {
+		if r <= 31 || r == 127 || r == '/' || r == ':' {
+			return fmt.Errorf("invalid COOKIE_DOMAIN: contains an illegal character")
+		}
+	}
+	return nil
+}
+
+func validateHeaderName(key, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("invalid %s: value is required", key)
+	}
+	for _, r := range name {
+		if r <= 32 || r >= 127 || strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
+			return fmt.Errorf("invalid %s: contains an illegal header name character", key)
+		}
+	}
+	return nil
 }
 
 func corsAllowedOriginsFromEnv(lookup lookupFunc) ([]string, error) {

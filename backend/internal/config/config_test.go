@@ -55,30 +55,67 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Database.MigrationsMode != "startup-gate" {
 		t.Fatalf("Database.MigrationsMode = %q, want startup-gate", cfg.Database.MigrationsMode)
 	}
+	if cfg.Auth.JWTSigningSecret != defaultJWTSigningSecret {
+		t.Fatal("Auth.JWTSigningSecret default was not loaded")
+	}
+	if cfg.Auth.JWTIssuer != "amazon-ai-product-image-studio" {
+		t.Fatalf("Auth.JWTIssuer = %q, want amazon-ai-product-image-studio", cfg.Auth.JWTIssuer)
+	}
+	if cfg.Auth.AccessTokenTTL != time.Hour {
+		t.Fatalf("Auth.AccessTokenTTL = %s, want 1h", cfg.Auth.AccessTokenTTL)
+	}
+	if cfg.Auth.Cookie.Name != "studio_auth" {
+		t.Fatalf("Auth.Cookie.Name = %q, want studio_auth", cfg.Auth.Cookie.Name)
+	}
+	if cfg.Auth.Cookie.Secure {
+		t.Fatal("Auth.Cookie.Secure default should be false")
+	}
+	if cfg.Auth.Cookie.SameSite != "Lax" {
+		t.Fatalf("Auth.Cookie.SameSite = %q, want Lax", cfg.Auth.Cookie.SameSite)
+	}
+	if !cfg.Auth.CSRF.Enabled {
+		t.Fatal("Auth.CSRF.Enabled default should be true")
+	}
+	if cfg.Auth.CSRF.CookieName != "studio_csrf" {
+		t.Fatalf("Auth.CSRF.CookieName = %q, want studio_csrf", cfg.Auth.CSRF.CookieName)
+	}
+	if cfg.Auth.CSRF.HeaderName != "X-CSRF-Token" {
+		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-CSRF-Token", cfg.Auth.CSRF.HeaderName)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
 	values := map[string]string{
-		"APP_ENV":                 "production",
-		"LOG_LEVEL":               "warn",
-		"BACKEND_HTTP_HOST":       "127.0.0.1",
-		"BACKEND_HTTP_PORT":       "9090",
-		"CORS_ALLOWED_ORIGINS":    "http://localhost:8080,https://studio.example.com",
-		"API_READ_TIMEOUT":        "3s",
-		"API_WRITE_TIMEOUT":       "4s",
-		"API_SHUTDOWN_TIMEOUT":    "5s",
-		"WORKER_NAME":             "image-worker",
-		"WORKER_SHUTDOWN_TIMEOUT": "6s",
-		"MYSQL_HOST":              "mysql",
-		"MYSQL_PORT":              "3307",
-		"MYSQL_DATABASE":          "studio_test",
-		"MYSQL_USER":              "studio_user",
-		"MYSQL_PASSWORD":          "local-password",
-		"MYSQL_CONNECT_TIMEOUT":   "7s",
-		"MYSQL_MAX_OPEN_CONNS":    "12",
-		"MYSQL_MAX_IDLE_CONNS":    "4",
-		"MYSQL_CONN_MAX_LIFETIME": "8m",
-		"MIGRATIONS_MODE":         "disabled",
+		"APP_ENV":                      "production",
+		"LOG_LEVEL":                    "warn",
+		"BACKEND_HTTP_HOST":            "127.0.0.1",
+		"BACKEND_HTTP_PORT":            "9090",
+		"CORS_ALLOWED_ORIGINS":         "http://localhost:8080,https://studio.example.com",
+		"API_READ_TIMEOUT":             "3s",
+		"API_WRITE_TIMEOUT":            "4s",
+		"API_SHUTDOWN_TIMEOUT":         "5s",
+		"WORKER_NAME":                  "image-worker",
+		"WORKER_SHUTDOWN_TIMEOUT":      "6s",
+		"MYSQL_HOST":                   "mysql",
+		"MYSQL_PORT":                   "3307",
+		"MYSQL_DATABASE":               "studio_test",
+		"MYSQL_USER":                   "studio_user",
+		"MYSQL_PASSWORD":               "local-password",
+		"MYSQL_CONNECT_TIMEOUT":        "7s",
+		"MYSQL_MAX_OPEN_CONNS":         "12",
+		"MYSQL_MAX_IDLE_CONNS":         "4",
+		"MYSQL_CONN_MAX_LIFETIME":      "8m",
+		"MIGRATIONS_MODE":              "disabled",
+		"JWT_SIGNING_SECRET":           "0123456789abcdef0123456789abcdef",
+		"JWT_ISSUER":                   "studio-test",
+		"JWT_ACCESS_TOKEN_TTL_MINUTES": "30",
+		"AUTH_COOKIE_NAME":             "auth_test",
+		"COOKIE_DOMAIN":                ".example.com",
+		"COOKIE_SECURE":                "true",
+		"COOKIE_SAME_SITE":             "Strict",
+		"CSRF_ENABLED":                 "false",
+		"CSRF_COOKIE_NAME":             "csrf_test",
+		"CSRF_HEADER_NAME":             "X-Test-CSRF",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -151,6 +188,36 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Database.MigrationsMode != "disabled" {
 		t.Fatalf("Database.MigrationsMode = %q, want disabled", cfg.Database.MigrationsMode)
+	}
+	if cfg.Auth.JWTSigningSecret != "0123456789abcdef0123456789abcdef" {
+		t.Fatal("Auth.JWTSigningSecret override was not loaded")
+	}
+	if cfg.Auth.JWTIssuer != "studio-test" {
+		t.Fatalf("Auth.JWTIssuer = %q, want studio-test", cfg.Auth.JWTIssuer)
+	}
+	if cfg.Auth.AccessTokenTTL != 30*time.Minute {
+		t.Fatalf("Auth.AccessTokenTTL = %s, want 30m", cfg.Auth.AccessTokenTTL)
+	}
+	if cfg.Auth.Cookie.Name != "auth_test" {
+		t.Fatalf("Auth.Cookie.Name = %q, want auth_test", cfg.Auth.Cookie.Name)
+	}
+	if cfg.Auth.Cookie.Domain != ".example.com" {
+		t.Fatalf("Auth.Cookie.Domain = %q, want .example.com", cfg.Auth.Cookie.Domain)
+	}
+	if !cfg.Auth.Cookie.Secure {
+		t.Fatal("Auth.Cookie.Secure override was not loaded")
+	}
+	if cfg.Auth.Cookie.SameSite != "Strict" {
+		t.Fatalf("Auth.Cookie.SameSite = %q, want Strict", cfg.Auth.Cookie.SameSite)
+	}
+	if cfg.Auth.CSRF.Enabled {
+		t.Fatal("Auth.CSRF.Enabled override was not loaded")
+	}
+	if cfg.Auth.CSRF.CookieName != "csrf_test" {
+		t.Fatalf("Auth.CSRF.CookieName = %q, want csrf_test", cfg.Auth.CSRF.CookieName)
+	}
+	if cfg.Auth.CSRF.HeaderName != "X-Test-CSRF" {
+		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-Test-CSRF", cfg.Auth.CSRF.HeaderName)
 	}
 }
 
@@ -249,5 +316,45 @@ func TestLoadRejectsCORSOriginWithPath(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("load returned nil error for CORS origin with path")
+	}
+}
+
+func TestLoadRejectsShortJWTSecret(t *testing.T) {
+	_, err := load(func(key string) (string, bool) {
+		if key == "JWT_SIGNING_SECRET" {
+			return "too-short", true
+		}
+		return "", false
+	})
+	if err == nil {
+		t.Fatal("load returned nil error for short JWT signing secret")
+	}
+}
+
+func TestLoadRejectsInvalidCookieSameSite(t *testing.T) {
+	_, err := load(func(key string) (string, bool) {
+		if key == "COOKIE_SAME_SITE" {
+			return "Open", true
+		}
+		return "", false
+	})
+	if err == nil {
+		t.Fatal("load returned nil error for invalid cookie SameSite")
+	}
+}
+
+func TestLoadRejectsSameSiteNoneWithoutSecureCookie(t *testing.T) {
+	_, err := load(func(key string) (string, bool) {
+		switch key {
+		case "COOKIE_SAME_SITE":
+			return "None", true
+		case "COOKIE_SECURE":
+			return "false", true
+		default:
+			return "", false
+		}
+	})
+	if err == nil {
+		t.Fatal("load returned nil error for SameSite=None without Secure")
 	}
 }
