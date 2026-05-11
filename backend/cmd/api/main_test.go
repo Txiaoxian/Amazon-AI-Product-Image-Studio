@@ -13,7 +13,7 @@ import (
 
 func TestNewRouterServesHealthRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := newRouter(config.Config{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	router := newRouter(config.Config{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil)
 
 	for _, path := range []string{"/healthz", "/api/v1/healthz"} {
 		response := httptest.NewRecorder()

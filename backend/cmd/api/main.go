@@ -48,7 +48,7 @@ func main() {
 		}
 	}()
 
-	router := newRouter(cfg, log, database.NewHealthChecker(db))
+	router := newRouter(cfg, log, db, database.NewHealthChecker(db))
 	server := &http.Server{
 		Addr:         cfg.API.Addr,
 		Handler:      router,
@@ -78,11 +78,12 @@ func main() {
 	log.Info("api stopped")
 }
 
-func newRouter(cfg config.Config, log *slog.Logger, healthChecks ...health.DependencyChecker) *gin.Engine {
+func newRouter(cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ...health.DependencyChecker) *gin.Engine {
 	return api.NewRouter(api.RouterOptions{
 		Config:       cfg,
 		Logger:       log,
 		HealthChecks: healthChecks,
+		Database:     db,
 	})
 }
 
