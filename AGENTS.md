@@ -59,5 +59,6 @@ P0 documentation may describe this target structure before files are physically 
 - `docs/storage.md`
 - `docs/security.md`
 - `docs/deployment.md`
+- `docs/local-development.md`
 - `docs/development-plan.md`
 - `docs/codex-agent-tasks.md`

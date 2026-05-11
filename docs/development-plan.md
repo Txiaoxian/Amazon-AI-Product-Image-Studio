@@ -1,5 +1,14 @@
 # Development Plan
 
+## Local development environment rule
+
+Development and feature verification must use the existing global local environment described in `docs/local-development.md`.
+
+- Use `dev-mysql8`, `dev-redis`, and `dev-minio` for routine validation.
+- Do not create project-specific MySQL, Redis, or MinIO containers for normal feature work.
+- If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
+- Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
+
 ## Status after P2
 
 Completed:

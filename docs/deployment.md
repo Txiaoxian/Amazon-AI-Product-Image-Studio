@@ -1,5 +1,22 @@
 # Deployment Plan
 
+## Local development environment
+
+Routine development and validation must use the shared machine-level services documented in `docs/local-development.md`.
+
+- Use `dev-mysql8` on `127.0.0.1:3306` instead of creating a project-specific MySQL container.
+- Use `dev-redis` on `127.0.0.1:6379` instead of creating a project-specific Redis container.
+- Use `dev-minio` on `127.0.0.1:9000` instead of creating a project-specific MinIO container.
+- Do not commit local service credentials to this repository. Credentials stay in the global local development document.
+
+`deploy/docker-compose.yml` is the deployment topology. It is not the default routine development environment.
+
+If a deployment-specific verification starts the project Compose stack, clean it up afterwards unless the user explicitly asks to keep it:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+```
+
 ## Current state after P2
 
 The repository has a Docker Compose topology, but it is not yet a working full-stack deployment.
@@ -140,3 +157,9 @@ Then verify:
 - API health returns healthy.
 - Worker is running.
 - MySQL, Redis, and MinIO are reachable.
+
+After local deployment verification, remove the project-specific containers and volumes unless the environment is intentionally being kept for deployment debugging:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+```

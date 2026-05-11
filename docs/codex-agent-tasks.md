@@ -35,10 +35,22 @@
 - `docs/storage.md`
 - `docs/security.md`
 - `docs/deployment.md`
+- `docs/local-development.md`
 - `docs/development-plan.md`
 - `docs/codex-agent-tasks.md`
 
 子 agent 如果发现合同缺失、冲突或不可实现，只能在最终回复中报告问题，不能直接修改上述文件。
+
+## 本地开发环境规则
+
+开发和功能验证必须优先使用 `docs/local-development.md` 记录的全局本地环境：
+
+- MySQL 使用 `dev-mysql8`。
+- Redis 使用 `dev-redis`。
+- MinIO 使用 `dev-minio`。
+- 子 agent 不得为了普通功能开发启动项目专属 MySQL、Redis、MinIO 容器或创建项目专属 Docker 数据卷。
+- `deploy/docker-compose.yml` 只用于部署骨架或部署回归验证；如需启动项目 Compose 栈，验证后必须清理，除非用户明确要求保留。
+- 不得把全局本地环境中的真实密码复制到项目文档、源码、测试或日志中。
 
 ## 串行阶段 0：主 agent 冻结公共合同
 

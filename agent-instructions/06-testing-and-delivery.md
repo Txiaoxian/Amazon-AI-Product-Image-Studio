@@ -6,6 +6,19 @@
 - Keep changes scoped to the requested phase.
 - Do not mix documentation, frontend refactors, backend implementation, and deployment changes unless the task explicitly asks for that combination.
 
+## Local development environment
+
+- Routine development verification must use the shared local services in `docs/local-development.md`.
+- Use `dev-mysql8`, `dev-redis`, and `dev-minio` for local MySQL, Redis, and MinIO checks.
+- Do not start project-specific MySQL, Redis, or MinIO containers for ordinary feature validation.
+- Do not create project-specific Docker data volumes for ordinary feature validation.
+- Do not copy real local service passwords into project files, tests, logs, or final answers.
+- `deploy/docker-compose.yml` may be used for deployment-specific verification only. If it starts project-specific containers, clean them up afterwards unless the user asks to keep them:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+```
+
 ## P0 documentation verification
 
 For P0 docs and Agent rules:
@@ -40,11 +53,19 @@ go test -race ./...
 go vet ./...
 ```
 
-For API and worker changes, also verify the Docker Compose path once available:
+For API and worker changes that need MySQL, Redis, or MinIO, connect to the shared local services from `docs/local-development.md`.
+
+For deployment-specific changes, also verify the Docker Compose path:
 
 ```bash
 docker compose -f deploy/docker-compose.yml config
 docker compose -f deploy/docker-compose.yml up -d
+```
+
+After deployment-specific local verification, clean up the project Compose stack unless instructed otherwise:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
 ## Contract verification
