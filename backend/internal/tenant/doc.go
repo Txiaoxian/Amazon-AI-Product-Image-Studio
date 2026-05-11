@@ -1,4 +1,3 @@
-// Package tenant is reserved for future tenant context extraction and
-// tenant-scoped request helpers. P2-BE-INFRA intentionally defines no tenant
-// isolation behavior.
+// Package tenant contains tenant scope primitives shared by request middleware
+// and tenant-aware repositories.
 package tenant

@@ -10,8 +10,9 @@ import (
 )
 
 type RouterOptions struct {
-	Config config.Config
-	Logger *slog.Logger
+	Config       config.Config
+	Logger       *slog.Logger
+	HealthChecks []health.DependencyChecker
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -22,13 +23,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	router.Use(httpx.Recovery(options.Logger))
 	router.Use(httpx.AccessLog(options.Logger))
 
-	RegisterRoutes(router)
+	RegisterRoutes(router, options.HealthChecks...)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine) {
-	healthHandler := health.Handler("api")
+func RegisterRoutes(router *gin.Engine, healthChecks ...health.DependencyChecker) {
+	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
