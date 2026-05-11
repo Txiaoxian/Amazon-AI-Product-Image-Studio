@@ -35,14 +35,16 @@ npm run test
 npm run build
 ```
 
-## Docker 静态部署
+## Docker Compose 本地运行
 
 ```bash
-docker build -t amazon-ai-product-image-studio frontend
-docker run --rm -p 8080:80 amazon-ai-product-image-studio
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
 ```
 
-访问 `http://localhost:8080`。
+访问前端 `http://localhost:8080`，后端健康检查为 `http://localhost:8081/api/v1/healthz`。
 
 ## 在 Mac M 系列上构建 x86 Docker 包
 
