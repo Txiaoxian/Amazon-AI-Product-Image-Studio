@@ -19,6 +19,15 @@ const (
 	defaultAPIShutdownTimeout    = 10 * time.Second
 	defaultWorkerName            = "backend-worker"
 	defaultWorkerShutdownTimeout = 10 * time.Second
+	defaultMySQLHost             = "127.0.0.1"
+	defaultMySQLPort             = 3306
+	defaultMySQLDatabase         = "amazon_ai_image_studio"
+	defaultMySQLUser             = "studio_app"
+	defaultDatabaseConnectTime   = 10 * time.Second
+	defaultDatabaseMaxOpenConns  = 25
+	defaultDatabaseMaxIdleConns  = 5
+	defaultDatabaseConnLifetime  = 30 * time.Minute
+	defaultMigrationsMode        = "startup-gate"
 )
 
 type Config struct {
@@ -26,6 +35,7 @@ type Config struct {
 	LogLevel string
 	API      APIConfig
 	Worker   WorkerConfig
+	Database DatabaseConfig
 }
 
 type APIConfig struct {
@@ -41,6 +51,19 @@ type APIConfig struct {
 type WorkerConfig struct {
 	Name            string
 	ShutdownTimeout time.Duration
+}
+
+type DatabaseConfig struct {
+	Host            string
+	Port            int
+	Name            string
+	User            string
+	Password        string
+	ConnectTimeout  time.Duration
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	MigrationsMode  string
 }
 
 func Load() (Config, error) {
@@ -94,6 +117,11 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	database, err := databaseConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
@@ -110,6 +138,7 @@ func load(lookup lookupFunc) (Config, error) {
 			Name:            stringFromEnv(lookup, "WORKER_NAME", defaultWorkerName),
 			ShutdownTimeout: workerShutdownTimeout,
 		},
+		Database: database,
 	}, nil
 }
 
@@ -212,6 +241,110 @@ func parsePort(key, raw string) (int, error) {
 	}
 
 	return value, nil
+}
+
+func databaseConfigFromEnv(lookup lookupFunc) (DatabaseConfig, error) {
+	host := stringFromEnv(lookup, "MYSQL_HOST", defaultMySQLHost)
+	if err := validateHost("MYSQL_HOST", host); err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	port, err := intFromEnv(lookup, "MYSQL_PORT", defaultMySQLPort)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	name := stringFromEnv(lookup, "MYSQL_DATABASE", defaultMySQLDatabase)
+	if err := validateRequiredValue("MYSQL_DATABASE", name); err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	user := stringFromEnv(lookup, "MYSQL_USER", defaultMySQLUser)
+	if err := validateRequiredValue("MYSQL_USER", user); err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	connectTimeout, err := durationFromEnv(lookup, "MYSQL_CONNECT_TIMEOUT", defaultDatabaseConnectTime)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	connLifetime, err := durationFromEnv(lookup, "MYSQL_CONN_MAX_LIFETIME", defaultDatabaseConnLifetime)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	maxOpenConns, err := positiveIntFromEnv(lookup, "MYSQL_MAX_OPEN_CONNS", defaultDatabaseMaxOpenConns)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	maxIdleConns, err := positiveIntFromEnv(lookup, "MYSQL_MAX_IDLE_CONNS", defaultDatabaseMaxIdleConns)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	if maxIdleConns > maxOpenConns {
+		return DatabaseConfig{}, fmt.Errorf("invalid MYSQL_MAX_IDLE_CONNS: must be less than or equal to MYSQL_MAX_OPEN_CONNS")
+	}
+
+	migrationsMode, err := migrationsModeFromEnv(lookup)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+
+	return DatabaseConfig{
+		Host:            host,
+		Port:            port,
+		Name:            name,
+		User:            user,
+		Password:        stringFromEnv(lookup, "MYSQL_PASSWORD", ""),
+		ConnectTimeout:  connectTimeout,
+		MaxOpenConns:    maxOpenConns,
+		MaxIdleConns:    maxIdleConns,
+		ConnMaxLifetime: connLifetime,
+		MigrationsMode:  migrationsMode,
+	}, nil
+}
+
+func validateRequiredValue(key string, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("invalid %s: value is required", key)
+	}
+
+	for _, r := range value {
+		if r <= 31 || r == 127 {
+			return fmt.Errorf("invalid %s: value contains control character", key)
+		}
+	}
+
+	return nil
+}
+
+func positiveIntFromEnv(lookup lookupFunc, key string, fallback int) (int, error) {
+	raw := stringFromEnv(lookup, key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: must be an integer", key)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("invalid %s: must be positive", key)
+	}
+
+	return value, nil
+}
+
+func migrationsModeFromEnv(lookup lookupFunc) (string, error) {
+	mode := strings.ToLower(stringFromEnv(lookup, "MIGRATIONS_MODE", defaultMigrationsMode))
+	switch mode {
+	case "startup-gate", "disabled":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid MIGRATIONS_MODE %q", mode)
+	}
 }
 
 func corsAllowedOriginsFromEnv(lookup lookupFunc) ([]string, error) {

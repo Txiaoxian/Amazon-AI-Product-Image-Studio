@@ -11,8 +11,11 @@ import (
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/api"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -34,7 +37,18 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := newRouter(cfg, log)
+	db, err := openDatabase(cfg, log)
+	if err != nil {
+		log.Error("database startup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := database.Close(db); err != nil {
+			log.Warn("database close failed", slog.String("error", err.Error()))
+		}
+	}()
+
+	router := newRouter(cfg, log, database.NewHealthChecker(db))
 	server := &http.Server{
 		Addr:         cfg.API.Addr,
 		Handler:      router,
@@ -64,9 +78,32 @@ func main() {
 	log.Info("api stopped")
 }
 
-func newRouter(cfg config.Config, log *slog.Logger) *gin.Engine {
+func newRouter(cfg config.Config, log *slog.Logger, healthChecks ...health.DependencyChecker) *gin.Engine {
 	return api.NewRouter(api.RouterOptions{
-		Config: cfg,
-		Logger: log,
+		Config:       cfg,
+		Logger:       log,
+		HealthChecks: healthChecks,
 	})
+}
+
+func openDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Database.ConnectTimeout)
+	defer cancel()
+
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Database.MigrationsMode == "startup-gate" {
+		if err := database.RunMigrations(ctx, db); err != nil {
+			_ = database.Close(db)
+			return nil, err
+		}
+		log.Info("database migrations complete")
+	} else {
+		log.Info("database migrations skipped", slog.String("mode", cfg.Database.MigrationsMode))
+	}
+
+	return db, nil
 }
