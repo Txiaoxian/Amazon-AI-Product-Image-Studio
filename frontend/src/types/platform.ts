@@ -18,27 +18,28 @@ export type PermissionKey = Brand<string, 'PermissionKey'>
 export type ISODateTimeString = string
 
 export type UserStatus = 'ACTIVE' | 'DISABLED'
+export type TenantStatus = 'ACTIVE' | 'DISABLED'
 
 export interface RoleSummary {
   id: RoleId
   code: string
   name: string
+  description?: string
 }
 
 export interface TenantSummary {
   id: TenantId
   name: string
+  status?: TenantStatus
   slug?: string
 }
 
 export interface CurrentUser {
   id: UserId
-  tenantId: TenantId
   email: string
   displayName: string
   status: UserStatus
-  roles: RoleSummary[]
-  permissions: PermissionKey[]
+  lastLoginAt?: ISODateTimeString | null
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
 }
