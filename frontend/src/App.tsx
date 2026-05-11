@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { HistoryWithImage } from './db/historyRepository'
+import { AuthStatus } from './components/auth/AuthStatus'
+import { LoginPanel } from './components/auth/LoginPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
 import { ImageDetailModal } from './components/modals/ImageDetailModal'
 import { SettingsModal } from './components/modals/SettingsModal'
 import { ControlPanel, type ControlPanelDraft } from './components/studio/ControlPanel'
 import { ResultCanvas } from './components/studio/ResultCanvas'
+import { AuthProvider } from './hooks/AuthProvider'
+import { useAuth } from './hooks/useAuth'
 import { useGeneration } from './hooks/useGeneration'
 import { useHistory } from './hooks/useHistory'
 import { useSettings } from './hooks/useSettings'
@@ -13,8 +17,55 @@ import { useStorageUsage } from './hooks/useStorageUsage'
 import { downloadBlob } from './lib/download'
 import { IMAGE_MODELS } from './providers/registry'
 import type { GenerationRequest, ReferenceImageInput } from './providers/types'
+import type { AuthSession } from './types/auth'
 
 function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  )
+}
+
+function AppContent() {
+  const auth = useAuth()
+
+  if (auth.status === 'loading') {
+    return (
+      <AppShell notice={auth.error ?? undefined}>
+        <div className="flex min-h-[calc(100dvh-180px)] items-center justify-center text-sm text-ink-500">
+          正在加载登录状态...
+        </div>
+      </AppShell>
+    )
+  }
+
+  if (auth.status !== 'authenticated' || !auth.session) {
+    return (
+      <AppShell>
+        <LoginPanel error={auth.error} isSubmitting={auth.isSubmitting} onSubmit={auth.login} />
+      </AppShell>
+    )
+  }
+
+  return (
+    <StudioWorkbench
+      authError={auth.error}
+      isAuthSubmitting={auth.isSubmitting}
+      onLogout={auth.logout}
+      session={auth.session}
+    />
+  )
+}
+
+interface StudioWorkbenchProps {
+  authError: string | null
+  isAuthSubmitting: boolean
+  session: AuthSession
+  onLogout: () => Promise<void>
+}
+
+function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: StudioWorkbenchProps) {
   const { settings, setSettings } = useSettings()
   const generation = useGeneration(settings)
   const history = useHistory()
@@ -114,7 +165,11 @@ function App() {
   }
 
   return (
-    <AppShell notice={notice} onOpenSettings={() => setSettingsOpen(true)}>
+    <AppShell
+      accountSlot={<AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />}
+      notice={authError ?? notice}
+      onOpenSettings={() => setSettingsOpen(true)}
+    >
       <div className="grid grid-cols-1 gap-3 sm:gap-4 xl:min-h-[calc(100dvh-112px)] xl:grid-cols-[360px_minmax(0,1fr)_340px]">
         <ControlPanel
           defaultModelId={settings.defaultModelId}

@@ -8,7 +8,7 @@ import type {
 
 export const DEFAULT_API_BASE_URL = '/api/v1'
 
-export type JsonRequestBody = Record<string, unknown> | unknown[]
+export type JsonRequestBody = object
 
 export interface ApiRequestOptions extends Omit<RequestInit, 'body'> {
   baseUrl?: string
@@ -52,6 +52,14 @@ export class ApiClientError extends Error {
     this.requestId = options.requestId
     this.details = options.details
   }
+}
+
+export function isApiClientError(error: unknown): error is ApiClientError {
+  return error instanceof ApiClientError
+}
+
+export function isUnauthorizedError(error: unknown): boolean {
+  return isApiClientError(error) && error.status === 401
 }
 
 export function createApiClient(config: ApiClientConfig = {}): ApiClient {

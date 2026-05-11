@@ -4,11 +4,12 @@ import { APP_NAME } from '../../lib/constants'
 
 interface AppShellProps {
   children: ReactNode
+  accountSlot?: ReactNode
   notice?: string
-  onOpenSettings: () => void
+  onOpenSettings?: () => void
 }
 
-export function AppShell({ children, notice, onOpenSettings }: AppShellProps) {
+export function AppShell({ accountSlot, children, notice, onOpenSettings }: AppShellProps) {
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-ink-900">
       <header className="sticky top-0 z-30 border-b border-ink-200 bg-white/95 backdrop-blur">
@@ -17,9 +18,14 @@ export function AppShell({ children, notice, onOpenSettings }: AppShellProps) {
             <h1 className="text-base font-semibold leading-tight text-ink-900 sm:text-lg">{APP_NAME}</h1>
             <p className="mt-0.5 text-xs text-ink-500">为亚马逊卖家生成、编辑和管理 AI 产品图片</p>
           </div>
-          <button aria-label="打开设置" className="icon-button shrink-0" onClick={onOpenSettings} title="设置" type="button">
-            <Settings className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {accountSlot}
+            {onOpenSettings ? (
+              <button aria-label="打开设置" className="icon-button shrink-0" onClick={onOpenSettings} title="设置" type="button">
+                <Settings className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
         </div>
         {notice ? (
           <div className="border-t border-amazon-500/20 bg-amazon-500/10 px-3 py-2 text-sm leading-6 text-ink-800 sm:px-4">
