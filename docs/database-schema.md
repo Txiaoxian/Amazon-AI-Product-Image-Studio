@@ -41,11 +41,26 @@ Stores Amazon product projects.
 
 Key fields: `id`, `tenant_id`, `name`, `brand`, `asin`, `site`, `notes`, `status`, `created_by`, `created_at`, `updated_at`, `deleted_at`.
 
+P5 implementation notes:
+
+- `status` values: `ACTIVE`, `ARCHIVED`.
+- `name` is required.
+- `deleted_at` implements soft delete.
+- Project list/detail queries must always include `tenant_id` and exclude soft-deleted rows by default.
+- Suggested indexes: `(tenant_id, status, created_at)`, `(tenant_id, asin)`, `(tenant_id, deleted_at)`.
+
 ### project_members
 
 Stores project-specific membership.
 
 Key fields: `id`, `tenant_id`, `project_id`, `user_id`, `role`, `created_at`, `updated_at`.
+
+P5 implementation notes:
+
+- `role` values: `OWNER`, `EDITOR`, `VIEWER`.
+- `(tenant_id, project_id, user_id)` must be unique.
+- Foreign keys must include tenant scope where supported by the existing schema style.
+- Project creators should become `OWNER` members transactionally.
 
 ### image_assets
 
@@ -54,6 +69,14 @@ Stores image metadata.
 Key fields: `id`, `tenant_id`, `project_id`, `kind`, `category`, `object_key`, `thumbnail_object_key`, `mime_type`, `size_bytes`, `width`, `height`, `sha256`, `is_favorite`, `source_task_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`.
 
 `kind` values: `REFERENCE`, `GENERATED`, `EDITED`.
+
+P5 implementation notes:
+
+- P5 upload creates `REFERENCE` assets only.
+- `object_key` must be unique and non-guessable.
+- `sha256` should be indexed for future deduplication checks but must not bypass tenant/project authorization.
+- `deleted_at` implements soft delete. Soft-deleted assets are hidden from normal lists and downloads.
+- Suggested indexes: `(tenant_id, project_id, created_at)`, `(tenant_id, project_id, kind)`, `(tenant_id, is_favorite)`, `(tenant_id, deleted_at)`.
 
 ### prompt_templates
 

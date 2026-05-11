@@ -842,64 +842,345 @@ npm run test
 npm run build
 ```
 
-## 子任务 10：项目与资产管理
+## 串行阶段 4：P4 review 和集成
 
 ### 任务名称
 
-P5-ASSET - 项目、成员、MinIO 资产上传下载
+R4 - P4 数据库、认证、RBAC、前端认证集成 review
 
 ### 目标
 
-实现项目和图片资产基础能力，让参考图、生成图和后续任务输出可以进入后端资产库。
+由主 agent 串行 review 并合并 P4-BE-DATABASE、P4-BE-AUTH、P4-FE-AUTH，确认平台进入 P5 前具备数据库、租户、认证、RBAC 和前端登录态基础。
 
-### 允许修改文件
+### 已完成结果
 
-- `backend/**`
-- `frontend/src/api/**`
-- `frontend/src/types/**`
-- `frontend/src/components/**`
-- `frontend/src/hooks/**`
-- `frontend/src/test/**`
+- `P4-BE-DATABASE` 已合并：GORM/MySQL 连接、migration runner、核心 auth/RBAC/operation log 表、tenant-aware repository helper。
+- `P4-BE-AUTH` 已合并：init-admin、login、logout、`/me`、password change、HttpOnly Cookie JWT、CSRF、auth middleware、tenant context、RBAC guard、operation logs。
+- `P4-FE-AUTH` 已合并：frontend auth API wrappers、login UI、current user loading、logout、401 handling、in-memory CSRF token handling。
 
-### 禁止修改文件
+### P4 review 结论
 
-- `docs/**`
-- `AGENTS.md`
-- `agent-instructions/**`
-- Provider 调用、任务队列、SSE 业务
+- 允许进入 P5。
+- P4 合并后前端 lint/type-check/test/build 通过。
+- P4 合并后后端 test/race/vet/build 通过。
+- Compose config 通过。
 
-### 前置依赖
+### P4 非阻塞遗留
 
-- P4-BE-AUTH 合并完成。
-
-### 具体开发内容
-
-- 后端实现 project CRUD 和 project_members。
-- 后端实现 MinIO storage service。
-- 后端实现资产上传、详情、列表、收藏、软删除、授权下载。
-- 后端上传校验 magic bytes、MIME、文件大小、宽高、像素数，拒绝 SVG。
-- 前端接入项目选择、资产列表、参考图上传和下载。
-
-### 安全要求
-
-- 所有 project/asset 查询必须按 `tenant_id` 和对象权限过滤。
-- 下载必须经过后端鉴权。
-- MySQL 不保存 Blob，只保存 metadata 和 object_key。
-
-### 验收标准
-
-- 跨租户访问 project/asset 被拒绝或不可见。
-- 伪造 MIME、SVG、超限图片上传失败。
-- 下载 API 需要授权。
+- 生产环境需要拒绝默认 `JWT_SIGNING_SECRET` 等占位密钥。
+- 前端 CSRF Header 当前使用默认 `X-CSRF-Token`，如未来允许非默认 `CSRF_HEADER_NAME`，需要增加前端配置来源。
+- 审计 metadata 脱敏应在 Provider、资产、任务模块写入嵌套 metadata 前改为递归脱敏。
+- 旧前端 Provider 直连、localStorage Provider API Key、IndexedDB Blob 历史仍是 P8 迁移遗留，不得在 P5 扩大使用。
 
 ### 测试命令
 
 ```bash
-cd backend && go test ./... && go test -race ./... && go vet ./...
-cd ../frontend && npm run lint && npm run type-check && npm run test && npm run build
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
 ```
 
-## 子任务 11：Provider 与模型管理
+## P5 执行策略
+
+P5 原始“项目与资产管理”范围较大，必须拆成串行 worktree。第一批不要并行做 Provider/model、任务队列、SSE 或前端工作台后端化。公共合同文件仍只能由主 agent 修改。
+
+推荐顺序：
+
+1. `P5-BE-PROJECTS`
+2. `P5-BE-ASSET-STORAGE`
+3. `P5-FE-PROJECT-ASSETS`
+4. `R5`
+
+## 子任务 10：项目与项目成员后端基础
+
+### 任务名称
+
+P5-BE-PROJECTS - Project CRUD、项目成员与对象授权基础
+
+### 目标
+
+实现项目和项目成员后端基础，为资产上传、下载和后续任务归属提供可靠对象授权边界。
+
+### 允许修改文件
+
+- `backend/**`
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `.env.example`，除非只补充本任务确实缺失且非敏感的项目配置占位
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- Provider 调用、MinIO 资产上传下载、任务队列、SSE 业务、前端工作台后端化
+
+### 前置依赖
+
+- P4-BE-AUTH 和 P4-FE-AUTH 合并完成。
+- 主 agent 已更新 P5 API、数据库、存储、安全合同。
+
+### 具体开发内容
+
+- 增加或补齐 `projects`、`project_members` migration 和 GORM models。
+- 实现 project repository/service，所有查询必须显式带 `tenant_id`。
+- 实现 project CRUD API：列表、创建、详情、更新、软删除。
+- 实现 project member API：列表、新增、更新、移除。
+- 创建项目时把创建者写为 `OWNER` 成员。
+- 实现项目对象授权 helper：tenant admin 可管理本租户项目；普通用户需具备 RBAC 权限和项目成员角色。
+- 写 operation logs：project create/update/delete、member create/update/delete。
+- 增加后端测试覆盖跨租户不可见、成员权限、软删除、操作日志。
+
+### 安全要求
+
+- 所有 project 查询必须按 `tenant_id` 过滤。
+- 对象 ID 接口必须检查对象级权限，不能只检查登录状态。
+- 跨租户 project ID 不得泄露存在性，优先返回 `404` 或非揭示性错误。
+- 普通用户必须同时具备 RBAC 权限和项目成员角色。
+- 不记录 Cookie、Authorization、密码、JWT、API Key。
+
+### 验收标准
+
+- project CRUD 符合 `docs/api-contract.md`。
+- project member role 支持 `OWNER`、`EDITOR`、`VIEWER`。
+- 跨租户访问 project 被拒绝或不可见。
+- 软删除项目不出现在默认列表和详情中。
+- 操作日志记录敏感动作且 metadata 脱敏。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+git diff --check
+```
+
+## 子任务 11：资产存储与图片上传后端基础
+
+### 任务名称
+
+P5-BE-ASSET-STORAGE - MinIO storage service、上传校验、资产 API 与授权下载
+
+### 目标
+
+实现后端图片资产基础能力，让参考图可以进入 MinIO 和 MySQL 元数据表，并支持列表、详情、收藏、软删除、授权下载。
+
+### 允许修改文件
+
+- `backend/**`
+- `.env.example` 仅允许补充缺失的非敏感存储配置占位
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`，除非只修正本任务必需且已存在的 MinIO env 透传
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- Provider 调用、任务队列、SSE 业务、前端工作台后端化
+
+### 前置依赖
+
+- `P5-BE-PROJECTS` 合并完成。
+- 全局本地 `dev-minio` 可用于集成验证。
+
+### 具体开发内容
+
+- 增加或补齐 `image_assets` migration 和 GORM model。
+- 实现 MinIO storage client/service，封装 put/get/delete 或 signed URL 创建能力。
+- 使用非猜测 object key：`tenants/{tenantId}/projects/{projectId}/assets/{assetId}/original.{ext}`。
+- 实现 asset repository/service，所有查询带 `tenant_id`。
+- 实现 `GET /projects/{projectId}/assets`。
+- 实现 `POST /projects/{projectId}/assets/uploads`，P5 只创建 `REFERENCE` 资产。
+- 实现 `GET /assets/{assetId}`、`PATCH /assets/{assetId}`、`DELETE /assets/{assetId}`。
+- 实现 favorite/unfavorite。
+- 实现 `GET /assets/{assetId}/download`，默认通过后端鉴权后流式下载。
+- 上传前校验真实文件类型、magic bytes、大小、宽高、像素数量，拒绝 SVG。
+- 失败路径必须避免留下孤儿对象或孤儿元数据。
+- 写 operation logs：asset upload/update/delete/download/favorite。
+
+### 安全要求
+
+- 图片文件必须保存到 MinIO，MySQL 只保存 metadata 和 `object_key`。
+- MySQL 禁止保存 Blob。
+- 上传校验不能只信任客户端 MIME 或扩展名。
+- 文件名只可作为清洗后的展示 metadata，不能直接参与 object key。
+- 下载必须经过 backend auth、tenant filter、RBAC 和 project membership/object-level authorization。
+- 不记录图片 base64、原始文件字节、Cookie、Authorization、API Key。
+
+### 验收标准
+
+- 跨租户 asset 访问被拒绝或不可见。
+- 伪造 MIME、无效 magic bytes、SVG、超限文件、超限尺寸和超限像素上传失败。
+- 成功上传后 MinIO 有对象，MySQL 有 metadata 和 object key，无 Blob。
+- 下载 API 需要授权并可返回正确 content type。
+- 删除为软删除，软删除 asset 不可下载。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+git diff --check
+```
+
+如果执行真实 MinIO 集成检查，必须使用 `docs/local-development.md` 中的共享 `dev-minio`，不得启动项目专属 MinIO。
+
+## 子任务 12：前端项目与资产接入
+
+### 任务名称
+
+P5-FE-PROJECT-ASSETS - 项目选择、参考图上传、资产列表与下载 UI
+
+### 目标
+
+接入 P5 后端项目和资产 API，让已登录用户可以选择/创建项目、上传参考图、查看资产列表、收藏/删除/下载资产，并在工作台选择项目资产作为参考图。
+
+### 允许修改文件
+
+- `frontend/src/api/**`
+- `frontend/src/types/**`
+- `frontend/src/components/**`
+- `frontend/src/hooks/**`
+- `frontend/src/App.tsx`
+- `frontend/src/test/**`
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/providers/**`
+- 旧生成流程替换
+- Provider/model 管理、任务队列、SSE 业务
+
+### 前置依赖
+
+- `P5-BE-PROJECTS` 合并完成。
+- `P5-BE-ASSET-STORAGE` 合并完成。
+
+### 具体开发内容
+
+- 增加 project 和 asset API wrappers，使用已有 authenticated API client 和 `credentials: include`。
+- 增加项目列表、创建项目、项目选择状态。
+- 增加项目资产列表、详情入口、收藏、软删除和下载动作。
+- 增加参考图上传 UI，使用 multipart/form-data 直传后端。
+- 上传前可保留客户端 MIME/大小预检作为 UX，但明确以后端校验为准。
+- 将“选择项目”和“选择参考资产”接入现有工作台，不替换生成提交路径。
+- 旧 IndexedDB 历史仍可展示，但不能冒充后端资产库。
+- 处理 401/403/404/422 错误状态和 loading/empty/error UI。
+
+### 安全要求
+
+- 不读取 Cookie。
+- 不保存 JWT、session token 或 CSRF token 到 localStorage/sessionStorage/IndexedDB。
+- 不新增 Provider API Key 持久化。
+- 不新增 AI Provider 直连。
+- 不使用轮询查询任务状态。
+- 不渲染或记录图片 base64。
+
+### 验收标准
+
+- 已登录用户可以创建/选择项目。
+- 已登录用户可以上传参考图并在资产列表看到 metadata。
+- favorite/delete/download 操作调用后端 API 且处理错误状态。
+- 现有本地工作台核心测试继续通过。
+- 未登录状态不会展示项目资产操作。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+git diff --check
+```
+
+## 串行阶段 5：P5 review 和集成
+
+### 任务名称
+
+R5 - P5 项目与资产管理 review、集成和合同校准
+
+### 目标
+
+主 agent 串行 review P5 子任务，确认项目/资产/MinIO 上传下载链路满足租户隔离、对象级权限和上传安全要求，再进入 P6 Provider/model。
+
+### 允许修改文件
+
+- P5 子任务允许修改的文件。
+- 公共合同文件，仅限主 agent 根据实际实现校准。
+
+### 禁止修改文件
+
+- Provider 调用执行路径。
+- 任务队列、Worker 真实任务执行、SSE 服务端业务。
+- 前端生成工作台后端化替换。
+
+### 前置依赖
+
+- `P5-BE-PROJECTS`、`P5-BE-ASSET-STORAGE`、`P5-FE-PROJECT-ASSETS` 均已提交。
+
+### 具体开发内容
+
+- Review project/asset 代码和测试。
+- 串行合并或要求整改。
+- 跑前后端回归。
+- 使用共享本地 MySQL/Redis/MinIO 做必要集成检查。
+- 更新公共合同中的 P5 实际完成状态和遗留风险。
+
+### 安全要求
+
+- 重点检查 tenant filter、object authorization、upload validation、MinIO object key、download auth、sensitive logging。
+- 不允许引入 frontend AI Provider 直连或 API Key 持久化新增路径。
+
+### 验收标准
+
+- P5 合并后前端、后端、Compose config 均通过。
+- 跨租户 project/asset 访问测试通过。
+- 上传安全测试覆盖 forged MIME、invalid magic bytes、SVG、尺寸/像素/大小超限。
+- 下载必须鉴权。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 子任务 13：Provider 与模型管理
 
 ### 任务名称
 
@@ -929,6 +1210,7 @@ P6-PROVIDER-MODEL - Provider、API Key 加密、SSRF 与模型能力
 ### 前置依赖
 
 - P4-BE-AUTH 合并完成。
+- R5 P5 项目与资产管理集成完成。
 
 ### 具体开发内容
 
@@ -957,7 +1239,7 @@ cd backend && go test ./... && go test -race ./... && go vet ./...
 cd ../frontend && npm run lint && npm run type-check && npm run test && npm run build
 ```
 
-## 子任务 12：任务队列、Worker 和 SSE 服务端
+## 子任务 14：任务队列、Worker 和 SSE 服务端
 
 ### 任务名称
 
@@ -984,7 +1266,7 @@ P7-TASK-SSE - Redis 队列、Worker 状态机、Provider Adapter 执行与 SSE
 
 ### 前置依赖
 
-- P5-ASSET 合并完成。
+- R5 P5 项目与资产管理集成完成。
 - P6-PROVIDER-MODEL 合并完成。
 
 ### 具体开发内容
@@ -1019,7 +1301,7 @@ go test -race ./...
 go vet ./...
 ```
 
-## 子任务 13：前端工作台后端化
+## 子任务 15：前端工作台后端化
 
 ### 任务名称
 
@@ -1077,7 +1359,7 @@ npm run test
 npm run build
 ```
 
-## 子任务 14：审计、用量、系统设置和发布硬化
+## 子任务 16：审计、用量、系统设置和发布硬化
 
 ### 任务名称
 

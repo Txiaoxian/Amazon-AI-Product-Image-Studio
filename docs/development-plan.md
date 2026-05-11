@@ -9,7 +9,7 @@ Development and feature verification must use the existing global local environm
 - If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
 - Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
 
-## Status after P2
+## Status after P4
 
 Completed:
 
@@ -21,13 +21,26 @@ Completed:
 - P2 backend and frontend infrastructure:
   - backend config, logging, response helpers, router, request ID, security headers, CORS, recovery, and access log middleware.
   - frontend API client and task SSE client foundations.
+- P3 runtime deployment repair:
+  - backend API and worker Dockerfile targets.
+  - frontend Nginx `/api/` proxy.
+  - worker readiness healthcheck.
+  - removal of frontend Nginx AI relay routing.
+- P4 database, tenant, auth, RBAC, and frontend auth:
+  - GORM/MySQL connection, explicit migrations, tenant-aware repository helper, and core auth/RBAC tables.
+  - init-admin, login, logout, `/me`, password change, HttpOnly Cookie JWT, CSRF, auth middleware, tenant context, RBAC guard, and operation log recording.
+  - frontend auth API wrappers, login screen, current-user loading, logout, 401 handling, and in-memory CSRF token usage.
 
 Current review result:
 
 - Frontend and backend local test/build commands pass.
 - `docker compose -f deploy/docker-compose.yml config` passes.
-- `docker compose -f deploy/docker-compose.yml build backend-api` fails because `backend/Dockerfile` is missing.
-- The app is still in transition state. Old local frontend AI calls, localStorage API keys, and IndexedDB image Blob storage remain as migration baselines only.
+- The P4 auth chain is good enough to continue into P5.
+- The app is still in transition state. Old local frontend AI calls, localStorage Provider API keys, and IndexedDB image Blob storage remain as migration baselines only and must be removed in P8.
+- Non-blocking P4 hardening backlog:
+  - Reject default JWT signing secret when `APP_ENV=production`.
+  - Align frontend CSRF header usage with configurable backend `CSRF_HEADER_NAME` before allowing non-default deployments.
+  - Make audit metadata redaction recursive before broader modules start writing complex metadata.
 
 ## P3: Runtime deployment repair
 
@@ -55,6 +68,8 @@ docker compose -f deploy/docker-compose.yml ps
 
 ## P4: Database, tenant, auth, and RBAC foundation
 
+Status: completed and merged to `main`.
+
 Tasks:
 
 - Implement GORM/MySQL connection and explicit migrations.
@@ -67,17 +82,58 @@ Tasks:
 Verification:
 
 - Backend unit tests cover migrations, auth happy paths, auth failures, cookie flags, CSRF behavior, and tenant context.
-- Frontend auth tests cover login, unauthenticated state, and current user loading when implemented.
+- Frontend auth tests cover login, unauthenticated state, logout, 401 handling, and current user loading.
+- Post-merge checks passed:
+
+```bash
+cd frontend && npm run lint && npm run type-check && npm run test && npm run build
+cd ../backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker
+cd .. && docker compose -f deploy/docker-compose.yml config
+```
 
 ## P5: Project and asset management
 
-Tasks:
+Status: next phase. Split the original broad P5 scope into serial worktree tasks. Do not start Provider/model management or task/SSE implementation in P5.
 
-- Implement project CRUD and project member checks.
-- Implement MinIO storage service.
-- Implement reference image upload, image asset metadata, thumbnail metadata, favorite, soft delete, detail, and authorized download.
+Execution order:
+
+1. `P5-BE-PROJECTS`: backend project and project member foundation.
+2. `P5-BE-ASSET-STORAGE`: backend MinIO storage service, upload validation, asset APIs, and authorized downloads.
+3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection.
+4. `R5`: main-agent review, integration, and contract cleanup.
+
+P5 backend project requirements:
+
+- Implement migrations and models for `projects` and `project_members`.
+- Implement project CRUD with soft delete.
+- Implement project membership APIs and object-level authorization helpers.
+- Every project query must filter by `tenant_id`.
+- Cross-tenant project IDs must return `404` or a non-revealing authorization failure.
+
+P5 backend asset requirements:
+
+- Implement migrations and models for `image_assets`.
+- Implement MinIO client/storage service using the existing environment config.
+- Implement reference image upload to MinIO.
+- Implement asset metadata, thumbnail metadata placeholder, list, detail, favorite/unfavorite, soft delete, and authorized download.
 - Validate uploads by magic bytes, MIME allowlist, file size, width, height, and pixel count. SVG is forbidden.
 - MySQL stores metadata and `object_key`; image bytes go to MinIO only.
+- Use the shared local `dev-minio` environment for routine integration checks.
+
+P5 frontend requirements:
+
+- Add project and asset API wrappers using the existing authenticated API client.
+- Add project selection/creation entry points without replacing the generation workflow yet.
+- Add reference asset upload/list/detail/download UI consistent with the existing workbench.
+- Keep old local IndexedDB history available until P8, but do not treat it as backend asset truth.
+
+P5 acceptance gates:
+
+- Project and asset APIs require authentication, tenant filtering, RBAC, and object-level authorization.
+- Cross-tenant project/asset access is blocked or invisible.
+- Upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count.
+- Download requires backend authorization.
+- Frontend does not store Provider API keys, auth tokens, or image blobs as backend asset truth.
 
 ## P6: Provider and model management
 

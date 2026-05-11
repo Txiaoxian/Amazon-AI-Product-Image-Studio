@@ -17,6 +17,8 @@ Recommended buckets:
 
 Buckets may be separated by environment using prefixes or environment-specific bucket names.
 
+P5 should use the existing MinIO environment variables and the shared local `dev-minio` service for routine validation. Do not create project-specific MinIO containers or volumes for ordinary P5 development.
+
 ## Object key naming
 
 Use deterministic, non-guessable object keys:
@@ -51,6 +53,8 @@ Forbidden:
 - Unknown binary files.
 - Files with image extensions but invalid image magic.
 
+P5 validation must happen before any object is written. If validation fails, no image metadata row or MinIO object should remain. If a DB write fails after object upload, the implementation must either delete the just-uploaded object or record enough information for deterministic cleanup.
+
 ## Metadata
 
 `image_assets` stores:
@@ -79,6 +83,8 @@ Downloads must:
 4. Stream object through backend or issue a short-lived signed URL.
 
 Public permanent object URLs are not allowed for private tenant assets.
+
+P5 may stream through the backend as the default implementation. Short-lived signed URLs are allowed only after authentication, tenant filtering, and object-level authorization pass.
 
 ## Thumbnail generation
 

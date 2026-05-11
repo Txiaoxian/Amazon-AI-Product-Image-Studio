@@ -111,6 +111,20 @@ All user APIs require tenant scope and appropriate RBAC permissions.
 
 Project object APIs require tenant scope and project membership or admin permission.
 
+Project payload rules for P5:
+
+- Create/update fields: `name`, `brand`, `asin`, `site`, `notes`, `status`.
+- `name` is required.
+- `status` values: `ACTIVE`, `ARCHIVED`.
+- Response records include `id`, `tenantId`, product fields, `status`, `createdBy`, `createdAt`, `updatedAt`.
+- Deleted projects are soft deleted and excluded from normal lists.
+
+Project member rules for P5:
+
+- Member role values: `OWNER`, `EDITOR`, `VIEWER`.
+- Project member APIs require `project:member:manage` or tenant admin permission.
+- Project object APIs must combine RBAC permission and project membership. For example, asset upload requires `asset:upload` and project `OWNER` or `EDITOR`.
+
 ## Asset APIs
 
 - `GET /projects/{projectId}/assets`
@@ -124,6 +138,18 @@ Project object APIs require tenant scope and project membership or admin permiss
 - `POST /assets/{assetId}/edit-source`: prepare asset as edit reference.
 
 Downloads must stream through backend authorization or use short-lived signed URLs created after authorization.
+
+Asset payload rules for P5:
+
+- Upload uses `multipart/form-data`.
+- Required file field: `file`.
+- Optional fields: `kind`, `category`, `filename`, `isFavorite`.
+- P5 upload accepts `kind=REFERENCE` only. Generated and edited assets are created by later task/worker flows.
+- Asset response fields: `id`, `tenantId`, `projectId`, `kind`, `category`, `filename`, `mimeType`, `fileSize`, `width`, `height`, `thumbnailUrl`, `previewUrl`, `isFavorite`, `createdBy`, `createdAt`, `updatedAt`.
+- Asset list supports `kind`, `category`, `favorite`, `pageNum`, and `pageSize` query params.
+- `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; it must not change `tenantId`, `projectId`, `objectKey`, or image dimensions.
+- `DELETE /assets/{assetId}` is soft delete.
+- `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
 
 ## Task APIs
 
