@@ -307,6 +307,27 @@ var authRouteTestSchema = []string{
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	)`,
+	`CREATE TABLE image_assets (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		category TEXT NOT NULL,
+		filename TEXT NOT NULL,
+		object_key TEXT NOT NULL,
+		thumbnail_object_key TEXT NULL,
+		mime_type TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL,
+		width INTEGER NOT NULL,
+		height INTEGER NOT NULL,
+		sha256 TEXT NOT NULL,
+		is_favorite BOOLEAN NOT NULL,
+		source_task_id TEXT NULL,
+		created_by TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		deleted_at TIMESTAMP NULL
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {

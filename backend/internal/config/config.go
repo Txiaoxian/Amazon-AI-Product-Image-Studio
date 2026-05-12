@@ -35,6 +35,18 @@ const (
 	defaultCSRFCookieName        = "studio_csrf"
 	defaultCSRFHeaderName        = "X-CSRF-Token"
 	defaultCookieSameSite        = "Lax"
+	defaultMinIOEndpoint         = "http://127.0.0.1:9000"
+	defaultMinIORegion           = "us-east-1"
+	defaultMinIOAccessKey        = "minioadmin"
+	defaultMinIOSecretKey        = "change-me-local-minio-password"
+	defaultMinIOBucketOriginals  = "product-originals"
+	defaultMinIOBucketGenerated  = "product-generated"
+	defaultMinIOBucketThumbnails = "product-thumbnails"
+	defaultUploadMaxFileSizeMB   = 25
+	defaultUploadMaxWidth        = 8192
+	defaultUploadMaxHeight       = 8192
+	defaultUploadMaxPixels       = 40000000
+	defaultUploadAllowedMIMEs    = "image/jpeg,image/png,image/webp"
 )
 
 type Config struct {
@@ -44,6 +56,8 @@ type Config struct {
 	Worker   WorkerConfig
 	Database DatabaseConfig
 	Auth     AuthConfig
+	Storage  StorageConfig
+	Upload   UploadConfig
 }
 
 type APIConfig struct {
@@ -80,6 +94,24 @@ type AuthConfig struct {
 	AccessTokenTTL   time.Duration
 	Cookie           CookieConfig
 	CSRF             CSRFConfig
+}
+
+type StorageConfig struct {
+	Endpoint         string
+	Region           string
+	AccessKey        string
+	SecretKey        string
+	BucketOriginals  string
+	BucketGenerated  string
+	BucketThumbnails string
+}
+
+type UploadConfig struct {
+	MaxFileSizeBytes int64
+	MaxWidth         int
+	MaxHeight        int
+	MaxPixels        int64
+	AllowedMIMETypes []string
 }
 
 type CookieConfig struct {
@@ -156,6 +188,16 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	storage, err := storageConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
+	upload, err := uploadConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
@@ -174,6 +216,8 @@ func load(lookup lookupFunc) (Config, error) {
 		},
 		Database: database,
 		Auth:     auth,
+		Storage:  storage,
+		Upload:   upload,
 	}, nil
 }
 
@@ -372,6 +416,23 @@ func positiveIntFromEnv(lookup lookupFunc, key string, fallback int) (int, error
 	return value, nil
 }
 
+func positiveInt64FromEnv(lookup lookupFunc, key string, fallback int64) (int64, error) {
+	raw := stringFromEnv(lookup, key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: must be an integer", key)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("invalid %s: must be positive", key)
+	}
+
+	return value, nil
+}
+
 func migrationsModeFromEnv(lookup lookupFunc) (string, error) {
 	mode := strings.ToLower(stringFromEnv(lookup, "MIGRATIONS_MODE", defaultMigrationsMode))
 	switch mode {
@@ -458,6 +519,190 @@ func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
 			HeaderName: csrfHeaderName,
 		},
 	}, nil
+}
+
+func DefaultStorageConfig() StorageConfig {
+	return StorageConfig{
+		Endpoint:         defaultMinIOEndpoint,
+		Region:           defaultMinIORegion,
+		AccessKey:        defaultMinIOAccessKey,
+		SecretKey:        defaultMinIOSecretKey,
+		BucketOriginals:  defaultMinIOBucketOriginals,
+		BucketGenerated:  defaultMinIOBucketGenerated,
+		BucketThumbnails: defaultMinIOBucketThumbnails,
+	}
+}
+
+func DefaultUploadConfig() UploadConfig {
+	return UploadConfig{
+		MaxFileSizeBytes: int64(defaultUploadMaxFileSizeMB) * 1024 * 1024,
+		MaxWidth:         defaultUploadMaxWidth,
+		MaxHeight:        defaultUploadMaxHeight,
+		MaxPixels:        defaultUploadMaxPixels,
+		AllowedMIMETypes: []string{"image/jpeg", "image/png", "image/webp"},
+	}
+}
+
+func NormalizeStorageConfig(storage StorageConfig) StorageConfig {
+	defaults := DefaultStorageConfig()
+	if strings.TrimSpace(storage.Endpoint) == "" {
+		storage.Endpoint = defaults.Endpoint
+	}
+	if strings.TrimSpace(storage.Region) == "" {
+		storage.Region = defaults.Region
+	}
+	if strings.TrimSpace(storage.AccessKey) == "" {
+		storage.AccessKey = defaults.AccessKey
+	}
+	if strings.TrimSpace(storage.SecretKey) == "" {
+		storage.SecretKey = defaults.SecretKey
+	}
+	if strings.TrimSpace(storage.BucketOriginals) == "" {
+		storage.BucketOriginals = defaults.BucketOriginals
+	}
+	if strings.TrimSpace(storage.BucketGenerated) == "" {
+		storage.BucketGenerated = defaults.BucketGenerated
+	}
+	if strings.TrimSpace(storage.BucketThumbnails) == "" {
+		storage.BucketThumbnails = defaults.BucketThumbnails
+	}
+	return storage
+}
+
+func NormalizeUploadConfig(upload UploadConfig) UploadConfig {
+	defaults := DefaultUploadConfig()
+	if upload.MaxFileSizeBytes <= 0 {
+		upload.MaxFileSizeBytes = defaults.MaxFileSizeBytes
+	}
+	if upload.MaxWidth <= 0 {
+		upload.MaxWidth = defaults.MaxWidth
+	}
+	if upload.MaxHeight <= 0 {
+		upload.MaxHeight = defaults.MaxHeight
+	}
+	if upload.MaxPixels <= 0 {
+		upload.MaxPixels = defaults.MaxPixels
+	}
+	if len(upload.AllowedMIMETypes) == 0 {
+		upload.AllowedMIMETypes = defaults.AllowedMIMETypes
+	}
+	return upload
+}
+
+func storageConfigFromEnv(lookup lookupFunc) (StorageConfig, error) {
+	storage := NormalizeStorageConfig(StorageConfig{
+		Endpoint:         stringFromEnv(lookup, "MINIO_ENDPOINT", ""),
+		Region:           stringFromEnv(lookup, "MINIO_REGION", ""),
+		AccessKey:        stringFromEnv(lookup, "MINIO_ACCESS_KEY", ""),
+		SecretKey:        stringFromEnv(lookup, "MINIO_SECRET_KEY", ""),
+		BucketOriginals:  stringFromEnv(lookup, "MINIO_BUCKET_ORIGINALS", ""),
+		BucketGenerated:  stringFromEnv(lookup, "MINIO_BUCKET_GENERATED", ""),
+		BucketThumbnails: stringFromEnv(lookup, "MINIO_BUCKET_THUMBNAILS", ""),
+	})
+
+	if err := validateStorageEndpoint(storage.Endpoint); err != nil {
+		return StorageConfig{}, err
+	}
+	for key, value := range map[string]string{
+		"MINIO_REGION":            storage.Region,
+		"MINIO_ACCESS_KEY":        storage.AccessKey,
+		"MINIO_SECRET_KEY":        storage.SecretKey,
+		"MINIO_BUCKET_ORIGINALS":  storage.BucketOriginals,
+		"MINIO_BUCKET_GENERATED":  storage.BucketGenerated,
+		"MINIO_BUCKET_THUMBNAILS": storage.BucketThumbnails,
+	} {
+		if err := validateRequiredValue(key, value); err != nil {
+			return StorageConfig{}, err
+		}
+	}
+
+	return storage, nil
+}
+
+func uploadConfigFromEnv(lookup lookupFunc) (UploadConfig, error) {
+	maxFileSizeMB, err := positiveInt64FromEnv(lookup, "UPLOAD_MAX_FILE_SIZE_MB", defaultUploadMaxFileSizeMB)
+	if err != nil {
+		return UploadConfig{}, err
+	}
+	maxWidth, err := positiveIntFromEnv(lookup, "UPLOAD_MAX_WIDTH", defaultUploadMaxWidth)
+	if err != nil {
+		return UploadConfig{}, err
+	}
+	maxHeight, err := positiveIntFromEnv(lookup, "UPLOAD_MAX_HEIGHT", defaultUploadMaxHeight)
+	if err != nil {
+		return UploadConfig{}, err
+	}
+	maxPixels, err := positiveInt64FromEnv(lookup, "UPLOAD_MAX_PIXELS", defaultUploadMaxPixels)
+	if err != nil {
+		return UploadConfig{}, err
+	}
+	allowed, err := allowedMIMETypesFromEnv(lookup)
+	if err != nil {
+		return UploadConfig{}, err
+	}
+
+	return UploadConfig{
+		MaxFileSizeBytes: maxFileSizeMB * 1024 * 1024,
+		MaxWidth:         maxWidth,
+		MaxHeight:        maxHeight,
+		MaxPixels:        maxPixels,
+		AllowedMIMETypes: allowed,
+	}, nil
+}
+
+func validateStorageEndpoint(endpoint string) error {
+	if err := validateRequiredValue("MINIO_ENDPOINT", endpoint); err != nil {
+		return err
+	}
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid MINIO_ENDPOINT: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid MINIO_ENDPOINT: scheme must be http or https")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid MINIO_ENDPOINT: host is required")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("invalid MINIO_ENDPOINT: user info, path, query, and fragment are not allowed")
+	}
+	return nil
+}
+
+func allowedMIMETypesFromEnv(lookup lookupFunc) ([]string, error) {
+	raw := stringFromEnv(lookup, "UPLOAD_ALLOWED_MIME_TYPES", defaultUploadAllowedMIMEs)
+	parts := strings.Split(raw, ",")
+	allowed := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		mimeType := strings.ToLower(strings.TrimSpace(part))
+		if mimeType == "" {
+			continue
+		}
+		if !uploadMIMEAllowed(mimeType) {
+			return nil, fmt.Errorf("invalid UPLOAD_ALLOWED_MIME_TYPES: unsupported MIME type %q", mimeType)
+		}
+		if _, ok := seen[mimeType]; ok {
+			continue
+		}
+		seen[mimeType] = struct{}{}
+		allowed = append(allowed, mimeType)
+	}
+	if len(allowed) == 0 {
+		return nil, fmt.Errorf("invalid UPLOAD_ALLOWED_MIME_TYPES: at least one MIME type is required")
+	}
+	return allowed, nil
+}
+
+func uploadMIMEAllowed(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func boolFromEnv(lookup lookupFunc, key string, fallback bool) (bool, error) {

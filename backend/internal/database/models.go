@@ -140,3 +140,29 @@ type ProjectMember struct {
 func (ProjectMember) TableName() string {
 	return "project_members"
 }
+
+type ImageAsset struct {
+	ID                 string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_image_assets_tenant_id,priority:2"`
+	TenantID           string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_image_assets_tenant_id,priority:1;index:idx_image_assets_tenant_project_created,priority:1;index:idx_image_assets_tenant_project_kind,priority:1;index:idx_image_assets_tenant_favorite,priority:1;index:idx_image_assets_tenant_deleted,priority:1;index:idx_image_assets_tenant_sha256,priority:1"`
+	ProjectID          string         `gorm:"type:varchar(36);not null;index;index:idx_image_assets_tenant_project_created,priority:2;index:idx_image_assets_tenant_project_kind,priority:2"`
+	Kind               string         `gorm:"type:varchar(32);not null;index:idx_image_assets_tenant_project_kind,priority:3"`
+	Category           string         `gorm:"type:varchar(128);not null"`
+	Filename           string         `gorm:"type:varchar(255);not null"`
+	ObjectKey          string         `gorm:"type:varchar(512);not null;uniqueIndex:uk_image_assets_object_key"`
+	ThumbnailObjectKey *string        `gorm:"type:varchar(512)"`
+	MimeType           string         `gorm:"type:varchar(128);not null"`
+	SizeBytes          int64          `gorm:"type:bigint unsigned;not null"`
+	Width              int            `gorm:"type:int unsigned;not null"`
+	Height             int            `gorm:"type:int unsigned;not null"`
+	SHA256             string         `gorm:"type:char(64);not null;index:idx_image_assets_tenant_sha256,priority:2"`
+	IsFavorite         bool           `gorm:"type:boolean;not null;index:idx_image_assets_tenant_favorite,priority:2"`
+	SourceTaskID       *string        `gorm:"type:varchar(36)"`
+	CreatedBy          string         `gorm:"type:varchar(36);not null;index"`
+	CreatedAt          time.Time      `gorm:"type:datetime(3);not null;index:idx_image_assets_tenant_project_created,priority:3"`
+	UpdatedAt          time.Time      `gorm:"type:datetime(3);not null"`
+	DeletedAt          gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_image_assets_tenant_deleted,priority:2"`
+}
+
+func (ImageAsset) TableName() string {
+	return "image_assets"
+}

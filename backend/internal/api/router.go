@@ -3,11 +3,13 @@ package api
 import (
 	"log/slog"
 
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/httpx"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -17,6 +19,7 @@ type RouterOptions struct {
 	Logger       *slog.Logger
 	HealthChecks []health.DependencyChecker
 	Database     *gorm.DB
+	ObjectStore  storage.ObjectStore
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -27,25 +30,35 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	router.Use(httpx.Recovery(options.Logger))
 	router.Use(httpx.AccessLog(options.Logger))
 
+	objectStore := options.ObjectStore
+	if objectStore == nil {
+		var err error
+		objectStore, err = storage.NewMinIOStore(options.Config.Storage)
+		if err != nil && options.Logger != nil {
+			options.Logger.Error("asset storage client setup failed", slog.String("error", err.Error()))
+		}
+	}
+
 	RegisterRoutes(
 		router,
 		auth.NewService(options.Database, options.Config, options.Logger),
 		project.NewService(options.Database, options.Logger),
+		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore),
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -59,5 +72,8 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	protected.PATCH("/me/password", authService.ChangePassword)
 	if projectService != nil {
 		projectService.RegisterRoutes(protected)
+	}
+	if assetService != nil {
+		assetService.RegisterRoutes(protected)
 	}
 }
