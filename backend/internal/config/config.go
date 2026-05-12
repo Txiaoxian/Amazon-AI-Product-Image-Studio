@@ -47,6 +47,10 @@ const (
 	defaultUploadMaxHeight       = 8192
 	defaultUploadMaxPixels       = 40000000
 	defaultUploadAllowedMIMEs    = "image/jpeg,image/png,image/webp"
+	defaultAPIKeyEncryptionKey   = "change-me-32-byte-base64-key-prod-must-replace"
+	defaultAPIKeyEncryptionKeyID = "local-dev-v1"
+	defaultProviderTimeout       = 120 * time.Second
+	defaultProviderMaxRetries    = 2
 )
 
 type Config struct {
@@ -58,6 +62,7 @@ type Config struct {
 	Auth     AuthConfig
 	Storage  StorageConfig
 	Upload   UploadConfig
+	Provider ProviderConfig
 }
 
 type APIConfig struct {
@@ -112,6 +117,13 @@ type UploadConfig struct {
 	MaxHeight        int
 	MaxPixels        int64
 	AllowedMIMETypes []string
+}
+
+type ProviderConfig struct {
+	APIKeyEncryptionKey   string
+	APIKeyEncryptionKeyID string
+	DefaultTimeout        time.Duration
+	MaxRetries            int
 }
 
 type CookieConfig struct {
@@ -198,6 +210,11 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	provider, err := providerConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
@@ -218,6 +235,7 @@ func load(lookup lookupFunc) (Config, error) {
 		Auth:     auth,
 		Storage:  storage,
 		Upload:   upload,
+		Provider: provider,
 	}, nil
 }
 
@@ -411,6 +429,23 @@ func positiveIntFromEnv(lookup lookupFunc, key string, fallback int) (int, error
 	}
 	if value <= 0 {
 		return 0, fmt.Errorf("invalid %s: must be positive", key)
+	}
+
+	return value, nil
+}
+
+func nonNegativeIntFromEnv(lookup lookupFunc, key string, fallback int) (int, error) {
+	raw := stringFromEnv(lookup, key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: must be an integer", key)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("invalid %s: must be non-negative", key)
 	}
 
 	return value, nil
@@ -647,6 +682,37 @@ func uploadConfigFromEnv(lookup lookupFunc) (UploadConfig, error) {
 		MaxHeight:        maxHeight,
 		MaxPixels:        maxPixels,
 		AllowedMIMETypes: allowed,
+	}, nil
+}
+
+func providerConfigFromEnv(lookup lookupFunc) (ProviderConfig, error) {
+	encryptionKey := stringFromEnv(lookup, "API_KEY_ENCRYPTION_KEY", defaultAPIKeyEncryptionKey)
+	if err := validateRequiredValue("API_KEY_ENCRYPTION_KEY", encryptionKey); err != nil {
+		return ProviderConfig{}, err
+	}
+	if len(encryptionKey) < 32 {
+		return ProviderConfig{}, fmt.Errorf("invalid API_KEY_ENCRYPTION_KEY: must be at least 32 characters")
+	}
+
+	encryptionKeyID := stringFromEnv(lookup, "API_KEY_ENCRYPTION_KEY_ID", defaultAPIKeyEncryptionKeyID)
+	if err := validateRequiredValue("API_KEY_ENCRYPTION_KEY_ID", encryptionKeyID); err != nil {
+		return ProviderConfig{}, err
+	}
+
+	timeoutSeconds, err := positiveIntFromEnv(lookup, "PROVIDER_TIMEOUT_SECONDS", int(defaultProviderTimeout/time.Second))
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	maxRetries, err := nonNegativeIntFromEnv(lookup, "PROVIDER_MAX_RETRIES", defaultProviderMaxRetries)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+
+	return ProviderConfig{
+		APIKeyEncryptionKey:   encryptionKey,
+		APIKeyEncryptionKeyID: encryptionKeyID,
+		DefaultTimeout:        time.Duration(timeoutSeconds) * time.Second,
+		MaxRetries:            maxRetries,
 	}, nil
 }
 

@@ -328,6 +328,26 @@ var authRouteTestSchema = []string{
 		updated_at TIMESTAMP NOT NULL,
 		deleted_at TIMESTAMP NULL
 	)`,
+	`CREATE TABLE ai_providers (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		type TEXT NOT NULL,
+		name TEXT NOT NULL,
+		base_url TEXT NOT NULL,
+		encrypted_api_key TEXT NOT NULL,
+		api_key_hint TEXT NOT NULL,
+		api_key_updated_at TIMESTAMP NULL,
+		status TEXT NOT NULL,
+		timeout_seconds INTEGER NOT NULL,
+		concurrency_limit INTEGER NOT NULL,
+		last_test_status TEXT NOT NULL DEFAULT '',
+		last_tested_at TIMESTAMP NULL,
+		last_test_error TEXT NOT NULL DEFAULT '',
+		created_by TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		deleted_at TIMESTAMP NULL
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {
@@ -346,6 +366,12 @@ func authRouteTestConfig(appEnv string) config.Config {
 				CookieName: "studio_csrf",
 				HeaderName: "X-CSRF-Token",
 			},
+		},
+		Provider: config.ProviderConfig{
+			APIKeyEncryptionKey:   "0123456789abcdef0123456789abcdef",
+			APIKeyEncryptionKeyID: "test-key-v1",
+			DefaultTimeout:        120 * time.Second,
+			MaxRetries:            2,
 		},
 	}
 }

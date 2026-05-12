@@ -166,3 +166,28 @@ type ImageAsset struct {
 func (ImageAsset) TableName() string {
 	return "image_assets"
 }
+
+type AIProvider struct {
+	ID               string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_ai_providers_tenant_id,priority:2"`
+	TenantID         string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_ai_providers_tenant_id,priority:1;index:idx_ai_providers_tenant_type,priority:1;index:idx_ai_providers_tenant_status,priority:1;index:idx_ai_providers_tenant_deleted,priority:1"`
+	Type             string         `gorm:"type:varchar(32);not null;index:idx_ai_providers_tenant_type,priority:2"`
+	Name             string         `gorm:"type:varchar(255);not null"`
+	BaseURL          string         `gorm:"type:varchar(512);not null"`
+	EncryptedAPIKey  string         `gorm:"type:text;not null"`
+	APIKeyHint       string         `gorm:"type:varchar(32);not null"`
+	APIKeyUpdatedAt  *time.Time     `gorm:"type:datetime(3)"`
+	Status           string         `gorm:"type:varchar(32);not null;index:idx_ai_providers_tenant_status,priority:2"`
+	TimeoutSeconds   int            `gorm:"type:int unsigned;not null"`
+	ConcurrencyLimit int            `gorm:"type:int unsigned;not null"`
+	LastTestStatus   string         `gorm:"type:varchar(32)"`
+	LastTestedAt     *time.Time     `gorm:"type:datetime(3)"`
+	LastTestError    string         `gorm:"type:varchar(255)"`
+	CreatedBy        string         `gorm:"type:varchar(36);not null;index"`
+	CreatedAt        time.Time      `gorm:"type:datetime(3);not null"`
+	UpdatedAt        time.Time      `gorm:"type:datetime(3);not null"`
+	DeletedAt        gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_ai_providers_tenant_deleted,priority:2"`
+}
+
+func (AIProvider) TableName() string {
+	return "ai_providers"
+}

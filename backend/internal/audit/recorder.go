@@ -58,14 +58,48 @@ func (r Recorder) Record(ctx context.Context, event Event) error {
 }
 
 func sanitizeMetadata(metadata map[string]any) map[string]any {
-	clean := make(map[string]any, len(metadata))
-	for key, value := range metadata {
-		if sensitiveKey(key) {
-			continue
-		}
-		clean[key] = value
+	clean, _ := sanitizeValue(metadata).(map[string]any)
+	if clean == nil {
+		return map[string]any{}
 	}
 	return clean
+}
+
+func sanitizeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			if sensitiveKey(key) {
+				continue
+			}
+			clean[key] = sanitizeValue(nested)
+		}
+		return clean
+	case map[string]string:
+		clean := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			if sensitiveKey(key) {
+				continue
+			}
+			clean[key] = nested
+		}
+		return clean
+	case []any:
+		clean := make([]any, 0, len(typed))
+		for _, nested := range typed {
+			clean = append(clean, sanitizeValue(nested))
+		}
+		return clean
+	case []map[string]any:
+		clean := make([]any, 0, len(typed))
+		for _, nested := range typed {
+			clean = append(clean, sanitizeValue(nested))
+		}
+		return clean
+	default:
+		return value
+	}
 }
 
 func sensitiveKey(key string) bool {

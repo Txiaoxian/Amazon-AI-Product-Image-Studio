@@ -298,4 +298,39 @@ CREATE TABLE IF NOT EXISTS image_assets (
 `,
 		},
 	},
+	{
+		ID:   "202605120003_ai_providers",
+		Name: "create tenant scoped ai provider configuration table",
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS ai_providers (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  type VARCHAR(32) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  base_url VARCHAR(512) NOT NULL,
+  encrypted_api_key TEXT NOT NULL,
+  api_key_hint VARCHAR(32) NOT NULL,
+  api_key_updated_at DATETIME(3) NULL,
+  status VARCHAR(32) NOT NULL,
+  timeout_seconds INT UNSIGNED NOT NULL,
+  concurrency_limit INT UNSIGNED NOT NULL,
+  last_test_status VARCHAR(32) NOT NULL DEFAULT '',
+  last_tested_at DATETIME(3) NULL,
+  last_test_error VARCHAR(255) NOT NULL DEFAULT '',
+  created_by VARCHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  UNIQUE KEY uk_ai_providers_tenant_id (tenant_id, id),
+  KEY idx_ai_providers_tenant_type (tenant_id, type),
+  KEY idx_ai_providers_tenant_status (tenant_id, status),
+  KEY idx_ai_providers_tenant_deleted (tenant_id, deleted_at),
+  KEY idx_ai_providers_created_by (created_by),
+  CONSTRAINT fk_ai_providers_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  CONSTRAINT fk_ai_providers_created_by FOREIGN KEY (tenant_id, created_by) REFERENCES users(tenant_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Provider API keys are stored only as encrypted payloads'
+`,
+		},
+	},
 }

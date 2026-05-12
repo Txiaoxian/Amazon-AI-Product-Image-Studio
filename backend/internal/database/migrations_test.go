@@ -37,6 +37,7 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"projects",
 		"project_members",
 		"image_assets",
+		"ai_providers",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
@@ -51,6 +52,28 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 	}
 	if !strings.Contains(permissions, "System-level permission dictionary") {
 		t.Fatal("permissions migration must document the system-level tenant_id exception")
+	}
+}
+
+func TestAIProvidersMigrationProtectsSecretsAndTenantScope(t *testing.T) {
+	statement := findCreateTableStatement(t, "ai_providers")
+	for _, required := range []string{
+		"tenant_id VARCHAR(36) NOT NULL",
+		"encrypted_api_key TEXT NOT NULL",
+		"api_key_hint VARCHAR(32) NOT NULL",
+		"api_key_updated_at DATETIME(3) NULL",
+		"deleted_at DATETIME(3) NULL",
+		"UNIQUE KEY uk_ai_providers_tenant_id (tenant_id, id)",
+		"KEY idx_ai_providers_tenant_type (tenant_id, type)",
+		"KEY idx_ai_providers_tenant_status (tenant_id, status)",
+		"Provider API keys are stored only as encrypted payloads",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Fatalf("ai_providers migration missing %q", required)
+		}
+	}
+	if strings.Contains(statement, " plain_api_key") {
+		t.Fatal("ai_providers migration must not include plaintext API key storage")
 	}
 }
 
