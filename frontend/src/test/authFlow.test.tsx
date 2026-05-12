@@ -51,6 +51,15 @@ function errorResponse(status: number, code: string, message: string): Response 
   )
 }
 
+function emptyProjectPageResponse(): Response {
+  return successResponse({
+    records: [],
+    total: 0,
+    pageNum: 1,
+    pageSize: 50,
+  })
+}
+
 describe('auth flow', () => {
   afterEach(() => {
     cleanup()
@@ -59,7 +68,18 @@ describe('auth flow', () => {
   })
 
   it('loads /me on startup and shows the current user with the existing workbench', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(successResponse(authenticatedSession))
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
@@ -78,10 +98,21 @@ describe('auth flow', () => {
 
   it('shows a login screen when unauthenticated and stores the returned CSRF token only in memory', async () => {
     const user = userEvent.setup()
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.'))
-      .mockResolvedValueOnce(successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_login' }))
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+      if (url === '/api/v1/auth/login') {
+        return successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_login' })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
@@ -115,10 +146,21 @@ describe('auth flow', () => {
 
   it('logs out with the in-memory CSRF token and returns to the login screen', async () => {
     const user = userEvent.setup()
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_me' }))
-      .mockResolvedValueOnce(successResponse({ ok: true }))
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_me' })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+      if (url === '/api/v1/auth/logout') {
+        return successResponse({ ok: true })
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
@@ -126,16 +168,28 @@ describe('auth flow', () => {
     await user.click(await screen.findByRole('button', { name: '退出' }))
 
     expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
-    expect(fetchImpl.mock.calls[1][0]).toBe('/api/v1/auth/logout')
-    expect((fetchImpl.mock.calls[1][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+    const logoutCall = fetchImpl.mock.calls.find(([url]) => url === '/api/v1/auth/logout')
+    expect(logoutCall?.[0]).toBe('/api/v1/auth/logout')
+    expect((logoutCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
   })
 
   it('clears the current session when a state-changing auth request returns 401', async () => {
     const user = userEvent.setup()
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(successResponse({ ...authenticatedSession, csrfToken: 'csrf_stale' }))
-      .mockResolvedValueOnce(errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.'))
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({ ...authenticatedSession, csrfToken: 'csrf_stale' })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+      if (url === '/api/v1/auth/logout') {
+        return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)

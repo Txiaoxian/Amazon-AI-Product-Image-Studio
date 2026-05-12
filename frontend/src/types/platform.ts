@@ -57,14 +57,17 @@ export interface Project {
   id: ProjectId
   tenantId: TenantId
   name: string
-  description?: string
+  brand: string
+  asin: string
+  site: string
+  notes: string
   status: ProjectStatus
   createdBy: UserId
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
 }
 
-export type AssetKind = 'REFERENCE' | 'GENERATED' | 'EDIT_SOURCE'
+export type AssetKind = 'REFERENCE' | 'GENERATED' | 'EDITED'
 export type AssetMimeType = 'image/jpeg' | 'image/png' | 'image/webp'
 
 export interface Asset {
@@ -73,6 +76,7 @@ export interface Asset {
   projectId: ProjectId
   taskId?: TaskId
   kind: AssetKind
+  category: string
   filename: string
   mimeType: AssetMimeType
   fileSize: number

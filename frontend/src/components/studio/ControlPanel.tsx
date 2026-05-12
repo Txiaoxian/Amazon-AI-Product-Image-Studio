@@ -31,11 +31,22 @@ interface ControlPanelProps {
   defaultResolution: ImageResolution
   isGenerating: boolean
   draft?: ControlPanelDraft | null
+  referenceToAdd?: ReferenceImageInput | null
   onGenerate: (request: GenerationRequest) => Promise<void>
   onError: (message: string) => void
+  onReferenceAdded?: () => void
 }
 
-export function ControlPanel({ defaultModelId, defaultResolution, isGenerating, draft, onGenerate, onError }: ControlPanelProps) {
+export function ControlPanel({
+  defaultModelId,
+  defaultResolution,
+  isGenerating,
+  draft,
+  referenceToAdd,
+  onGenerate,
+  onError,
+  onReferenceAdded,
+}: ControlPanelProps) {
   const [prompt, setPrompt] = useState('')
   const [modelId, setModelId] = useState(defaultModelId)
   const [quality, setQuality] = useState<ImageResolution>(defaultResolution)
@@ -92,6 +103,22 @@ export function ControlPanel({ defaultModelId, defaultResolution, isGenerating, 
       return []
     })
   }, [references.length, supportsLocalReferences])
+
+  useEffect(() => {
+    if (!referenceToAdd) {
+      return
+    }
+
+    if (!supportsLocalReferences) {
+      URL.revokeObjectURL(referenceToAdd.previewUrl)
+      onError('当前模型不支持本地参考图，请切换模型后重试。')
+      onReferenceAdded?.()
+      return
+    }
+
+    setReferences((currentReferences) => [...currentReferences, referenceToAdd])
+    onReferenceAdded?.()
+  }, [onError, onReferenceAdded, referenceToAdd, supportsLocalReferences])
 
   return (
     <aside className="panel flex min-h-0 flex-col">
