@@ -93,14 +93,14 @@ cd .. && docker compose -f deploy/docker-compose.yml config
 
 ## P5: Project and asset management
 
-Status: in progress. Backend project and asset storage slices have been reviewed and merged. The next P5 slice is frontend project/asset integration. Do not start Provider/model management or task/SSE implementation in P5.
+Status: completed. Backend project, backend asset storage, frontend project/asset integration, and R5 review have all been reviewed and merged into `main`. Do not treat P5 as generation backendization: old frontend AI Provider direct calls, localStorage Provider API keys, and IndexedDB local history remain documented transition risks and must be removed in P8 after P6/P7 backend replacements exist.
 
 Execution order:
 
 1. `P5-BE-PROJECTS`: backend project and project member foundation. Completed and merged.
 2. `P5-BE-ASSET-STORAGE`: backend MinIO storage service, upload validation, asset APIs, and authorized downloads. Completed and merged.
-3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection. Next.
-4. `R5`: main-agent review, integration, and contract cleanup.
+3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection. Completed and merged.
+4. `R5`: main-agent review, integration, regression, and contract cleanup. Completed.
 
 P5 backend project requirements:
 
@@ -145,6 +145,14 @@ P5 frontend requirements:
 - Use the merged backend contracts for `/api/v1/projects`, `/api/v1/projects/{projectId}/assets`, and `/api/v1/assets/{assetId}`.
 - Do not introduce task polling, Provider/model management, or frontend generation backendization in P5.
 
+P5 frontend result:
+
+- Added authenticated project and asset API wrappers on top of the existing frontend API client.
+- Added project selector/create UI, reference upload, asset list, asset detail actions, favorite/delete/download actions, and "use as reference" workbench wiring.
+- State-changing project and asset requests use the existing in-memory CSRF flow; no JWT, CSRF token, or Provider credential persistence was added.
+- Download goes through backend authorization and is handled as a browser blob response.
+- Existing generation submission and local history remain available as transition behavior until P8.
+
 P5 acceptance gates:
 
 - Project and asset APIs require authentication, tenant filtering, RBAC, and object-level authorization.
@@ -153,15 +161,52 @@ P5 acceptance gates:
 - Download requires backend authorization.
 - Frontend does not store Provider API keys, auth tokens, or image blobs as backend asset truth.
 
-P5 backend verification after merge:
+P5 R5 review result:
+
+- P5 backend project and asset APIs enforce authentication, tenant filters, RBAC, project membership, object-level authorization, and soft delete behavior.
+- P5 asset upload tests cover forged MIME, invalid image bytes, SVG rejection, file size, dimensions, and pixel-count validation.
+- P5 frontend integration did not add new AI Provider direct calls, API key persistence, auth token persistence, or task polling.
+- Shared local development services were used for validation; no project-specific MySQL, Redis, or MinIO environment was created.
+
+P5 non-blocking backlog:
+
+- Frontend project creation currently clears form inputs before the async create result is known; later UX hardening should clear only after success.
+- Frontend upload precheck still uses the local 15 MB limit while the backend default allows 25 MB. Until system settings are exposed to the frontend, backend validation remains the source of truth.
+- Uploaded-object cleanup after a DB failure is implemented, but should later use an independent cleanup context and/or cleanup job for request-cancellation edge cases.
+- New built-in asset permissions are seeded for new tenants; a later reconciliation task should backfill built-in permissions for existing tenants.
+- Bucket creation/bootstrap remains a deployment or local-environment responsibility.
+
+P5 full verification after merge:
 
 ```bash
-cd backend
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
 go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
 ```
+
+Actual R5 local checks also confirmed the shared local services were running and reachable:
+
+```bash
+docker ps --format '{{.Names}}\t{{.Status}}' | rg '^dev-(mysql8|redis|minio)\b'
+docker exec dev-redis redis-cli ping
+nc -vz 127.0.0.1 3306
+nc -vz 127.0.0.1 6379
+nc -vz 127.0.0.1 9000
+```
+
+The project is ready to enter P6 Provider and model management.
 
 ## P6: Provider and model management
 

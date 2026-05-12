@@ -112,6 +112,16 @@ Project members can have project-level roles such as:
 
 Project role checks should combine with tenant RBAC. For example, a user needs `task:create` and project editor access to submit a task in that project.
 
+Current P5 project/asset role mapping:
+
+- Project create requires tenant RBAC `project:create`; the creator becomes project `OWNER`.
+- Project read accepts tenant admin access or `project:read` plus project membership.
+- Project update/delete require tenant admin access or the matching RBAC permission plus project `OWNER`.
+- Asset read/download accept tenant admin access or `asset:read`/`asset:download` plus project `OWNER`, `EDITOR`, or `VIEWER`.
+- Asset upload/update require tenant admin access or `asset:upload`/`asset:update` plus project `OWNER` or `EDITOR`.
+- Asset delete requires tenant admin access or `asset:delete` plus project `OWNER`.
+- Asset object APIs resolve `asset -> project` first, then apply tenant, RBAC, and project membership checks.
+
 ## Audit requirements
 
 Record operation logs for:

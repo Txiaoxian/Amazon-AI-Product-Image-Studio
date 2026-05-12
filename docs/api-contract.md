@@ -125,6 +125,12 @@ Project member rules for P5:
 - Project member APIs require `project:member:manage` or tenant admin permission.
 - Project object APIs must combine RBAC permission and project membership. For example, asset upload requires `asset:upload` and project `OWNER` or `EDITOR`.
 
+Current P5 implementation status:
+
+- Backend implements project CRUD, project member APIs, tenant-scoped object authorization, and operation logs.
+- Frontend uses `GET /projects` and `POST /projects` for project selection and project creation in the workbench.
+- Project member management is backend-ready; a richer frontend management screen can be added later without changing this contract.
+
 ## Asset APIs
 
 - `GET /projects/{projectId}/assets`
@@ -151,6 +157,9 @@ Asset payload rules for P5:
 - `DELETE /assets/{assetId}` is soft delete.
 - `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
 - Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. Edit-source remains a later workbench/backendization concern.
+- Current P5 frontend implementation consumes project-scoped asset list/upload and asset detail/update/delete/favorite/download through the authenticated API client with `credentials: include`.
+- P5 frontend downloads use the backend download endpoint as a blob response; the browser must not talk to MinIO directly.
+- P5 frontend must not depend on `POST /assets/{assetId}/edit-source`; selecting an asset as a local reference is transition UI only until P8 backendization.
 
 ## Task APIs
 

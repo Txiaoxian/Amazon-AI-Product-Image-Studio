@@ -899,14 +899,16 @@ P5 原始“项目与资产管理”范围较大，必须拆成串行 worktree�
 
 - `P5-BE-PROJECTS` 已 review 并合并到 `main`。
 - `P5-BE-ASSET-STORAGE` 已 review 并合并到 `main`。
-- 下一步只启动 `P5-FE-PROJECT-ASSETS`，从最新 `main` 派生或重置 `codex/p5-frontend-project-assets`。
+- `P5-FE-PROJECT-ASSETS` 已 review 并合并到 `main`。
+- `R5` 已完成主 agent review、集成回归和公共合同文档更新。
+- 下一步进入 `P6-PROVIDER-MODEL`，仍不要并行启动任务队列、SSE 或前端生成后端化。
 
 推荐顺序：
 
 1. `P5-BE-PROJECTS` - completed.
 2. `P5-BE-ASSET-STORAGE` - completed.
-3. `P5-FE-PROJECT-ASSETS` - next.
-4. `R5`
+3. `P5-FE-PROJECT-ASSETS` - completed.
+4. `R5` - completed.
 
 ## 子任务 10：项目与项目成员后端基础
 
@@ -1137,6 +1139,14 @@ npm run build
 git diff --check
 ```
 
+### Review 结果
+
+- 允许合并，已合并。
+- 已接入项目列表/创建/选择、参考资产上传、资产列表、详情动作、收藏、软删除、下载和选择为参考图。
+- 前端请求复用 authenticated API client 和 in-memory CSRF；没有新增 JWT、CSRF token、Provider API Key 持久化。
+- 没有新增 AI Provider 直连、任务轮询、Provider/model 管理或生成提交后端化。
+- 非阻塞遗留：项目创建失败时表单已提前清空，后续应改为成功后清空；前端上传预检仍是 15 MB，后续应从系统设置或后端合同读取限制。
+
 ## 串行阶段 5：P5 review 和集成
 
 ### 任务名称
@@ -1201,6 +1211,19 @@ cd ..
 docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
+
+### R5 结果
+
+- P5 三个子任务均已合并到 `main`。
+- 主 agent 完成 P5 全量 review，确认项目/资产 API 具备认证、tenant filter、RBAC、项目成员授权、对象级授权、上传校验、软删除和授权下载。
+- 前端项目/资产 UI 没有新增 Provider 直连、API Key 持久化、auth token 持久化或任务状态轮询。
+- 合并后回归通过：
+  - `cd frontend && npm run lint && npm run type-check && npm run test && npm run build`
+  - `cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`
+  - `docker compose -f deploy/docker-compose.yml config`
+  - `git diff --check`
+- 已确认共享本地 `dev-mysql8`、`dev-redis`、`dev-minio` 运行并可达，没有创建项目专属开发环境。
+- 公共合同文档已按 P5 实际结果更新，项目可以进入 `P6-PROVIDER-MODEL`。
 
 ## 子任务 13：Provider 与模型管理
 

@@ -59,6 +59,8 @@ P5 validation must happen before any object is written. If validation fails, no 
 
 Current P5 backend behavior validates before object write and attempts to delete the uploaded object if metadata persistence fails. A later hardening task should move this cleanup to an independent timeout context or background cleanup path so request cancellation cannot prevent cleanup.
 
+Current P5 frontend behavior uploads reference images through the backend multipart endpoint only. The browser never uploads directly to MinIO, and frontend MIME/size checks are only UX hints; backend validation is authoritative.
+
 ## Metadata
 
 `image_assets` stores:
@@ -91,6 +93,8 @@ Public permanent object URLs are not allowed for private tenant assets.
 P5 may stream through the backend as the default implementation. Short-lived signed URLs are allowed only after authentication, tenant filtering, and object-level authorization pass.
 
 Current P5 backend behavior streams downloads through the backend after `asset -> project` authorization. Public permanent MinIO URLs remain forbidden.
+
+Current P5 frontend behavior downloads through `GET /assets/{assetId}/download` and handles the response as a browser blob. Frontend code must not construct MinIO URLs or expose object keys as downloadable URLs.
 
 ## Thumbnail generation
 

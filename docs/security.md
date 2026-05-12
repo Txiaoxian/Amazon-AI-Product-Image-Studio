@@ -1,6 +1,6 @@
 # Security Plan
 
-## Current transition risks after P4
+## Current transition risks after P5
 
 The current `main` branch is still a migration baseline, not a compliant platform release. The following risks are known and must be removed in the documented phases:
 
@@ -17,12 +17,14 @@ Resolved transition item:
 
 - P3 removed the frontend Nginx AI relay route. The frontend container must continue to proxy `/api/` only to `backend-api` and must not proxy AI Providers.
 - P5 backend asset upload now validates MIME, magic bytes, size, dimensions, and pixel count before storing reference images in MinIO.
+- P5 frontend project/asset UI now uses authenticated backend project and asset APIs for reference uploads, metadata, favorite/delete, and downloads. It does not talk to MinIO directly and did not add new AI Provider direct calls, Provider API key persistence, auth token persistence, or task polling.
 
 P5 review hardening backlog:
 
 - Uploaded-object cleanup after metadata persistence failure should use an independent cleanup context or background cleanup job so request cancellation cannot prevent cleanup.
 - Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
+- Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.
 
 P4 review hardening backlog:
 
