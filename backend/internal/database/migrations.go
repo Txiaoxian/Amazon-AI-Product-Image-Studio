@@ -255,6 +255,46 @@ CREATE TABLE IF NOT EXISTS project_members (
   CONSTRAINT fk_project_members_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id),
   CONSTRAINT fk_project_members_user FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+			`,
+		},
+	},
+	{
+		ID:   "202605120002_image_assets",
+		Name: "create image asset metadata table",
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS image_assets (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  project_id VARCHAR(36) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  category VARCHAR(128) NOT NULL DEFAULT '',
+  filename VARCHAR(255) NOT NULL DEFAULT '',
+  object_key VARCHAR(512) NOT NULL,
+  thumbnail_object_key VARCHAR(512) NULL,
+  mime_type VARCHAR(128) NOT NULL,
+  size_bytes BIGINT UNSIGNED NOT NULL,
+  width INT UNSIGNED NOT NULL,
+  height INT UNSIGNED NOT NULL,
+  sha256 CHAR(64) NOT NULL,
+  is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+  source_task_id VARCHAR(36) NULL,
+  created_by VARCHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  UNIQUE KEY uk_image_assets_tenant_id (tenant_id, id),
+  UNIQUE KEY uk_image_assets_object_key (object_key),
+  KEY idx_image_assets_tenant_project_created (tenant_id, project_id, created_at),
+  KEY idx_image_assets_tenant_project_kind (tenant_id, project_id, kind),
+  KEY idx_image_assets_tenant_favorite (tenant_id, is_favorite),
+  KEY idx_image_assets_tenant_deleted (tenant_id, deleted_at),
+  KEY idx_image_assets_tenant_sha256 (tenant_id, sha256),
+  KEY idx_image_assets_created_by (created_by),
+  CONSTRAINT fk_image_assets_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  CONSTRAINT fk_image_assets_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id),
+  CONSTRAINT fk_image_assets_created_by FOREIGN KEY (tenant_id, created_by) REFERENCES users(tenant_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Image metadata only; bytes live in MinIO object_key'
 `,
 		},
 	},

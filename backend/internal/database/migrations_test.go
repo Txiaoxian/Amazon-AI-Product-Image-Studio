@@ -36,6 +36,7 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"operation_logs",
 		"projects",
 		"project_members",
+		"image_assets",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
@@ -50,6 +51,31 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 	}
 	if !strings.Contains(permissions, "System-level permission dictionary") {
 		t.Fatal("permissions migration must document the system-level tenant_id exception")
+	}
+}
+
+func TestImageAssetsMigrationStoresMetadataOnly(t *testing.T) {
+	statement := findCreateTableStatement(t, "image_assets")
+	for _, required := range []string{
+		"object_key VARCHAR(512) NOT NULL",
+		"thumbnail_object_key VARCHAR(512) NULL",
+		"mime_type VARCHAR(128) NOT NULL",
+		"size_bytes BIGINT UNSIGNED NOT NULL",
+		"sha256 CHAR(64) NOT NULL",
+		"deleted_at DATETIME(3) NULL",
+		"KEY idx_image_assets_tenant_project_created (tenant_id, project_id, created_at)",
+		"KEY idx_image_assets_tenant_project_kind (tenant_id, project_id, kind)",
+		"KEY idx_image_assets_tenant_favorite (tenant_id, is_favorite)",
+		"KEY idx_image_assets_tenant_deleted (tenant_id, deleted_at)",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Fatalf("image_assets migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{" BLOB", " LONGBLOB", " MEDIUMBLOB", " TINYBLOB", "base64"} {
+		if strings.Contains(strings.ToLower(statement), strings.ToLower(forbidden)) {
+			t.Fatalf("image_assets migration must not store image bytes: found %q", forbidden)
+		}
 	}
 }
 

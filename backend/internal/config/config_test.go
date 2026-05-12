@@ -82,6 +82,24 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.CSRF.HeaderName != "X-CSRF-Token" {
 		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-CSRF-Token", cfg.Auth.CSRF.HeaderName)
 	}
+	if cfg.Storage.Endpoint != "http://127.0.0.1:9000" {
+		t.Fatalf("Storage.Endpoint = %q, want http://127.0.0.1:9000", cfg.Storage.Endpoint)
+	}
+	if cfg.Storage.BucketOriginals != "product-originals" {
+		t.Fatalf("Storage.BucketOriginals = %q, want product-originals", cfg.Storage.BucketOriginals)
+	}
+	if cfg.Upload.MaxFileSizeBytes != 25*1024*1024 {
+		t.Fatalf("Upload.MaxFileSizeBytes = %d, want 25MiB", cfg.Upload.MaxFileSizeBytes)
+	}
+	if cfg.Upload.MaxWidth != 8192 || cfg.Upload.MaxHeight != 8192 {
+		t.Fatalf("Upload max dimensions = %dx%d, want 8192x8192", cfg.Upload.MaxWidth, cfg.Upload.MaxHeight)
+	}
+	if cfg.Upload.MaxPixels != 40000000 {
+		t.Fatalf("Upload.MaxPixels = %d, want 40000000", cfg.Upload.MaxPixels)
+	}
+	if len(cfg.Upload.AllowedMIMETypes) != 3 || cfg.Upload.AllowedMIMETypes[0] != "image/jpeg" {
+		t.Fatalf("Upload.AllowedMIMETypes = %#v, want image/jpeg,image/png,image/webp", cfg.Upload.AllowedMIMETypes)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -116,6 +134,18 @@ func TestLoadOverrides(t *testing.T) {
 		"CSRF_ENABLED":                 "false",
 		"CSRF_COOKIE_NAME":             "csrf_test",
 		"CSRF_HEADER_NAME":             "X-Test-CSRF",
+		"MINIO_ENDPOINT":               "https://minio.example.com",
+		"MINIO_REGION":                 "us-west-2",
+		"MINIO_ACCESS_KEY":             "local-access",
+		"MINIO_SECRET_KEY":             "local-secret",
+		"MINIO_BUCKET_ORIGINALS":       "originals-test",
+		"MINIO_BUCKET_GENERATED":       "generated-test",
+		"MINIO_BUCKET_THUMBNAILS":      "thumbs-test",
+		"UPLOAD_MAX_FILE_SIZE_MB":      "9",
+		"UPLOAD_MAX_WIDTH":             "2048",
+		"UPLOAD_MAX_HEIGHT":            "1536",
+		"UPLOAD_MAX_PIXELS":            "3000000",
+		"UPLOAD_ALLOWED_MIME_TYPES":    "image/png,image/webp",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -218,6 +248,33 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Auth.CSRF.HeaderName != "X-Test-CSRF" {
 		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-Test-CSRF", cfg.Auth.CSRF.HeaderName)
+	}
+	if cfg.Storage.Endpoint != "https://minio.example.com" {
+		t.Fatalf("Storage.Endpoint = %q, want https://minio.example.com", cfg.Storage.Endpoint)
+	}
+	if cfg.Storage.Region != "us-west-2" {
+		t.Fatalf("Storage.Region = %q, want us-west-2", cfg.Storage.Region)
+	}
+	if cfg.Storage.AccessKey != "local-access" {
+		t.Fatal("Storage.AccessKey override was not loaded")
+	}
+	if cfg.Storage.SecretKey != "local-secret" {
+		t.Fatal("Storage.SecretKey override was not loaded")
+	}
+	if cfg.Storage.BucketOriginals != "originals-test" || cfg.Storage.BucketGenerated != "generated-test" || cfg.Storage.BucketThumbnails != "thumbs-test" {
+		t.Fatalf("Storage buckets = %#v", cfg.Storage)
+	}
+	if cfg.Upload.MaxFileSizeBytes != 9*1024*1024 {
+		t.Fatalf("Upload.MaxFileSizeBytes = %d, want 9MiB", cfg.Upload.MaxFileSizeBytes)
+	}
+	if cfg.Upload.MaxWidth != 2048 || cfg.Upload.MaxHeight != 1536 {
+		t.Fatalf("Upload max dimensions = %dx%d, want 2048x1536", cfg.Upload.MaxWidth, cfg.Upload.MaxHeight)
+	}
+	if cfg.Upload.MaxPixels != 3000000 {
+		t.Fatalf("Upload.MaxPixels = %d, want 3000000", cfg.Upload.MaxPixels)
+	}
+	if len(cfg.Upload.AllowedMIMETypes) != 2 || cfg.Upload.AllowedMIMETypes[0] != "image/png" || cfg.Upload.AllowedMIMETypes[1] != "image/webp" {
+		t.Fatalf("Upload.AllowedMIMETypes = %#v, want image/png,image/webp", cfg.Upload.AllowedMIMETypes)
 	}
 }
 
