@@ -24,6 +24,7 @@ export interface ApiClientConfig {
 
 export interface ApiClient {
   request<TData>(path: string, options?: ApiRequestOptions): Promise<TData>
+  raw(path: string, options?: ApiRequestOptions): Promise<Response>
   get<TData>(path: string, options?: ApiRequestOptions): Promise<TData>
   post<TData>(path: string, body?: ApiRequestOptions['body'], options?: ApiRequestOptions): Promise<TData>
   patch<TData>(path: string, body?: ApiRequestOptions['body'], options?: ApiRequestOptions): Promise<TData>
@@ -62,6 +63,14 @@ export function isUnauthorizedError(error: unknown): boolean {
   return isApiClientError(error) && error.status === 401
 }
 
+export const CSRF_HEADER_NAME = 'X-CSRF-Token'
+
+export function csrfHeaders(csrfToken: string): HeadersInit {
+  return {
+    [CSRF_HEADER_NAME]: csrfToken,
+  }
+}
+
 export function createApiClient(config: ApiClientConfig = {}): ApiClient {
   const request = <TData>(path: string, options: ApiRequestOptions = {}) =>
     apiRequest<TData>(path, {
@@ -69,9 +78,16 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
       baseUrl: options.baseUrl ?? config.baseUrl,
       fetchImpl: options.fetchImpl ?? config.fetchImpl,
     })
+  const raw = (path: string, options: ApiRequestOptions = {}) =>
+    apiRawRequest(path, {
+      ...options,
+      baseUrl: options.baseUrl ?? config.baseUrl,
+      fetchImpl: options.fetchImpl ?? config.fetchImpl,
+    })
 
   return {
     request,
+    raw,
     get: <TData>(path: string, options: ApiRequestOptions = {}) =>
       request<TData>(path, { ...options, method: 'GET' }),
     post: <TData>(path: string, body?: ApiRequestOptions['body'], options: ApiRequestOptions = {}) =>
@@ -86,6 +102,11 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
 export const apiClient = createApiClient()
 
 export async function apiRequest<TData>(path: string, options: ApiRequestOptions = {}): Promise<TData> {
+  const response = await apiRawRequest(path, options)
+  return parseApiSuccessResponse<TData>(response)
+}
+
+export async function apiRawRequest(path: string, options: ApiRequestOptions = {}): Promise<Response> {
   const {
     baseUrl = DEFAULT_API_BASE_URL,
     body: requestBody,
@@ -116,7 +137,7 @@ export async function apiRequest<TData>(path: string, options: ApiRequestOptions
     throw await parseApiErrorResponse(response)
   }
 
-  return parseApiSuccessResponse<TData>(response)
+  return response
 }
 
 export async function parseApiSuccessResponse<TData>(response: Response): Promise<TData> {

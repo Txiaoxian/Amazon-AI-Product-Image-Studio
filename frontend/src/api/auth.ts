@@ -1,7 +1,5 @@
 import type { AuthMutationResponse, AuthSession, ChangePasswordRequest, InitAdminRequest, LoginRequest } from '../types/auth'
-import { apiClient, type ApiClient } from './client'
-
-const CSRF_HEADER_NAME = 'X-CSRF-Token'
+import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface AuthApi {
   initAdmin(request: InitAdminRequest): Promise<AuthSession>
@@ -24,12 +22,6 @@ export function createAuthApi(client: ApiClient = apiClient): AuthApi {
       client.patch<AuthMutationResponse>('/me/password', request, {
         headers: csrfHeaders(csrfToken),
       }),
-  }
-}
-
-function csrfHeaders(csrfToken: string): HeadersInit {
-  return {
-    [CSRF_HEADER_NAME]: csrfToken,
   }
 }
 
