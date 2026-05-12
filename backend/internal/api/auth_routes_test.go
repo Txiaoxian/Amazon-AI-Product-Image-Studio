@@ -284,6 +284,29 @@ var authRouteTestSchema = []string{
 		metadata_json TEXT NULL,
 		created_at TIMESTAMP NOT NULL
 	)`,
+	`CREATE TABLE projects (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		brand TEXT NOT NULL,
+		asin TEXT NOT NULL,
+		site TEXT NOT NULL,
+		notes TEXT NULL,
+		status TEXT NOT NULL,
+		created_by TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		deleted_at TIMESTAMP NULL
+	)`,
+	`CREATE TABLE project_members (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		role TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {
