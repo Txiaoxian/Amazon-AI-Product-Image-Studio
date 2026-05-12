@@ -19,6 +19,8 @@ Buckets may be separated by environment using prefixes or environment-specific b
 
 P5 should use the existing MinIO environment variables and the shared local `dev-minio` service for routine validation. Do not create project-specific MinIO containers or volumes for ordinary P5 development.
 
+Current P5 implementation uses the configured originals bucket, defaulting to `product-originals`, for uploaded reference images. Bucket creation is not performed by request handlers; shared local and deployment environments must create or verify required buckets before upload tests.
+
 ## Object key naming
 
 Use deterministic, non-guessable object keys:
@@ -55,6 +57,8 @@ Forbidden:
 
 P5 validation must happen before any object is written. If validation fails, no image metadata row or MinIO object should remain. If a DB write fails after object upload, the implementation must either delete the just-uploaded object or record enough information for deterministic cleanup.
 
+Current P5 backend behavior validates before object write and attempts to delete the uploaded object if metadata persistence fails. A later hardening task should move this cleanup to an independent timeout context or background cleanup path so request cancellation cannot prevent cleanup.
+
 ## Metadata
 
 `image_assets` stores:
@@ -86,6 +90,8 @@ Public permanent object URLs are not allowed for private tenant assets.
 
 P5 may stream through the backend as the default implementation. Short-lived signed URLs are allowed only after authentication, tenant filtering, and object-level authorization pass.
 
+Current P5 backend behavior streams downloads through the backend after `asset -> project` authorization. Public permanent MinIO URLs remain forbidden.
+
 ## Thumbnail generation
 
 Reference uploads and generated outputs should create thumbnails. Thumbnail creation may run synchronously for small files or through a worker path later.
@@ -93,3 +99,5 @@ Reference uploads and generated outputs should create thumbnails. Thumbnail crea
 ## Deletion
 
 Default deletion is soft delete in MySQL. Physical MinIO deletion should be handled by a controlled cleanup job after retention rules are defined.
+
+Current P5 backend behavior soft-deletes asset metadata and leaves physical object deletion to a future retention/cleanup job.

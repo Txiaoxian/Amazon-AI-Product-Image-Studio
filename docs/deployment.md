@@ -77,6 +77,8 @@ Root `.env.example` should document:
 
 Never commit real secrets.
 
+P5 asset storage expects the configured MinIO buckets to exist before uploads are exercised. Current backend request handlers do not create buckets. Deployment or environment bootstrap must create or verify `MINIO_BUCKET_ORIGINALS`, `MINIO_BUCKET_GENERATED`, and `MINIO_BUCKET_THUMBNAILS`.
+
 ## Health checks
 
 Required health checks:

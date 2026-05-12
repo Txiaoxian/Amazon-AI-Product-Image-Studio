@@ -9,13 +9,20 @@ The current `main` branch is still a migration baseline, not a compliant platfor
 | Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | P8 frontend backendization | No API key field is persisted in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
 | Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, `frontend/src/hooks/useGeneration.ts` | P8 frontend backendization, after P6/P7 backend replacements exist | Browser generation flow creates backend tasks only; no Provider `Authorization` header is created in frontend. |
 | Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | P8 frontend backendization, after P5 asset APIs exist | Project assets and task history APIs are the primary data source; IndexedDB is limited to drafts or temporary previews. |
-| Upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` | P5 asset management | Backend upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
+| Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` | P8 frontend backendization for legacy generation paths | Backend asset upload already rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. Legacy local paths must not be treated as platform asset storage. |
 
 These risks are tracked so future agents do not treat the transition state as acceptable production architecture.
 
 Resolved transition item:
 
 - P3 removed the frontend Nginx AI relay route. The frontend container must continue to proxy `/api/` only to `backend-api` and must not proxy AI Providers.
+- P5 backend asset upload now validates MIME, magic bytes, size, dimensions, and pixel count before storing reference images in MinIO.
+
+P5 review hardening backlog:
+
+- Uploaded-object cleanup after metadata persistence failure should use an independent cleanup context or background cleanup job so request cancellation cannot prevent cleanup.
+- Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
+- MinIO bucket creation or verification remains an environment/deployment responsibility.
 
 P4 review hardening backlog:
 

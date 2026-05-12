@@ -895,11 +895,17 @@ docker compose -f deploy/docker-compose.yml config
 
 P5 原始“项目与资产管理”范围较大，必须拆成串行 worktree。第一批不要并行做 Provider/model、任务队列、SSE 或前端工作台后端化。公共合同文件仍只能由主 agent 修改。
 
+当前状态：
+
+- `P5-BE-PROJECTS` 已 review 并合并到 `main`。
+- `P5-BE-ASSET-STORAGE` 已 review 并合并到 `main`。
+- 下一步只启动 `P5-FE-PROJECT-ASSETS`，从最新 `main` 派生或重置 `codex/p5-frontend-project-assets`。
+
 推荐顺序：
 
-1. `P5-BE-PROJECTS`
-2. `P5-BE-ASSET-STORAGE`
-3. `P5-FE-PROJECT-ASSETS`
+1. `P5-BE-PROJECTS` - completed.
+2. `P5-BE-ASSET-STORAGE` - completed.
+3. `P5-FE-PROJECT-ASSETS` - next.
 4. `R5`
 
 ## 子任务 10：项目与项目成员后端基础
@@ -967,6 +973,12 @@ go test -race ./...
 go vet ./...
 git diff --check
 ```
+
+### Review 结果
+
+- 允许合并，已合并。
+- 已实现 project CRUD、project member 管理、tenant-scoped 查询、对象级授权 helper 和 operation logs。
+- 非阻塞遗留：后续可增加“至少保留一个 OWNER”约束，避免普通项目成员失去自助管理入口。
 
 ## 子任务 11：资产存储与图片上传后端基础
 
@@ -1041,6 +1053,13 @@ git diff --check
 
 如果执行真实 MinIO 集成检查，必须使用 `docs/local-development.md` 中的共享 `dev-minio`，不得启动项目专属 MinIO。
 
+### Review 结果
+
+- 允许合并，已合并。
+- 已实现 `image_assets`、MinIO object store、上传校验、asset CRUD/favorite/download API、软删除和 operation logs。
+- 资产访问通过 `asset -> project` 关系复用项目 RBAC 与 membership 检查。
+- 非阻塞遗留：上传后 DB 失败的对象清理应后续改为独立 cleanup context 或清理任务；已有租户的内置 `asset:*` 权限需要后续 reconciliation；MinIO bucket bootstrap 仍由部署或本地环境负责。
+
 ## 子任务 12：前端项目与资产接入
 
 ### 任务名称
@@ -1073,12 +1092,14 @@ P5-FE-PROJECT-ASSETS - 项目选择、参考图上传、资产列表与下载 UI
 
 ### 前置依赖
 
-- `P5-BE-PROJECTS` 合并完成。
-- `P5-BE-ASSET-STORAGE` 合并完成。
+- `P5-BE-PROJECTS` 已合并完成。
+- `P5-BE-ASSET-STORAGE` 已合并完成。
+- `codex/p5-frontend-project-assets` 必须基于包含上述两个后端合并提交的最新 `main`。
 
 ### 具体开发内容
 
 - 增加 project 和 asset API wrappers，使用已有 authenticated API client 和 `credentials: include`。
+- 按已合并后端接口接入 `/api/v1/projects`、`/api/v1/projects/{projectId}/assets`、`/api/v1/assets/{assetId}`。
 - 增加项目列表、创建项目、项目选择状态。
 - 增加项目资产列表、详情入口、收藏、软删除和下载动作。
 - 增加参考图上传 UI，使用 multipart/form-data 直传后端。
@@ -1086,6 +1107,7 @@ P5-FE-PROJECT-ASSETS - 项目选择、参考图上传、资产列表与下载 UI
 - 将“选择项目”和“选择参考资产”接入现有工作台，不替换生成提交路径。
 - 旧 IndexedDB 历史仍可展示，但不能冒充后端资产库。
 - 处理 401/403/404/422 错误状态和 loading/empty/error UI。
+- 不要在 P5-FE 中实现任务创建、SSE、Provider/model 管理或替换旧生成提交路径。
 
 ### 安全要求
 

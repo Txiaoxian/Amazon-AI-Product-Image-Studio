@@ -135,7 +135,7 @@ Project member rules for P5:
 - `POST /assets/{assetId}/favorite`
 - `DELETE /assets/{assetId}/favorite`
 - `GET /assets/{assetId}/download`
-- `POST /assets/{assetId}/edit-source`: prepare asset as edit reference.
+- `POST /assets/{assetId}/edit-source`: prepare asset as edit reference. Deferred until task/workbench backendization; P5 frontend must not depend on this endpoint unless it is implemented in the active branch.
 
 Downloads must stream through backend authorization or use short-lived signed URLs created after authorization.
 
@@ -150,6 +150,7 @@ Asset payload rules for P5:
 - `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; it must not change `tenantId`, `projectId`, `objectKey`, or image dimensions.
 - `DELETE /assets/{assetId}` is soft delete.
 - `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
+- Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. Edit-source remains a later workbench/backendization concern.
 
 ## Task APIs
 

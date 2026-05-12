@@ -93,13 +93,13 @@ cd .. && docker compose -f deploy/docker-compose.yml config
 
 ## P5: Project and asset management
 
-Status: next phase. Split the original broad P5 scope into serial worktree tasks. Do not start Provider/model management or task/SSE implementation in P5.
+Status: in progress. Backend project and asset storage slices have been reviewed and merged. The next P5 slice is frontend project/asset integration. Do not start Provider/model management or task/SSE implementation in P5.
 
 Execution order:
 
-1. `P5-BE-PROJECTS`: backend project and project member foundation.
-2. `P5-BE-ASSET-STORAGE`: backend MinIO storage service, upload validation, asset APIs, and authorized downloads.
-3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection.
+1. `P5-BE-PROJECTS`: backend project and project member foundation. Completed and merged.
+2. `P5-BE-ASSET-STORAGE`: backend MinIO storage service, upload validation, asset APIs, and authorized downloads. Completed and merged.
+3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection. Next.
 4. `R5`: main-agent review, integration, and contract cleanup.
 
 P5 backend project requirements:
@@ -109,6 +109,13 @@ P5 backend project requirements:
 - Implement project membership APIs and object-level authorization helpers.
 - Every project query must filter by `tenant_id`.
 - Cross-tenant project IDs must return `404` or a non-revealing authorization failure.
+
+P5 backend project result:
+
+- Implemented project CRUD, project member management, and project authorization helpers.
+- Every project query is tenant-scoped.
+- Project creators become `OWNER` members.
+- Operation logs are written for project and member changes.
 
 P5 backend asset requirements:
 
@@ -120,12 +127,23 @@ P5 backend asset requirements:
 - MySQL stores metadata and `object_key`; image bytes go to MinIO only.
 - Use the shared local `dev-minio` environment for routine integration checks.
 
+P5 backend asset result:
+
+- Implemented `image_assets`, MinIO object storage abstraction, upload validation, asset metadata APIs, favorite/unfavorite, soft delete, and authorized download.
+- Asset access uses `asset -> project` authorization and reuses project RBAC plus membership checks.
+- Reference uploads write image bytes to MinIO and metadata to MySQL only.
+- Review note: uploaded-object cleanup after a DB failure is implemented, but should later use an independent cleanup context and/or cleanup job for request-cancellation edge cases.
+- Review note: new built-in asset permissions are seeded for new tenants; a later reconciliation task should backfill built-in permissions for existing tenants.
+- Review note: bucket creation/bootstrap remains a deployment or local-environment responsibility.
+
 P5 frontend requirements:
 
 - Add project and asset API wrappers using the existing authenticated API client.
 - Add project selection/creation entry points without replacing the generation workflow yet.
 - Add reference asset upload/list/detail/download UI consistent with the existing workbench.
 - Keep old local IndexedDB history available until P8, but do not treat it as backend asset truth.
+- Use the merged backend contracts for `/api/v1/projects`, `/api/v1/projects/{projectId}/assets`, and `/api/v1/assets/{assetId}`.
+- Do not introduce task polling, Provider/model management, or frontend generation backendization in P5.
 
 P5 acceptance gates:
 
@@ -134,6 +152,16 @@ P5 acceptance gates:
 - Upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count.
 - Download requires backend authorization.
 - Frontend does not store Provider API keys, auth tokens, or image blobs as backend asset truth.
+
+P5 backend verification after merge:
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+```
 
 ## P6: Provider and model management
 
