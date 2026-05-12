@@ -61,7 +61,15 @@ Every object ID endpoint must verify:
 - Never return full API keys to frontend.
 - Show only masked metadata such as hint and last update time.
 - Do not log secrets.
-- Frontend must not collect or persist Provider API keys after P8. Provider credentials must be managed through backend APIs only.
+- Frontend may collect Provider API keys only in backend Provider management forms for immediate submission. It must never persist Provider API keys, and after P8 the legacy local settings flow must be removed. Provider credentials must be managed through backend APIs only.
+
+P6 Provider management must additionally enforce:
+
+- API keys may be accepted by Provider create/update forms only for immediate submission to the backend.
+- The backend response must never include plaintext API keys or encrypted key material.
+- Updating a Provider without `apiKey` must retain the existing encrypted key.
+- Rotating an API key must create an operation log with redacted metadata only.
+- Provider test must use decrypted credentials only in backend memory and must redact outbound request metadata before logs or API responses.
 
 ## Sensitive logging policy
 
@@ -90,6 +98,18 @@ Provider base URL validation must block:
 - Redirects to blocked targets.
 
 Default policy is HTTPS only.
+
+P6 must validate Provider URLs at both persistence time and outbound test/use time. Save-time validation alone is insufficient because DNS can change after a Provider is saved.
+
+Provider URL validation must reject:
+
+- Non-HTTP(S) schemes.
+- Plain HTTP unless a future explicitly documented local-development exception is approved.
+- URLs with embedded credentials.
+- Hostnames that are Docker Compose service names or resolve to blocked IP ranges.
+- Redirect chains that land on a blocked target.
+
+SSRF tests are required before P6 merge.
 
 ## Upload defense
 

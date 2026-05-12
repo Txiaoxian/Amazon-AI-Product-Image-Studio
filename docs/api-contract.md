@@ -177,11 +177,34 @@ Task creation persists the task and enqueues Redis work. Task progress must be c
 - `POST /providers`
 - `GET /providers/{providerId}`
 - `PATCH /providers/{providerId}`
+- `DELETE /providers/{providerId}`
 - `POST /providers/{providerId}/test`
 - `POST /providers/{providerId}/enable`
 - `POST /providers/{providerId}/disable`
 
-Provider responses never include full API keys.
+Provider APIs require `provider:read` or `provider:manage` as appropriate. Provider object APIs must filter by `tenant_id`; cross-tenant Provider IDs should return `404` or a non-revealing authorization failure.
+
+Provider request fields for P6:
+
+- `type`: `OPENAI`, `GEMINI`, or `OPENAI_COMPATIBLE`.
+- `name`: display name, required.
+- `baseUrl`: required for custom/OpenAI-compatible Providers; official Provider defaults may be supplied by backend config but still pass SSRF validation before use.
+- `apiKey`: accepted only on create or explicit rotation/update. If omitted on update, the existing encrypted key is retained.
+- `timeoutSeconds`: bounded positive integer.
+- `concurrencyLimit`: bounded non-negative integer. `0` means use global/system default unless implementation chooses a stricter explicit default.
+- `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
+
+Provider response fields for P6:
+
+- `id`, `tenantId`, `type`, `name`, `baseUrl`, `status`, `timeoutSeconds`, `concurrencyLimit`, `apiKeyHint`, `apiKeyUpdatedAt`, `lastTestStatus`, `lastTestedAt`, `createdAt`, `updatedAt`.
+- Provider responses never include full API keys, encrypted API key values, Authorization headers, or raw Provider responses.
+
+Provider test contract for P6:
+
+- `POST /providers/{providerId}/test` performs a backend-only connectivity/authentication probe with timeout and SSRF protection.
+- It returns sanitized fields such as `status`, `durationMs`, `checkedAt`, `httpStatus`, `requestId`, and `message`.
+- It must not create generation tasks, upload output assets, write usage records, or expose raw Provider payloads.
+- It should write an operation log and may update sanitized `lastTest*` Provider metadata.
 
 ## Model APIs
 
@@ -189,10 +212,28 @@ Provider responses never include full API keys.
 - `POST /models`
 - `GET /models/{modelId}`
 - `PATCH /models/{modelId}`
+- `DELETE /models/{modelId}`
 - `POST /models/{modelId}/enable`
 - `POST /models/{modelId}/disable`
 
-Frontend uses enabled model capability fields to render dynamic parameters.
+Model APIs require `model:read` or `model:manage` as appropriate. Model object APIs must filter by `tenant_id`, and `providerId` must belong to the same tenant.
+
+Model request fields for P6:
+
+- `providerId`: required.
+- `modelName`: Provider-facing model id/name.
+- `displayName`: user-facing model name.
+- `supportsGenerate`, `supportsEdit`, `supportsMultiReference`, `supportsN`.
+- `maxOutputCount`: positive integer, constrained by `supportsN`.
+- `supportedSizes`, `supportedQualities`, `supportedOutputFormats`: arrays of strings, validated and stored as structured JSON.
+- `pricing`: structured JSON with currency and unit prices; exact Provider billing interpretation can be refined before P7 usage accounting.
+- `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
+
+Model response fields for P6:
+
+- `id`, `tenantId`, `providerId`, `providerName`, `modelName`, `displayName`, capability fields, `pricing`, `status`, `createdAt`, `updatedAt`.
+
+Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 
 ## Usage and audit APIs
 

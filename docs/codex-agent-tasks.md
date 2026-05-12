@@ -901,7 +901,7 @@ P5 原始“项目与资产管理”范围较大，必须拆成串行 worktree�
 - `P5-BE-ASSET-STORAGE` 已 review 并合并到 `main`。
 - `P5-FE-PROJECT-ASSETS` 已 review 并合并到 `main`。
 - `R5` 已完成主 agent review、集成回归和公共合同文档更新。
-- 下一步进入 `P6-PROVIDER-MODEL`，仍不要并行启动任务队列、SSE 或前端生成后端化。
+- 下一步进入 P6 Provider/model 管理，第一项是 `P6-BE-PROVIDER-SECURITY`；仍不要并行启动任务队列、SSE 或前端生成后端化。
 
 推荐顺序：
 
@@ -1223,68 +1223,312 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - 已确认共享本地 `dev-mysql8`、`dev-redis`、`dev-minio` 运行并可达，没有创建项目专属开发环境。
-- 公共合同文档已按 P5 实际结果更新，项目可以进入 `P6-PROVIDER-MODEL`。
+- 公共合同文档已按 P5 实际结果更新，项目可以进入 P6 Provider/model 管理。
 
-## 子任务 13：Provider 与模型管理
+## P6 执行策略
+
+P6 的核心目标是安全落地 Provider/model 管理，为 P7 worker 调用 AI Provider 提供可信配置源。P6 不做真实生成/编辑任务执行，不做 SSE 任务事件，不替换前端生成提交路径。
+
+执行顺序：
+
+1. `P6-BE-PROVIDER-SECURITY` - 串行优先，先做 Provider 数据、安全、加密、SSRF 和 Provider test。
+2. `P6-BE-MODEL-CAPABILITIES` - 在 Provider 安全底座合并后做模型能力后端。
+3. `P6-FE-PROVIDER-MODEL-MGMT` - 在后端 Provider/model 合同稳定后做前端管理 UI。
+4. `R6` - 主 agent 串行 review、合并、回归和合同校准。
+
+并行策略：
+
+- P6 第一批只开 1 个子 agent：`P6-BE-PROVIDER-SECURITY`。
+- 不要让前端 Provider 管理 UI 与 Provider 安全合同并行开发。
+- `P6-BE-MODEL-CAPABILITIES` 与 `P6-FE-PROVIDER-MODEL-MGMT` 默认串行；只有主 agent 明确批准时，前端才可以在后端合同冻结后做有限并行。
+
+## 子任务 13：Provider 后端安全底座
 
 ### 任务名称
 
-P6-PROVIDER-MODEL - Provider、API Key 加密、SSRF 与模型能力
+P6-BE-PROVIDER-SECURITY - Provider CRUD、API Key 加密、SSRF 与测试探针
 
 ### 目标
 
-实现后端 Provider/model 管理能力，为后续 worker 调用 AI Provider 提供安全配置源。
+实现后端 Provider 管理安全底座，包括 tenant-scoped Provider CRUD、API Key 加密/脱敏、SSRF-safe base URL 校验、启用/禁用、删除、Provider test 和审计日志。
 
 ### 允许修改文件
 
-- `backend/**`
-- `frontend/src/api/**`
-- `frontend/src/types/**`
-- `frontend/src/components/**`
-- `frontend/src/hooks/**`
-- `frontend/src/test/**`
+- `backend/internal/provider/**`
+- `backend/internal/database/**`
+- `backend/internal/api/**`
+- `backend/internal/config/**`
+- `backend/internal/audit/**`
+- `backend/internal/logger/**`
+- `backend/cmd/**` 仅限路由/依赖注入所需改动
+- `.env.example` 仅限补充非敏感 Provider/API key encryption 配置占位
 
 ### 禁止修改文件
 
+- `frontend/**`
+- `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- Worker 真实 Provider 调用执行路径
+- 任务队列、Worker 真实 Provider 生成/编辑执行路径
+- SSE 服务端业务
 - 前端工作台后端化替换
 
 ### 前置依赖
 
-- P4-BE-AUTH 合并完成。
 - R5 P5 项目与资产管理集成完成。
+- 主 agent 已更新 P6 Provider/API/安全/数据库合同。
 
 ### 具体开发内容
 
-- 后端实现 Provider CRUD、启用/禁用、测试连接。
-- API Key 加密保存，返回 masked metadata。
-- Provider base_url 保存前和使用前都做 SSRF 校验。
-- 后端实现模型 CRUD 和能力配置。
-- 前端实现 Provider/model 管理界面。
+- 增加 `ai_providers` model/migration，所有 Provider 记录必须包含 `tenant_id`。
+- 实现 Provider repository/service/handler，所有查询显式过滤 `tenant_id`。
+- 实现 `GET/POST/GET by id/PATCH/DELETE /providers` 和 enable/disable API。
+- 实现 API Key 加密服务，使用 `API_KEY_ENCRYPTION_KEY` 或既有配置源；明文 key 只在请求处理和 backend memory 中短暂存在。
+- Provider 响应只返回 `apiKeyHint`、`apiKeyUpdatedAt` 等脱敏元数据，不返回明文或密文。
+- 实现 Provider `baseUrl` SSRF validator：保存前校验，Provider test/use 前再次校验。
+- 实现 `POST /providers/{providerId}/test` 的 backend-only 探针，带 timeout、SSRF 检查、脱敏响应和 operation log；P6 不生成图片、不创建 task、不写 asset。
+- 写 Provider create/update/delete/enable/disable/test operation logs，并确保 metadata 递归脱敏。
+- 增加单元/路由测试覆盖 API Key 加密脱敏、tenant 隔离、RBAC、SSRF 阻断、Provider test 脱敏和日志脱敏。
 
 ### 安全要求
 
 - API Key 不明文入库。
-- API Key 不完整返回前端。
-- 日志不记录 Authorization、Cookie、API Key。
-- SSRF 阻止 localhost、loopback、private、link-local、Docker internal hostnames 和重定向到禁用目标。
+- API Key 不完整返回前端，也不返回 encrypted/ciphertext 字段。
+- 日志和 operation log 不记录 Authorization、Cookie、API Key、密码、JWT、图片 base64 或原始 Provider 响应。
+- SSRF 必须阻止 localhost、loopback、private、link-local、multicast、Docker internal hostnames、非 HTTP(S) scheme、URL embedded credentials 和重定向到禁用目标。
+- Provider object APIs 必须同时校验登录、RBAC、`tenant_id` 和对象存在性；跨租户 Provider 不得泄露存在性。
 
 ### 验收标准
 
-- API Key 加密、脱敏返回、SSRF 阻断和日志脱敏有测试。
-- 前端不保存 Provider API Key。
+- Provider CRUD、enable/disable、delete、test API 符合 `docs/api-contract.md`。
+- MySQL 中不出现明文 API Key。
+- Provider 响应不包含明文或密文 API Key。
+- SSRF 测试覆盖阻断清单和允许的公开 HTTPS URL。
+- Provider test 不创建 task、asset、usage record，也不调用前端 Provider 代码。
+- Operation logs 存在且敏感字段脱敏。
 
 ### 测试命令
 
 ```bash
-cd backend && go test ./... && go test -race ./... && go vet ./...
-cd ../frontend && npm run lint && npm run type-check && npm run test && npm run build
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
 ```
 
-## 子任务 14：任务队列、Worker 和 SSE 服务端
+## 子任务 14：模型能力后端管理
+
+### 任务名称
+
+P6-BE-MODEL-CAPABILITIES - 模型 CRUD、能力配置、价格元数据与启用状态
+
+### 目标
+
+实现后端模型能力管理，为后续任务创建、动态参数展示、Provider Adapter 执行和用量估算提供可信模型配置。
+
+### 允许修改文件
+
+- `backend/internal/model/**`
+- `backend/internal/provider/**` 仅限读取 Provider 或复用授权/验证 helper
+- `backend/internal/database/**`
+- `backend/internal/api/**`
+- `backend/cmd/**` 仅限路由/依赖注入所需改动
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- Worker 真实 Provider 调用执行路径
+- 任务队列和 SSE 服务端业务
+- 前端工作台后端化替换
+
+### 前置依赖
+
+- `P6-BE-PROVIDER-SECURITY` 已 review 并合并。
+
+### 具体开发内容
+
+- 增加 `ai_models` model/migration，所有模型记录必须包含 `tenant_id`。
+- 实现 model repository/service/handler，所有查询显式过滤 `tenant_id`。
+- 实现 `GET/POST/GET by id/PATCH /models` 和 enable/disable API。
+- 校验 `providerId` 属于当前 tenant。
+- 校验能力字段：generate/edit、多参考图、`n`、最大输出数量、尺寸、质量、输出格式、价格 JSON。
+- `supportsN=false` 时 `maxOutputCount` 不能大于 1。
+- 实现 enabled model capability list，供 P8 工作台按能力动态渲染参数。
+- 写 model create/update/delete/enable/disable operation logs。
+- 增加测试覆盖 tenant 隔离、RBAC、Provider 同租户约束、能力字段校验、启用/禁用状态。
+
+### 安全要求
+
+- 模型 API 必须要求 `model:read` 或 `model:manage`。
+- 所有模型查询必须带 `tenant_id`。
+- 不允许通过跨租户 `providerId` 创建或读取模型。
+- 价格和 capability JSON 必须结构化校验，不能保存无界任意对象。
+- 不写 Provider API Key、Authorization、Cookie 或图片 base64 到日志。
+
+### 验收标准
+
+- Model CRUD、enable/disable API 符合 `docs/api-contract.md`。
+- 模型能力响应足够前端后续动态渲染尺寸、质量、格式、数量和生成/编辑能力。
+- 跨租户 Provider/model 访问被拒绝或不可见。
+- Operation logs 记录模型管理动作且 metadata 脱敏。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
+```
+
+## 子任务 15：Provider/model 前端管理
+
+### 任务名称
+
+P6-FE-PROVIDER-MODEL-MGMT - Provider 与模型管理前端 UI
+
+### 目标
+
+实现管理员使用的 Provider/model 管理 UI 和 API wrappers。前端只提交 Provider API Key 到后端，不保存、不回显、不参与 AI 调用。
+
+### 允许修改文件
+
+- `frontend/src/api/**`
+- `frontend/src/types/**`
+- `frontend/src/components/**`
+- `frontend/src/hooks/**`
+- `frontend/src/App.tsx`
+- `frontend/src/test/**`
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/providers/**`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/db/**`
+- 前端生成工作台后端化替换
+- 任务队列、SSE、Provider Adapter 执行
+
+### 前置依赖
+
+- `P6-BE-PROVIDER-SECURITY` 已合并。
+- `P6-BE-MODEL-CAPABILITIES` 已合并。
+
+### 具体开发内容
+
+- 增加 Provider/model API wrappers，复用 authenticated API client 和 `credentials: include`。
+- 增加 Provider 列表、创建、编辑、删除、启用/禁用和 test UI。
+- Provider 表单中的 API Key 字段仅用于提交；编辑页面显示 masked metadata，不回显完整 key。
+- 增加模型列表、创建、编辑、启用/禁用 UI。
+- 模型表单支持 capability 字段：生成/编辑、多参考图、`n`、最大输出数量、尺寸、质量、输出格式、价格配置。
+- 处理 loading/empty/error、401/403/404/422 状态。
+- 管理入口只对具备 Provider/model 权限的用户展示；最终鉴权仍以后端为准。
+
+### 安全要求
+
+- 不保存 Provider API Key 到 localStorage、sessionStorage、IndexedDB、URL、React persisted state 或 client-visible config。
+- 不新增 AI Provider 直连，不创建 Provider Authorization header。
+- 不使用轮询查询 Provider test 或任务状态。
+- 不渲染后端未脱敏错误为 HTML。
+
+### 验收标准
+
+- 管理员可以通过后端 API 管理 Provider 和模型。
+- Provider API Key 提交后页面只显示 masked metadata。
+- 前端测试覆盖 API wrappers、表单提交不持久化 key、错误状态和权限隐藏。
+- `rg` 检查没有在新增代码中引入 Provider direct fetch 或 API Key persistence。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+git diff --check
+```
+
+## 串行阶段 6：P6 review 和集成
+
+### 任务名称
+
+R6 - P6 Provider/model 管理 review、集成和合同校准
+
+### 目标
+
+主 agent 串行 review P6 子任务，确认 Provider/model 管理满足 API Key 加密、SSRF、防敏感日志、RBAC 和租户隔离要求，再进入 P7 任务队列、Worker 和 SSE。
+
+### 允许修改文件
+
+- P6 子任务允许修改的文件。
+- 公共合同文件，仅限主 agent 根据实际实现校准。
+
+### 禁止修改文件
+
+- Worker 真实 Provider 生成/编辑执行路径。
+- 任务队列真实执行。
+- SSE 任务事件业务。
+- 前端生成工作台后端化替换。
+
+### 前置依赖
+
+- `P6-BE-PROVIDER-SECURITY`、`P6-BE-MODEL-CAPABILITIES`、`P6-FE-PROVIDER-MODEL-MGMT` 均已提交。
+
+### 具体开发内容
+
+- Review Provider/model 代码和测试。
+- 串行合并或要求整改。
+- 跑前后端回归。
+- 使用共享本地 MySQL/Redis/MinIO 做必要检查，不创建项目专属环境。
+- 更新公共合同中的 P6 实际完成状态和遗留风险。
+
+### 安全要求
+
+- 重点检查 API Key encryption、masking、日志脱敏、SSRF validator、Provider test、tenant filter、RBAC、前端不持久化 key。
+- 不允许引入 frontend AI Provider 直连或本地 API Key 存储新增路径。
+
+### 验收标准
+
+- P6 合并后前端、后端、Compose config 均通过。
+- SSRF 阻断测试、API Key 加密/脱敏测试、Provider/model tenant 隔离测试通过。
+- Provider test 不创建 task、asset、usage record。
+- 前端 Provider/model 管理 UI 不保存 API Key。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 子任务 17：任务队列、Worker 和 SSE 服务端
 
 ### 任务名称
 
@@ -1311,8 +1555,7 @@ P7-TASK-SSE - Redis 队列、Worker 状态机、Provider Adapter 执行与 SSE
 
 ### 前置依赖
 
-- R5 P5 项目与资产管理集成完成。
-- P6-PROVIDER-MODEL 合并完成。
+- R6 P6 Provider/model 管理集成完成。
 
 ### 具体开发内容
 
@@ -1346,7 +1589,7 @@ go test -race ./...
 go vet ./...
 ```
 
-## 子任务 15：前端工作台后端化
+## 子任务 18：前端工作台后端化
 
 ### 任务名称
 
@@ -1404,7 +1647,7 @@ npm run test
 npm run build
 ```
 
-## 子任务 16：审计、用量、系统设置和发布硬化
+## 子任务 19：审计、用量、系统设置和发布硬化
 
 ### 任务名称
 

@@ -122,6 +122,15 @@ Current P5 project/asset role mapping:
 - Asset delete requires tenant admin access or `asset:delete` plus project `OWNER`.
 - Asset object APIs resolve `asset -> project` first, then apply tenant, RBAC, and project membership checks.
 
+P6 Provider/model role mapping:
+
+- Provider list/detail require `provider:read` or tenant admin access.
+- Provider create/update/delete/enable/disable/test require `provider:manage` or tenant admin access.
+- Model list/detail require `model:read` or tenant admin access.
+- Model create/update/delete/enable/disable require `model:manage` or tenant admin access.
+- Provider and model object APIs must still filter by `tenant_id`; RBAC alone is not sufficient.
+- Sellers and viewers should not receive Provider/model management permissions by default.
+
 ## Audit requirements
 
 Record operation logs for:

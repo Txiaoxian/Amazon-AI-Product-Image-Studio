@@ -92,11 +92,33 @@ Key fields: `id`, `tenant_id`, `type`, `name`, `base_url`, `encrypted_api_key`, 
 
 `type` values: `OPENAI`, `GEMINI`, `OPENAI_COMPATIBLE`.
 
+P6 implementation notes:
+
+- `tenant_id` is mandatory and all Provider queries must filter by it.
+- `status` values: `ENABLED`, `DISABLED`.
+- `encrypted_api_key` stores a versioned encrypted payload only; plaintext API keys must never be stored.
+- `api_key_hint` stores non-sensitive display metadata such as the last 4 characters and must not be enough to reconstruct the key.
+- Suggested additional fields: `api_key_updated_at`, `last_test_status`, `last_tested_at`, `last_test_error`, `created_by`, `deleted_at`.
+- Soft delete is preferred so audit history and Provider/model references remain explainable.
+- Suggested indexes: `(tenant_id, type)`, `(tenant_id, status)`, `(tenant_id, deleted_at)`, unique `(tenant_id, name, deleted_at)` if supported by the chosen MySQL strategy.
+- Provider `base_url` must be SSRF-validated before insert/update and before any test/use path.
+
 ### ai_models
 
 Stores model capability metadata.
 
 Key fields: `id`, `tenant_id`, `provider_id`, `model_name`, `display_name`, `supports_generate`, `supports_edit`, `supports_multi_reference`, `supports_n`, `max_output_count`, `supported_sizes_json`, `supported_qualities_json`, `supported_output_formats_json`, `pricing_json`, `status`, `created_at`, `updated_at`.
+
+P6 implementation notes:
+
+- `tenant_id` is mandatory and all model queries must filter by it.
+- `provider_id` must reference an `ai_providers` row in the same tenant.
+- `status` values: `ENABLED`, `DISABLED`.
+- `supported_sizes_json`, `supported_qualities_json`, `supported_output_formats_json`, and `pricing_json` must be validated structured JSON, not arbitrary unbounded blobs.
+- `max_output_count` must be consistent with `supports_n`.
+- Suggested additional fields: `created_by`, `deleted_at`.
+- Suggested indexes: `(tenant_id, provider_id)`, `(tenant_id, status)`, `(tenant_id, provider_id, model_name)`, `(tenant_id, deleted_at)`.
+- Generated and edited task execution must not begin in P6; models are configuration data for P7/P8.
 
 ### generation_tasks
 

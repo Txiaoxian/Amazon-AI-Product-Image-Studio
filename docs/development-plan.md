@@ -210,13 +210,77 @@ The project is ready to enter P6 Provider and model management.
 
 ## P6: Provider and model management
 
-Tasks:
+Status: planned. P6 adds Provider and model management only. It must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
 
-- Implement Provider CRUD, enable/disable, and Provider test.
-- Encrypt Provider API keys at rest.
-- Return only masked credential metadata to frontend.
-- Implement SSRF-safe Provider `base_url` validation before save and before use.
-- Implement model capability management for generation/edit, multi-reference support, `n`, max output count, sizes, quality, output formats, and price config.
+P6 execution order:
+
+1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. This task must run first and be reviewed before any frontend Provider UI work.
+2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. This depends on Provider security foundations.
+3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. This depends on stable backend Provider/model contracts.
+4. `R6`: main-agent review, integration regression, security review, and public contract cleanup.
+
+P6 serial/parallel policy:
+
+- Start P6 with one sub-agent only: `P6-BE-PROVIDER-SECURITY`.
+- Do not run frontend Provider UI in parallel with backend Provider security because the request/response contract and masking semantics must be reviewed first.
+- After `P6-BE-PROVIDER-SECURITY` is merged, `P6-BE-MODEL-CAPABILITIES` can proceed. Frontend work starts only after both backend contracts are stable, unless limited to type stubs approved by the main agent.
+
+P6 backend Provider requirements:
+
+- Add `ai_providers` model/migration fields needed for tenant-scoped Provider configuration.
+- Support Provider types `OPENAI`, `GEMINI`, and `OPENAI_COMPATIBLE`.
+- Encrypt API keys at rest using the configured API key encryption secret.
+- Return only masked key metadata such as hint and update time; never return full API keys.
+- Validate Provider `base_url` before save and before test/use with SSRF defenses.
+- Implement CRUD, enable/disable, and sanitized Provider test.
+- Write operation logs for create/update/delete/enable/disable/test.
+- Ensure logs and errors do not contain API keys, Authorization headers, Cookies, or image base64.
+
+P6 backend model requirements:
+
+- Add `ai_models` model/migration fields for Provider ownership and capabilities.
+- Support generation/edit flags, multi-reference support, `n` support, max output count, supported sizes, qualities, output formats, pricing config, and enable/disable state.
+- Validate model capability combinations, for example disabled `supports_n` must not accept output counts above 1.
+- Ensure models are tenant-scoped and belong to a Provider in the same tenant.
+- Expose enabled model capability responses for the frontend to render dynamic parameters later.
+
+P6 frontend requirements:
+
+- Add Provider/model API wrappers using the existing authenticated API client.
+- Add admin-only Provider/model management screens or panels consistent with the existing UI style.
+- Provider forms may accept API keys only for immediate submission to the backend; they must not persist keys in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config.
+- Display masked key metadata only.
+- Render Provider test results and sanitized errors without leaking credentials.
+- Do not modify the legacy generation submit path in P6.
+
+P6 acceptance gates:
+
+- Provider and model APIs require authentication, tenant filtering, RBAC, and object-level checks where IDs are used.
+- API keys are encrypted in MySQL and are not returned in API responses.
+- SSRF tests block localhost, loopback, private ranges, link-local ranges, Docker-internal hostnames, invalid schemes, and redirects to blocked targets.
+- Provider test uses backend-only execution with timeout and redacted logs; it must not create generation tasks or output assets.
+- Frontend does not save Provider API keys or introduce new AI Provider direct calls.
+- P6 does not change task queue, worker generation, SSE task events, or frontend generation backendization.
+
+P6 verification after merge:
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
 
 ## P7: Task queue, worker, Provider Adapter, and SSE
 
