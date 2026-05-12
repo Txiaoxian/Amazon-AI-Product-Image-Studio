@@ -1,6 +1,10 @@
 package database
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Tenant is the root tenant record. It intentionally has no tenant_id because
 // tenant_id identifies records that belong to one of these tenant roots.
@@ -102,4 +106,37 @@ type OperationLog struct {
 
 func (OperationLog) TableName() string {
 	return "operation_logs"
+}
+
+type Project struct {
+	ID        string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_projects_tenant_id,priority:2"`
+	TenantID  string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_projects_tenant_id,priority:1;index:idx_projects_tenant_status_created,priority:1;index:idx_projects_tenant_asin,priority:1;index:idx_projects_tenant_deleted,priority:1"`
+	Name      string         `gorm:"type:varchar(255);not null"`
+	Brand     string         `gorm:"type:varchar(255)"`
+	ASIN      string         `gorm:"type:varchar(32);index:idx_projects_tenant_asin,priority:2"`
+	Site      string         `gorm:"type:varchar(64)"`
+	Notes     string         `gorm:"type:text"`
+	Status    string         `gorm:"type:varchar(32);not null;index:idx_projects_tenant_status_created,priority:2"`
+	CreatedBy string         `gorm:"type:varchar(36);not null;index"`
+	CreatedAt time.Time      `gorm:"type:datetime(3);not null;index:idx_projects_tenant_status_created,priority:3"`
+	UpdatedAt time.Time      `gorm:"type:datetime(3);not null"`
+	DeletedAt gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_projects_tenant_deleted,priority:2"`
+}
+
+func (Project) TableName() string {
+	return "projects"
+}
+
+type ProjectMember struct {
+	ID        string    `gorm:"type:varchar(36);primaryKey"`
+	TenantID  string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_project_members_tenant_project_user,priority:1;index:idx_project_members_tenant_project,priority:1;index:idx_project_members_tenant_user,priority:1"`
+	ProjectID string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_project_members_tenant_project_user,priority:2;index:idx_project_members_tenant_project,priority:2"`
+	UserID    string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_project_members_tenant_project_user,priority:3;index:idx_project_members_tenant_user,priority:2"`
+	Role      string    `gorm:"type:varchar(32);not null;index"`
+	CreatedAt time.Time `gorm:"type:datetime(3);not null"`
+	UpdatedAt time.Time `gorm:"type:datetime(3);not null"`
+}
+
+func (ProjectMember) TableName() string {
+	return "project_members"
 }

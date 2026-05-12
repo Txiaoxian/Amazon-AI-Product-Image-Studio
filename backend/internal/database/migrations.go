@@ -211,4 +211,51 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 `,
 		},
 	},
+	{
+		ID:   "202605120001_projects_and_members",
+		Name: "create project and project member tables",
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS projects (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  brand VARCHAR(255) NOT NULL DEFAULT '',
+  asin VARCHAR(32) NOT NULL DEFAULT '',
+  site VARCHAR(64) NOT NULL DEFAULT '',
+  notes TEXT NULL,
+  status VARCHAR(32) NOT NULL,
+  created_by VARCHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  UNIQUE KEY uk_projects_tenant_id (tenant_id, id),
+  KEY idx_projects_tenant_status_created (tenant_id, status, created_at),
+  KEY idx_projects_tenant_asin (tenant_id, asin),
+  KEY idx_projects_tenant_deleted (tenant_id, deleted_at),
+  KEY idx_projects_created_by (created_by),
+  CONSTRAINT fk_projects_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  CONSTRAINT fk_projects_created_by FOREIGN KEY (tenant_id, created_by) REFERENCES users(tenant_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`,
+			`
+CREATE TABLE IF NOT EXISTS project_members (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  project_id VARCHAR(36) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  role VARCHAR(32) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_project_members_tenant_project_user (tenant_id, project_id, user_id),
+  KEY idx_project_members_tenant_project (tenant_id, project_id),
+  KEY idx_project_members_tenant_user (tenant_id, user_id),
+  KEY idx_project_members_role (role),
+  CONSTRAINT fk_project_members_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  CONSTRAINT fk_project_members_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id),
+  CONSTRAINT fk_project_members_user FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`,
+		},
+	},
 }

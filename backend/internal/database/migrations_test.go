@@ -34,6 +34,8 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"user_roles",
 		"role_permissions",
 		"operation_logs",
+		"projects",
+		"project_members",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
