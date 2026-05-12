@@ -41,6 +41,15 @@ P6 must produce these backend foundations:
 
 P7 will use these records and helpers when implementing real Provider Adapter generation/edit calls.
 
+Current P6 Provider security result:
+
+- Backend Provider security foundations are implemented and merged.
+- Provider records are tenant-scoped and API keys are stored as encrypted payloads.
+- Provider responses expose only masked key metadata and never return encrypted key material.
+- Provider test is backend-only and writes sanitized operation logs without creating tasks, assets, or usage records.
+- SSRF validation is implemented for Provider save/update/test and covers blocked hostnames, blocked IP ranges, unsupported schemes, embedded credentials, and redirects to blocked targets.
+- P7 real Provider Adapter execution must add an outbound SSRF-safe dialer or equivalent connect-time IP validation before real generation/edit calls are allowed.
+
 ## Adapter interface
 
 The backend should define an internal interface equivalent to:
@@ -117,6 +126,10 @@ Recommended P6 tests:
 - Reject DNS names that resolve to blocked ranges.
 - Reject redirects from an allowed URL to a blocked target.
 - Accept a syntactically valid public HTTPS Provider URL.
+
+Additional P7 requirement:
+
+- The actual HTTP transport used for real Provider generation/edit calls must validate the final dial target at connection time. Do not rely only on URL validation performed earlier in the request flow.
 
 ## Existing frontend Provider code
 

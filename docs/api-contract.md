@@ -206,6 +206,12 @@ Provider test contract for P6:
 - It must not create generation tasks, upload output assets, write usage records, or expose raw Provider payloads.
 - It should write an operation log and may update sanitized `lastTest*` Provider metadata.
 
+Current P6 Provider backend implementation status:
+
+- Backend implements Provider CRUD, soft delete, enable/disable, Provider test, tenant-scoped queries, RBAC, operation logs, API key encryption, and masked Provider responses.
+- Provider test is backend-only and does not create tasks, assets, or usage records.
+- Frontend Provider/model management is not implemented yet; it starts after backend model capability APIs are stable.
+
 ## Model APIs
 
 - `GET /models`

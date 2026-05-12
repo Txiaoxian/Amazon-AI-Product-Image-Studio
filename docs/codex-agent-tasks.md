@@ -1229,17 +1229,22 @@ git diff --check
 
 P6 的核心目标是安全落地 Provider/model 管理，为 P7 worker 调用 AI Provider 提供可信配置源。P6 不做真实生成/编辑任务执行，不做 SSE 任务事件，不替换前端生成提交路径。
 
+当前状态：
+
+- `P6-BE-PROVIDER-SECURITY` 已 review 并合并到 `main`。
+- 下一步只启动 `P6-BE-MODEL-CAPABILITIES`，从最新 `main` 派生或重置 `codex/p6-backend-model-capabilities`。
+
 执行顺序：
 
-1. `P6-BE-PROVIDER-SECURITY` - 串行优先，先做 Provider 数据、安全、加密、SSRF 和 Provider test。
-2. `P6-BE-MODEL-CAPABILITIES` - 在 Provider 安全底座合并后做模型能力后端。
+1. `P6-BE-PROVIDER-SECURITY` - completed.
+2. `P6-BE-MODEL-CAPABILITIES` - next.
 3. `P6-FE-PROVIDER-MODEL-MGMT` - 在后端 Provider/model 合同稳定后做前端管理 UI。
 4. `R6` - 主 agent 串行 review、合并、回归和合同校准。
 
 并行策略：
 
-- P6 第一批只开 1 个子 agent：`P6-BE-PROVIDER-SECURITY`。
-- 不要让前端 Provider 管理 UI 与 Provider 安全合同并行开发。
+- P6 第一批已只开 1 个子 agent：`P6-BE-PROVIDER-SECURITY`。
+- `P6-BE-MODEL-CAPABILITIES` 仍应串行启动，不要让前端 Provider 管理 UI 与模型后端合同并行开发。
 - `P6-BE-MODEL-CAPABILITIES` 与 `P6-FE-PROVIDER-MODEL-MGMT` 默认串行；只有主 agent 明确批准时，前端才可以在后端合同冻结后做有限并行。
 
 ## 子任务 13：Provider 后端安全底座
@@ -1318,6 +1323,14 @@ go vet ./...
 go build ./cmd/api ./cmd/worker
 git diff --check
 ```
+
+### Review 结果
+
+- 允许合并，已合并。
+- 已实现 `ai_providers` migration/model、tenant-scoped repository/service/routes、Provider CRUD、enable/disable、soft delete、backend-only Provider test、API Key AES-GCM 加密、masked response、SSRF validator、recursive audit metadata redaction 和 operation logs。
+- 验证覆盖 API Key 加密/脱敏、tenant 隔离、RBAC、SSRF 阻断、Provider test 脱敏、日志脱敏，以及 Provider test 不创建 asset。
+- 非阻塞遗留：P7 真实 Provider Adapter 执行前应增加 SSRF-safe outbound dialer，避免 DNS rebinding；P9 生产启动前应拒绝默认 `API_KEY_ENCRYPTION_KEY` 占位值。
+- 合并前验证通过：`cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`，`docker compose -f deploy/docker-compose.yml config`，`git diff --check`。
 
 ## 子任务 14：模型能力后端管理
 

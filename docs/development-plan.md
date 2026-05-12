@@ -210,20 +210,20 @@ The project is ready to enter P6 Provider and model management.
 
 ## P6: Provider and model management
 
-Status: planned. P6 adds Provider and model management only. It must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
+Status: in progress. `P6-BE-PROVIDER-SECURITY` has been reviewed and merged into `main`. The next P6 slice is `P6-BE-MODEL-CAPABILITIES`. P6 still adds Provider and model management only; it must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
 
 P6 execution order:
 
-1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. This task must run first and be reviewed before any frontend Provider UI work.
-2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. This depends on Provider security foundations.
+1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. Completed and merged.
+2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. Next. This depends on Provider security foundations.
 3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. This depends on stable backend Provider/model contracts.
 4. `R6`: main-agent review, integration regression, security review, and public contract cleanup.
 
 P6 serial/parallel policy:
 
-- Start P6 with one sub-agent only: `P6-BE-PROVIDER-SECURITY`.
-- Do not run frontend Provider UI in parallel with backend Provider security because the request/response contract and masking semantics must be reviewed first.
-- After `P6-BE-PROVIDER-SECURITY` is merged, `P6-BE-MODEL-CAPABILITIES` can proceed. Frontend work starts only after both backend contracts are stable, unless limited to type stubs approved by the main agent.
+- `P6-BE-PROVIDER-SECURITY` was intentionally developed first and merged before frontend Provider UI work.
+- `P6-BE-MODEL-CAPABILITIES` can now proceed from latest `main`.
+- Frontend Provider/model management starts only after both backend contracts are stable, unless limited to type stubs approved by the main agent.
 
 P6 backend Provider requirements:
 
@@ -235,6 +235,18 @@ P6 backend Provider requirements:
 - Implement CRUD, enable/disable, and sanitized Provider test.
 - Write operation logs for create/update/delete/enable/disable/test.
 - Ensure logs and errors do not contain API keys, Authorization headers, Cookies, or image base64.
+
+P6 backend Provider result:
+
+- Implemented tenant-scoped `ai_providers` model/migration, repository, service, routes, and tests.
+- Implemented Provider CRUD, enable/disable, soft delete, backend-only Provider test, API key encryption, masked responses, recursive audit metadata redaction, and operation logs.
+- Implemented SSRF validation for Provider `baseUrl` on create/update and before Provider test, including tests for loopback, private ranges, link-local, multicast, Docker service names, embedded credentials, non-HTTPS schemes, and redirect-to-blocked-target.
+- Verified Provider test does not create tasks, assets, usage records, or call frontend Provider code.
+
+P6 Provider non-blocking backlog:
+
+- Before P7 real Provider Adapter execution, add an SSRF-safe HTTP transport or `DialContext` so the actual outbound dial re-checks resolved IPs and avoids DNS rebinding between validation and connection.
+- Before production release, reject default placeholder `API_KEY_ENCRYPTION_KEY` at startup alongside other production secret checks.
 
 P6 backend model requirements:
 

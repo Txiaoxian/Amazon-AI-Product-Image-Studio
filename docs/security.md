@@ -71,6 +71,12 @@ P6 Provider management must additionally enforce:
 - Rotating an API key must create an operation log with redacted metadata only.
 - Provider test must use decrypted credentials only in backend memory and must redact outbound request metadata before logs or API responses.
 
+Current P6 Provider backend status:
+
+- Provider API key encryption, masked responses, rotation metadata, backend-only Provider test, and recursive operation-log metadata redaction are implemented.
+- Provider test does not create tasks, assets, or usage records.
+- Full production startup hardening must still reject default placeholder `API_KEY_ENCRYPTION_KEY` before release.
+
 ## Sensitive logging policy
 
 Do not log:
@@ -110,6 +116,11 @@ Provider URL validation must reject:
 - Redirect chains that land on a blocked target.
 
 SSRF tests are required before P6 merge.
+
+Current P6 Provider backend status:
+
+- Provider save/update/test SSRF tests cover blocked schemes, embedded credentials, localhost, loopback, private ranges, link-local, multicast, Docker service names, DNS resolution to blocked ranges, and redirects to blocked targets.
+- Before P7 real Provider Adapter execution, outbound Provider clients must use connect-time IP validation or an SSRF-safe dialer to prevent DNS rebinding between validation and connection.
 
 ## Upload defense
 
