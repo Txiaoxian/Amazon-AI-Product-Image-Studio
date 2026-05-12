@@ -100,6 +100,18 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.Upload.AllowedMIMETypes) != 3 || cfg.Upload.AllowedMIMETypes[0] != "image/jpeg" {
 		t.Fatalf("Upload.AllowedMIMETypes = %#v, want image/jpeg,image/png,image/webp", cfg.Upload.AllowedMIMETypes)
 	}
+	if cfg.Provider.APIKeyEncryptionKey != defaultAPIKeyEncryptionKey {
+		t.Fatal("Provider.APIKeyEncryptionKey default was not loaded")
+	}
+	if cfg.Provider.APIKeyEncryptionKeyID != defaultAPIKeyEncryptionKeyID {
+		t.Fatalf("Provider.APIKeyEncryptionKeyID = %q, want %q", cfg.Provider.APIKeyEncryptionKeyID, defaultAPIKeyEncryptionKeyID)
+	}
+	if cfg.Provider.DefaultTimeout != 120*time.Second {
+		t.Fatalf("Provider.DefaultTimeout = %s, want 120s", cfg.Provider.DefaultTimeout)
+	}
+	if cfg.Provider.MaxRetries != 2 {
+		t.Fatalf("Provider.MaxRetries = %d, want 2", cfg.Provider.MaxRetries)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -146,6 +158,10 @@ func TestLoadOverrides(t *testing.T) {
 		"UPLOAD_MAX_HEIGHT":            "1536",
 		"UPLOAD_MAX_PIXELS":            "3000000",
 		"UPLOAD_ALLOWED_MIME_TYPES":    "image/png,image/webp",
+		"API_KEY_ENCRYPTION_KEY":       "0123456789abcdef0123456789abcdef",
+		"API_KEY_ENCRYPTION_KEY_ID":    "test-key-v1",
+		"PROVIDER_TIMEOUT_SECONDS":     "45",
+		"PROVIDER_MAX_RETRIES":         "5",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -275,6 +291,18 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if len(cfg.Upload.AllowedMIMETypes) != 2 || cfg.Upload.AllowedMIMETypes[0] != "image/png" || cfg.Upload.AllowedMIMETypes[1] != "image/webp" {
 		t.Fatalf("Upload.AllowedMIMETypes = %#v, want image/png,image/webp", cfg.Upload.AllowedMIMETypes)
+	}
+	if cfg.Provider.APIKeyEncryptionKey != "0123456789abcdef0123456789abcdef" {
+		t.Fatal("Provider.APIKeyEncryptionKey override was not loaded")
+	}
+	if cfg.Provider.APIKeyEncryptionKeyID != "test-key-v1" {
+		t.Fatalf("Provider.APIKeyEncryptionKeyID = %q, want test-key-v1", cfg.Provider.APIKeyEncryptionKeyID)
+	}
+	if cfg.Provider.DefaultTimeout != 45*time.Second {
+		t.Fatalf("Provider.DefaultTimeout = %s, want 45s", cfg.Provider.DefaultTimeout)
+	}
+	if cfg.Provider.MaxRetries != 5 {
+		t.Fatalf("Provider.MaxRetries = %d, want 5", cfg.Provider.MaxRetries)
 	}
 }
 
