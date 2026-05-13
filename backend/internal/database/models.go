@@ -191,3 +191,29 @@ type AIProvider struct {
 func (AIProvider) TableName() string {
 	return "ai_providers"
 }
+
+type AIModel struct {
+	ID                         string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_ai_models_tenant_id,priority:2"`
+	TenantID                   string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_ai_models_tenant_id,priority:1;index:idx_ai_models_tenant_provider,priority:1;index:idx_ai_models_tenant_status,priority:1;index:idx_ai_models_tenant_deleted,priority:1;index:idx_ai_models_tenant_provider_model,priority:1;index:idx_ai_models_tenant_generate,priority:1;index:idx_ai_models_tenant_edit,priority:1"`
+	ProviderID                 string         `gorm:"type:varchar(36);not null;index:idx_ai_models_tenant_provider,priority:2;index:idx_ai_models_tenant_provider_model,priority:2"`
+	ModelName                  string         `gorm:"type:varchar(255);not null;index:idx_ai_models_tenant_provider_model,priority:3"`
+	DisplayName                string         `gorm:"type:varchar(255);not null"`
+	SupportsGenerate           bool           `gorm:"type:boolean;not null;index:idx_ai_models_tenant_generate,priority:2"`
+	SupportsEdit               bool           `gorm:"type:boolean;not null;index:idx_ai_models_tenant_edit,priority:2"`
+	SupportsMultiReference     bool           `gorm:"type:boolean;not null"`
+	SupportsN                  bool           `gorm:"type:boolean;not null"`
+	MaxOutputCount             int            `gorm:"type:int unsigned;not null"`
+	SupportedSizesJSON         string         `gorm:"type:json;not null"`
+	SupportedQualitiesJSON     string         `gorm:"type:json;not null"`
+	SupportedOutputFormatsJSON string         `gorm:"type:json;not null"`
+	PricingJSON                string         `gorm:"type:json;not null"`
+	Status                     string         `gorm:"type:varchar(32);not null;index:idx_ai_models_tenant_status,priority:2"`
+	CreatedBy                  string         `gorm:"type:varchar(36);not null;index"`
+	CreatedAt                  time.Time      `gorm:"type:datetime(3);not null"`
+	UpdatedAt                  time.Time      `gorm:"type:datetime(3);not null"`
+	DeletedAt                  gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_ai_models_tenant_deleted,priority:2"`
+}
+
+func (AIModel) TableName() string {
+	return "ai_models"
+}

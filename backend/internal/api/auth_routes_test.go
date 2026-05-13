@@ -348,6 +348,27 @@ var authRouteTestSchema = []string{
 		updated_at TIMESTAMP NOT NULL,
 		deleted_at TIMESTAMP NULL
 	)`,
+	`CREATE TABLE ai_models (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		provider_id TEXT NOT NULL,
+		model_name TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		supports_generate BOOLEAN NOT NULL,
+		supports_edit BOOLEAN NOT NULL,
+		supports_multi_reference BOOLEAN NOT NULL,
+		supports_n BOOLEAN NOT NULL,
+		max_output_count INTEGER NOT NULL,
+		supported_sizes_json TEXT NOT NULL,
+		supported_qualities_json TEXT NOT NULL,
+		supported_output_formats_json TEXT NOT NULL,
+		pricing_json TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_by TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		deleted_at TIMESTAMP NULL
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {
