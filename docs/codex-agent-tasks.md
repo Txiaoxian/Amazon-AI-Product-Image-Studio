@@ -1232,20 +1232,21 @@ P6 的核心目标是安全落地 Provider/model 管理，为 P7 worker 调用 A
 当前状态：
 
 - `P6-BE-PROVIDER-SECURITY` 已 review 并合并到 `main`。
-- 下一步只启动 `P6-BE-MODEL-CAPABILITIES`，从最新 `main` 派生或重置 `codex/p6-backend-model-capabilities`。
+- `P6-BE-MODEL-CAPABILITIES` 已 review 并合并到 `main`。
+- 下一步只启动 `P6-FE-PROVIDER-MODEL-MGMT`，从最新 `main` 创建或重置 `codex/p6-frontend-provider-model-mgmt`。
 
 执行顺序：
 
 1. `P6-BE-PROVIDER-SECURITY` - completed.
-2. `P6-BE-MODEL-CAPABILITIES` - next.
-3. `P6-FE-PROVIDER-MODEL-MGMT` - 在后端 Provider/model 合同稳定后做前端管理 UI。
+2. `P6-BE-MODEL-CAPABILITIES` - completed.
+3. `P6-FE-PROVIDER-MODEL-MGMT` - next. 在后端 Provider/model 合同稳定后做前端管理 UI。
 4. `R6` - 主 agent 串行 review、合并、回归和合同校准。
 
 并行策略：
 
 - P6 第一批已只开 1 个子 agent：`P6-BE-PROVIDER-SECURITY`。
-- `P6-BE-MODEL-CAPABILITIES` 仍应串行启动，不要让前端 Provider 管理 UI 与模型后端合同并行开发。
-- `P6-BE-MODEL-CAPABILITIES` 与 `P6-FE-PROVIDER-MODEL-MGMT` 默认串行；只有主 agent 明确批准时，前端才可以在后端合同冻结后做有限并行。
+- `P6-BE-MODEL-CAPABILITIES` 已串行完成并合并，不再与前端 Provider/model UI 并行。
+- `P6-FE-PROVIDER-MODEL-MGMT` 现在可以单独启动。仍不要并行启动 P7 任务队列、Worker、Provider Adapter 执行或 SSE。
 
 ## 子任务 13：Provider 后端安全底座
 
@@ -1403,11 +1404,117 @@ go build ./cmd/api ./cmd/worker
 git diff --check
 ```
 
+### Review 结果
+
+- 允许合并，已合并。
+- 已实现 `ai_models` migration/model、tenant-scoped repository/service/routes、model CRUD、enable/disable、soft delete、capability validation、pricing metadata validation、Provider same-tenant checks、RBAC 和 operation logs。
+- 验证覆盖 tenant 隔离、RBAC、Provider 同租户约束、能力字段校验、启用/禁用状态、日志脱敏和模型响应不暴露 Provider 凭据。
+- 非阻塞遗留：P7 前需决定同一 Provider 下 `model_name` 是否唯一；P7/P8 前需决定 Provider soft delete 后关联模型是阻止删除、隐藏还是级联禁用。
+- 合并前验证通过：`cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`，`git diff --check`。
+
 ## 子任务 15：Provider/model 前端管理
 
 ### 任务名称
 
 P6-FE-PROVIDER-MODEL-MGMT - Provider 与模型管理前端 UI
+
+### 推荐执行信息
+
+- 推荐线程名：`P6-FE-PROVIDER-MODEL-MGMT`
+- 推荐分支名：`codex/p6-frontend-provider-model-mgmt`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务完成、review、合并和回归后，再进入 `R6`；不要并行启动 P7。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是 P6-FE-PROVIDER-MODEL-MGMT 子 agent。
+
+当前任务分支必须是：codex/p6-frontend-provider-model-mgmt。
+开始开发前必须执行：
+1. git status --short --branch
+2. git branch --show-current
+如果当前不在 codex/p6-frontend-provider-model-mgmt，必须先签入该分支后再继续；不要在 main 或其他分支开发。
+
+任务目标：
+实现管理员使用的 Provider/model 管理前端 UI 和 API wrappers。前端只把 Provider API Key 作为一次性表单字段提交给后端，不保存、不回显、不参与 AI 调用。P6 只做管理 UI，不替换旧生成工作台提交路径，不实现任务队列、SSE 或真实 Provider Adapter 执行。
+
+必须先阅读：
+- AGENTS.md
+- agent-instructions/01-project-overview.md
+- agent-instructions/02-architecture-rules.md
+- agent-instructions/03-frontend-rules.md
+- agent-instructions/05-security-rules.md
+- agent-instructions/06-testing-and-delivery.md
+- docs/api-contract.md
+- docs/rbac.md
+- docs/provider-adapter.md
+- docs/security.md
+- docs/development-plan.md
+- docs/codex-agent-tasks.md
+
+允许修改文件：
+- frontend/src/api/**
+- frontend/src/types/**
+- frontend/src/components/**
+- frontend/src/hooks/**
+- frontend/src/App.tsx
+- frontend/src/test/**
+
+禁止修改文件：
+- backend/**
+- deploy/**
+- docs/**
+- AGENTS.md
+- agent-instructions/**
+- frontend/src/providers/**
+- frontend/src/hooks/useGeneration.ts
+- frontend/src/db/**
+- 任务队列、SSE、Provider Adapter 执行相关代码
+- 前端生成工作台后端化替换
+
+具体开发内容：
+1. 新增 Provider API wrapper，复用现有 authenticated API client、统一 envelope、CSRF header 和 credentials include。
+2. 新增 Model API wrapper，复用现有 authenticated API client、统一 envelope、CSRF header 和 credentials include。
+3. 增加前端 Provider/model 类型，字段必须匹配 docs/api-contract.md 中 P6 Provider/Model 合同。
+4. 增加管理员 Provider 管理 UI：列表、创建、编辑、删除、启用、禁用、test。
+5. Provider 表单中的 API Key 只能作为用户本次输入提交；编辑页只能显示 apiKeyHint/apiKeyUpdatedAt 等 masked metadata，不得回显完整 key。
+6. 增加管理员模型管理 UI：列表、创建、编辑、删除、启用、禁用。
+7. 模型表单支持 capability 字段：supportsGenerate、supportsEdit、supportsMultiReference、supportsN、maxOutputCount、supportedSizes、supportedQualities、supportedOutputFormats、pricing、status。
+8. 处理 loading、empty、error、401、403、404、422 状态。
+9. 管理入口只对具备 provider/model 管理权限的用户展示；最终鉴权仍以后端为准。
+10. 保持现有 React + TypeScript + Vite + Tailwind 风格，不重写主应用，不大规模重构旧工作台。
+
+安全要求：
+- 不保存 Provider API Key 到 localStorage、sessionStorage、IndexedDB、URL、React persisted state 或 client-visible config。
+- 不新增 OpenAI、Gemini 或 OpenAI-Compatible Provider 直连。
+- 不创建浏览器侧 Provider Authorization header。
+- 不使用轮询查询 Provider test、任务状态或任何后端状态。
+- 不修改旧生成提交路径；旧本地 Provider/API Key 路径仍是 P8 迁移遗留，不得在本任务扩大使用。
+- 不渲染后端错误为 HTML。
+
+验收标准：
+- 管理员可以通过后端 API 管理 Provider 和模型。
+- Provider API Key 提交后页面只显示 masked metadata。
+- 前端测试覆盖 API wrappers、表单提交不持久化 key、错误状态和权限隐藏。
+- 新增代码没有引入 Provider direct fetch、Provider Authorization header、API Key persistence 或任务轮询。
+- frontend lint、type-check、test、build 全部通过。
+
+测试命令：
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+git diff -- frontend/src/api frontend/src/components frontend/src/hooks frontend/src/types frontend/src/test | rg -n "^\\+.*(localStorage|sessionStorage|indexedDB|Authorization|Bearer|setInterval|setTimeout|openai|gemini|relay2)" || true
+git diff --check
+
+交付要求：
+- 提交到 codex/p6-frontend-provider-model-mgmt。
+- 最终说明改动范围、验证命令结果、未改动项和任何遗留风险。
+```
 
 ### 目标
 

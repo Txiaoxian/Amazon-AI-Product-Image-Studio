@@ -210,20 +210,20 @@ The project is ready to enter P6 Provider and model management.
 
 ## P6: Provider and model management
 
-Status: in progress. `P6-BE-PROVIDER-SECURITY` has been reviewed and merged into `main`. The next P6 slice is `P6-BE-MODEL-CAPABILITIES`. P6 still adds Provider and model management only; it must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
+Status: in progress. `P6-BE-PROVIDER-SECURITY` and `P6-BE-MODEL-CAPABILITIES` have both been reviewed and merged into `main`. The next P6 slice is `P6-FE-PROVIDER-MODEL-MGMT`. P6 still adds Provider and model management only; it must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
 
 P6 execution order:
 
 1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. Completed and merged.
-2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. Next. This depends on Provider security foundations.
-3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. This depends on stable backend Provider/model contracts.
+2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. Completed and merged.
+3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. Next. This depends on stable backend Provider/model contracts.
 4. `R6`: main-agent review, integration regression, security review, and public contract cleanup.
 
 P6 serial/parallel policy:
 
 - `P6-BE-PROVIDER-SECURITY` was intentionally developed first and merged before frontend Provider UI work.
-- `P6-BE-MODEL-CAPABILITIES` can now proceed from latest `main`.
-- Frontend Provider/model management starts only after both backend contracts are stable, unless limited to type stubs approved by the main agent.
+- `P6-BE-MODEL-CAPABILITIES` was intentionally developed after Provider security and before frontend Provider/model UI.
+- Frontend Provider/model management can now proceed from latest `main`, because both backend contracts are stable enough for an admin UI.
 
 P6 backend Provider requirements:
 
@@ -255,6 +255,17 @@ P6 backend model requirements:
 - Validate model capability combinations, for example disabled `supports_n` must not accept output counts above 1.
 - Ensure models are tenant-scoped and belong to a Provider in the same tenant.
 - Expose enabled model capability responses for the frontend to render dynamic parameters later.
+
+P6 backend model result:
+
+- Implemented tenant-scoped `ai_models` model/migration, repository, service, routes, and tests.
+- Implemented model CRUD, enable/disable, soft delete, capability validation, pricing metadata validation, Provider same-tenant checks, RBAC, and operation logs.
+- Verified cross-tenant Provider/model access is rejected or invisible, and model responses do not expose Provider credentials or sensitive request data.
+
+P6 model non-blocking backlog:
+
+- Before P7 task execution decides model selection semantics, decide whether `(tenant_id, provider_id, model_name)` should be unique. The current migration indexes this tuple but does not enforce uniqueness.
+- Before P7/P8 depends on Provider/model lifecycle behavior, decide how models should behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
 
 P6 frontend requirements:
 

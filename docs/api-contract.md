@@ -210,7 +210,7 @@ Current P6 Provider backend implementation status:
 
 - Backend implements Provider CRUD, soft delete, enable/disable, Provider test, tenant-scoped queries, RBAC, operation logs, API key encryption, and masked Provider responses.
 - Provider test is backend-only and does not create tasks, assets, or usage records.
-- Frontend Provider/model management is not implemented yet; it starts after backend model capability APIs are stable.
+- Frontend Provider/model management is not implemented yet; it starts after Provider and model backend APIs are stable.
 
 ## Model APIs
 
@@ -238,6 +238,13 @@ Model request fields for P6:
 Model response fields for P6:
 
 - `id`, `tenantId`, `providerId`, `providerName`, `modelName`, `displayName`, capability fields, `pricing`, `status`, `createdAt`, `updatedAt`.
+
+Current P6 model backend implementation status:
+
+- Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
+- Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
+- P7 must decide whether `(tenant_id, provider_id, model_name)` uniqueness is required before task execution depends on model lookup semantics.
+- P7/P8 must decide how linked models behave when their Provider is soft-deleted.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 

@@ -116,8 +116,10 @@ P6 implementation notes:
 - `status` values: `ENABLED`, `DISABLED`.
 - `supported_sizes_json`, `supported_qualities_json`, `supported_output_formats_json`, and `pricing_json` must be validated structured JSON, not arbitrary unbounded blobs.
 - `max_output_count` must be consistent with `supports_n`.
-- Suggested additional fields: `created_by`, `deleted_at`.
-- Suggested indexes: `(tenant_id, provider_id)`, `(tenant_id, status)`, `(tenant_id, provider_id, model_name)`, `(tenant_id, deleted_at)`.
+- Implemented additional fields: `created_by`, `deleted_at`.
+- Implemented indexes include `(tenant_id, provider_id)`, `(tenant_id, status)`, `(tenant_id, provider_id, model_name)`, `(tenant_id, supports_generate)`, `(tenant_id, supports_edit)`, `(tenant_id, deleted_at)`, and `created_by`.
+- Current implementation does not enforce uniqueness on `(tenant_id, provider_id, model_name)`; P7 must decide whether task execution requires that invariant.
+- Current implementation keeps model rows independently soft-deletable; P7/P8 must decide the linked-model behavior when a Provider is soft-deleted.
 - Generated and edited task execution must not begin in P6; models are configuration data for P7/P8.
 
 ### generation_tasks

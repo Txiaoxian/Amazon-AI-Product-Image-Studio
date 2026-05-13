@@ -50,6 +50,14 @@ Current P6 Provider security result:
 - SSRF validation is implemented for Provider save/update/test and covers blocked hostnames, blocked IP ranges, unsupported schemes, embedded credentials, and redirects to blocked targets.
 - P7 real Provider Adapter execution must add an outbound SSRF-safe dialer or equivalent connect-time IP validation before real generation/edit calls are allowed.
 
+Current P6 model capability result:
+
+- Backend model capability management is implemented and merged.
+- Model records are tenant-scoped, reference a Provider in the same tenant, and expose generation/edit capabilities, multi-reference support, `n` support, max output count, supported sizes, supported qualities, supported output formats, pricing metadata, and enabled/disabled state.
+- Capability and pricing JSON are validated before persistence.
+- P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
+- P7/P8 must decide whether same-Provider `model_name` uniqueness and Provider soft-delete linked-model behavior need stricter enforcement.
+
 ## Adapter interface
 
 The backend should define an internal interface equivalent to:
