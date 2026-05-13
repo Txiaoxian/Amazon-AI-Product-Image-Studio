@@ -134,45 +134,58 @@ export interface CreateTaskRequest {
 
 export type ProviderType = 'OPENAI' | 'GEMINI' | 'OPENAI_COMPATIBLE'
 export type ProviderStatus = 'ENABLED' | 'DISABLED'
-
-export interface ProviderCredentialSummary {
-  isConfigured: boolean
-  keyLast4?: string
-  updatedAt?: ISODateTimeString
-}
+export type ProviderTestStatus = 'SUCCESS' | 'FAILURE'
 
 export interface Provider {
   id: ProviderId
   tenantId: TenantId
-  name: string
   type: ProviderType
+  name: string
+  baseUrl: string
   status: ProviderStatus
-  baseUrl?: string
-  credential: ProviderCredentialSummary
+  timeoutSeconds: number
+  concurrencyLimit: number
+  apiKeyHint: string
+  apiKeyUpdatedAt?: ISODateTimeString | null
+  lastTestStatus: ProviderTestStatus | ''
+  lastTestedAt?: ISODateTimeString | null
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
 }
 
-export type ModelStatus = 'ENABLED' | 'DISABLED'
-
-export interface ModelCapability {
-  supportsImageGeneration: boolean
-  supportsImageEdit: boolean
-  supportsReferenceImages: boolean
-  supportedAspectRatios?: string[]
-  supportedImageCounts?: number[]
-  supportedResolutions?: string[]
-  parameterSchema?: Record<string, unknown>
+export interface ProviderTestResult {
+  status: ProviderTestStatus
+  durationMs: number
+  checkedAt: ISODateTimeString
+  httpStatus?: number | null
+  requestId: string
+  message: string
 }
+
+export interface ModelPricing {
+  currency: string
+  unitPrices: Record<string, number>
+}
+
+export type ModelStatus = 'ENABLED' | 'DISABLED'
 
 export interface Model {
   id: ModelId
   tenantId: TenantId
   providerId: ProviderId
-  name: string
+  providerName: string
+  modelName: string
   displayName: string
+  supportsGenerate: boolean
+  supportsEdit: boolean
+  supportsMultiReference: boolean
+  supportsN: boolean
+  maxOutputCount: number
+  supportedSizes: string[]
+  supportedQualities: string[]
+  supportedOutputFormats: string[]
+  pricing: ModelPricing
   status: ModelStatus
-  capability: ModelCapability
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
 }
