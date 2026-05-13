@@ -129,7 +129,29 @@ func (r Repository) CreateEvent(ctx context.Context, scope tenant.Scope, record 
 		return err
 	}
 	record.TenantID = scope.ID()
-	return db.Create(record).Error
+	record.ID = pendingTaskEventID()
+	record.Sequence = 0
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(record).Error; err != nil {
+			return err
+		}
+		if record.Sequence == 0 {
+			return ErrValidation
+		}
+
+		stableID := EventIDFromSequence(record.Sequence)
+		result := tx.Model(&database.TaskEvent{}).
+			Where("tenant_id = ? AND sequence = ?", scope.ID(), record.Sequence).
+			Update("id", stableID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		record.ID = stableID
+		return nil
+	})
 }
 
 func (r Repository) OutputAssetIDs(ctx context.Context, scope tenant.Scope, taskID string) ([]string, error) {

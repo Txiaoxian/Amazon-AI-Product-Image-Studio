@@ -86,11 +86,14 @@ func TestTaskMigrationsUseTenantScopeStatusAndRedactedEventStorage(t *testing.T)
 
 	events := findCreateTableStatement(t, "task_events")
 	for _, required := range []string{
+		"sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT",
 		"tenant_id VARCHAR(36) NOT NULL",
 		"event_payload_json JSON NOT NULL",
-		"KEY idx_task_events_tenant_task_id (tenant_id, task_id, id)",
-		"KEY idx_task_events_tenant_project_id (tenant_id, project_id, id)",
-		"KEY idx_task_events_tenant_id (tenant_id, id)",
+		"PRIMARY KEY (sequence)",
+		"UNIQUE KEY uk_task_events_id (id)",
+		"KEY idx_task_events_tenant_task_sequence (tenant_id, task_id, sequence)",
+		"KEY idx_task_events_tenant_project_sequence (tenant_id, project_id, sequence)",
+		"KEY idx_task_events_tenant_sequence (tenant_id, sequence)",
 		"SSE replay source; payloads must be structured and redacted",
 	} {
 		if !strings.Contains(events, required) {

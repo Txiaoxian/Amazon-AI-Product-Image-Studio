@@ -91,6 +91,7 @@ func TestTaskRoutesCreateListDetailCancelRetryAndAudit(t *testing.T) {
 	}
 
 	assertTaskEvents(t, db, taskID, []string{task.EventTaskQueued, task.EventTaskCancelled, task.EventTaskRetried, task.EventTaskQueued})
+	assertTaskEventsHaveStableReplayCursor(t, db, taskID)
 	assertTaskOperationLogs(t, db, []string{"task.create", "task.cancel", "task.retry"})
 	assertNoTaskEventOrOperationLogSecrets(t, db)
 }
@@ -401,7 +402,7 @@ func seedOtherTenantTask(t *testing.T, db *gorm.DB) {
 func assertTaskEvents(t *testing.T, db *gorm.DB, taskID string, expected []string) {
 	t.Helper()
 	var events []database.TaskEvent
-	if err := db.Where("task_id = ?", taskID).Order("created_at ASC, id ASC").Find(&events).Error; err != nil {
+	if err := db.Where("task_id = ?", taskID).Order("sequence ASC").Find(&events).Error; err != nil {
 		t.Fatalf("load task events: %v", err)
 	}
 	if len(events) != len(expected) {
@@ -410,6 +411,25 @@ func assertTaskEvents(t *testing.T, db *gorm.DB, taskID string, expected []strin
 	for index, event := range events {
 		if event.EventType != expected[index] {
 			t.Fatalf("event %d type = %q, want %q; events = %#v", index, event.EventType, expected[index], events)
+		}
+	}
+}
+
+func assertTaskEventsHaveStableReplayCursor(t *testing.T, db *gorm.DB, taskID string) {
+	t.Helper()
+	var events []database.TaskEvent
+	if err := db.Where("task_id = ?", taskID).Order("sequence ASC").Find(&events).Error; err != nil {
+		t.Fatalf("load task events by sequence: %v", err)
+	}
+	for index, event := range events {
+		if event.Sequence == 0 {
+			t.Fatalf("event %d missing replay sequence: %#v", index, event)
+		}
+		if event.ID != task.EventIDFromSequence(event.Sequence) {
+			t.Fatalf("event %d id = %q, want %q", index, event.ID, task.EventIDFromSequence(event.Sequence))
+		}
+		if index > 0 && event.Sequence <= events[index-1].Sequence {
+			t.Fatalf("event sequence did not increase: previous=%d current=%d", events[index-1].Sequence, event.Sequence)
 		}
 	}
 }

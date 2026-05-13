@@ -19,7 +19,6 @@ func writeTaskEvent(ctx context.Context, repo Repository, scope tenant.Scope, re
 		return err
 	}
 	return repo.CreateEvent(ctx, scope, &database.TaskEvent{
-		ID:               taskEventID(createdAt),
 		TenantID:         scope.ID(),
 		TaskID:           record.ID,
 		ProjectID:        record.ProjectID,
@@ -56,6 +55,10 @@ func eventSensitiveKey(key string) bool {
 	return false
 }
 
-func taskEventID(createdAt time.Time) string {
-	return fmt.Sprintf("evt_%020d_%s", createdAt.UTC().UnixNano(), idgen.New())
+func EventIDFromSequence(sequence uint64) string {
+	return fmt.Sprintf("evt_%020d", sequence)
+}
+
+func pendingTaskEventID() string {
+	return "evt_pending_" + idgen.New()
 }

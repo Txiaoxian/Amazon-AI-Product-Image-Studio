@@ -248,13 +248,14 @@ func (GenerationTask) TableName() string {
 }
 
 type TaskEvent struct {
-	ID               string    `gorm:"type:varchar(64);primaryKey"`
-	TenantID         string    `gorm:"type:varchar(36);not null;index;index:idx_task_events_tenant_task_id,priority:1;index:idx_task_events_tenant_project_id,priority:1;index:idx_task_events_tenant_id,priority:1"`
-	TaskID           string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_task_id,priority:2"`
-	ProjectID        string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_project_id,priority:2"`
+	Sequence         uint64    `gorm:"column:sequence;primaryKey;autoIncrement;index:idx_task_events_tenant_task_sequence,priority:3;index:idx_task_events_tenant_project_sequence,priority:3;index:idx_task_events_tenant_sequence,priority:2"`
+	ID               string    `gorm:"type:varchar(64);not null;uniqueIndex:uk_task_events_id"`
+	TenantID         string    `gorm:"type:varchar(36);not null;index;index:idx_task_events_tenant_task_sequence,priority:1;index:idx_task_events_tenant_project_sequence,priority:1;index:idx_task_events_tenant_sequence,priority:1"`
+	TaskID           string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_task_sequence,priority:2"`
+	ProjectID        string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_project_sequence,priority:2"`
 	EventType        string    `gorm:"type:varchar(64);not null;index"`
 	EventPayloadJSON string    `gorm:"type:json;not null"`
-	CreatedAt        time.Time `gorm:"type:datetime(3);not null;index:idx_task_events_tenant_task_id,priority:3;index:idx_task_events_tenant_project_id,priority:3;index:idx_task_events_tenant_id,priority:2"`
+	CreatedAt        time.Time `gorm:"type:datetime(3);not null"`
 }
 
 func (TaskEvent) TableName() string {

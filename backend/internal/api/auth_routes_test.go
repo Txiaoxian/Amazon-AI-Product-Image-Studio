@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,7 +199,9 @@ func TestProductionAuthCookieIsSecure(t *testing.T) {
 func newAuthRouteTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	dsn := "file:" + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()) + "?mode=memory&cache=shared&_loc=auto"
+	id := atomic.AddUint64(&authRouteTestDBCounter, 1)
+	dsnName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	dsn := "file:" + dsnName + "_" + time.Now().UTC().Format("20060102150405.000000000") + "_" + strconv.FormatUint(id, 10) + "?mode=memory&cache=shared&_loc=auto"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
 		Logger:                                   gormlogger.Discard,
@@ -220,6 +224,8 @@ func newAuthRouteTestDB(t *testing.T) *gorm.DB {
 
 	return db
 }
+
+var authRouteTestDBCounter uint64
 
 var authRouteTestSchema = []string{
 	`CREATE TABLE tenants (
@@ -394,7 +400,8 @@ var authRouteTestSchema = []string{
 		updated_at TIMESTAMP NOT NULL
 	)`,
 	`CREATE TABLE task_events (
-		id TEXT PRIMARY KEY,
+		sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+		id TEXT NOT NULL UNIQUE,
 		tenant_id TEXT NOT NULL,
 		task_id TEXT NOT NULL,
 		project_id TEXT NOT NULL,
