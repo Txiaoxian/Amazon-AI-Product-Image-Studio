@@ -7,6 +7,7 @@
 - Redis is the queue, lock, concurrency, and rate-limit layer.
 - Worker execution must be idempotent.
 - SSE events are persisted in MySQL before delivery.
+- P7 is split into foundation, SSE, Worker queue, Provider Adapter runtime, frontend task client, and R7 review. Do not implement all concerns in one worktree.
 
 ## Task lifecycle
 
@@ -33,6 +34,12 @@ Expected transitions:
 
 Terminal states: `SUCCEEDED`, `FAILED`, `CANCELLED`, `TIMED_OUT`.
 
+Status naming note:
+
+- `SUCCEEDED` is the canonical task status for successful completion.
+- SSE event type `TASK_COMPLETED` represents the transition into `SUCCEEDED`.
+- Existing frontend transitional status names must be aligned before task status is used by production UI.
+
 ## Queue design
 
 Use Redis for durable-ish queue delivery and worker coordination. The implementation may use Redis Streams or a reliable list pattern, but it must support:
@@ -44,6 +51,11 @@ Use Redis for durable-ish queue delivery and worker coordination. The implementa
 - Visibility into pending jobs.
 
 The queue payload should contain task ID only. Worker loads full task state from MySQL.
+
+P7 foundation requirement:
+
+- `P7-BE-TASK-FOUNDATION` may create the enqueue abstraction and write task IDs to Redis after MySQL persistence.
+- Worker claim, visibility timeout, ack, retry, and dead-letter handling belong to `P7-BE-WORKER-QUEUE`.
 
 ## Concurrency limits
 
@@ -67,6 +79,11 @@ Before execution, worker must:
 4. Write `TASK_STARTED` event.
 
 Before creating output assets, worker must prevent duplicate output records for the same task and output index.
+
+P7 implementation boundary:
+
+- `P7-BE-WORKER-QUEUE` validates idempotency and status transitions with fake/stub execution.
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` adds real Provider calls, MinIO outputs, task_outputs, usage_records, and api_call_logs after the Worker state machine is stable.
 
 ## Cancellation
 
@@ -104,3 +121,8 @@ Every meaningful transition writes to `task_events`:
 - Cancelled.
 - Retried.
 - Timed out.
+
+P7 SSE boundary:
+
+- `P7-BE-SSE-STREAM` consumes persisted `task_events` and live fanout only.
+- MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.

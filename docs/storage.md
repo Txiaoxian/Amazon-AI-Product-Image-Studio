@@ -96,6 +96,19 @@ Current P5 backend behavior streams downloads through the backend after `asset -
 
 Current P5 frontend behavior downloads through `GET /assets/{assetId}/download` and handles the response as a browser blob. Frontend code must not construct MinIO URLs or expose object keys as downloadable URLs.
 
+## Generated and edited outputs
+
+P7 Worker output handling must:
+
+1. Receive normalized image bytes from a backend Provider Adapter.
+2. Validate MIME, dimensions, and pixel count before persistence when possible.
+3. Write output objects to MinIO using backend-generated object keys.
+4. Create `image_assets` rows with `kind=GENERATED` or `kind=EDITED`, `task_id`, `project_id`, and `tenant_id`.
+5. Create `task_outputs` rows with `task_id`, `asset_id`, and stable `output_index`.
+6. Write `IMAGE_OUTPUT` task events after metadata is committed.
+
+Worker retries and duplicate queue delivery must not create duplicate output assets for the same task/output index.
+
 ## Thumbnail generation
 
 Reference uploads and generated outputs should create thumbnails. Thumbnail creation may run synchronously for small files or through a worker path later.

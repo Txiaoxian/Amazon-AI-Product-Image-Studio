@@ -206,24 +206,24 @@ nc -vz 127.0.0.1 6379
 nc -vz 127.0.0.1 9000
 ```
 
-The project is ready to enter P6 Provider and model management.
+P6 Provider/model management has completed and passed R6 integration review. The project is ready to enter P7 task queue, Worker, Provider Adapter execution, and SSE.
 
 ## P6: Provider and model management
 
-Status: in progress. `P6-BE-PROVIDER-SECURITY` and `P6-BE-MODEL-CAPABILITIES` have both been reviewed and merged into `main`. The next P6 slice is `P6-FE-PROVIDER-MODEL-MGMT`. P6 still adds Provider and model management only; it must not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
+Status: completed. `P6-BE-PROVIDER-SECURITY`, `P6-BE-MODEL-CAPABILITIES`, `P6-FE-PROVIDER-MODEL-MGMT`, and `R6` have been reviewed, merged into `main`, and verified. P6 added Provider/model management only; it did not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
 
 P6 execution order:
 
 1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. Completed and merged.
 2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. Completed and merged.
-3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. Next. This depends on stable backend Provider/model contracts.
-4. `R6`: main-agent review, integration regression, security review, and public contract cleanup.
+3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. Completed and merged.
+4. `R6`: main-agent review, integration regression, security review, and public contract cleanup. Completed.
 
 P6 serial/parallel policy:
 
 - `P6-BE-PROVIDER-SECURITY` was intentionally developed first and merged before frontend Provider UI work.
 - `P6-BE-MODEL-CAPABILITIES` was intentionally developed after Provider security and before frontend Provider/model UI.
-- Frontend Provider/model management can now proceed from latest `main`, because both backend contracts are stable enough for an admin UI.
+- Frontend Provider/model management was developed after both backend contracts were stable and merged.
 
 P6 backend Provider requirements:
 
@@ -276,6 +276,14 @@ P6 frontend requirements:
 - Render Provider test results and sanitized errors without leaking credentials.
 - Do not modify the legacy generation submit path in P6.
 
+P6 frontend result:
+
+- Implemented Provider/model API wrappers using the authenticated API client with `credentials: include` and CSRF headers for state-changing requests.
+- Implemented admin Provider/model management UI for list, create, edit, delete, enable/disable, and Provider test.
+- Provider API keys are accepted only as form input for immediate backend submission. The UI shows only masked key metadata, clears submitted and unsubmitted key drafts, and does not persist keys to browser storage.
+- Added tests for API wrappers, permission-hidden management entry, Provider key one-time submission, key draft cleanup on modal close, and permission/validation error states.
+- Did not modify legacy generation submission, browser Provider adapters, local history, IndexedDB, or P8 migration paths.
+
 P6 acceptance gates:
 
 - Provider and model APIs require authentication, tenant filtering, RBAC, and object-level checks where IDs are used.
@@ -285,39 +293,67 @@ P6 acceptance gates:
 - Frontend does not save Provider API keys or introduce new AI Provider direct calls.
 - P6 does not change task queue, worker generation, SSE task events, or frontend generation backendization.
 
-P6 verification after merge:
+R6 verification result:
 
 ```bash
-cd backend
-go test ./...
-go test -race ./...
-go vet ./...
-go build ./cmd/api ./cmd/worker
-
-cd ../frontend
+cd frontend
 npm run lint
 npm run type-check
 npm run test
 npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
 
 cd ..
 docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
 
+Actual R6 result:
+
+- Frontend validation passed: lint, type-check, 16 test files / 58 tests, and production build.
+- Backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
+- Docker Compose config validation passed.
+- P6 frontend diff security scan found only Provider type enum/test text references to `OPENAI`, `GEMINI`, and `OPENAI_COMPATIBLE`; no new browser Provider direct fetch, Authorization header, API key persistence, or polling path was introduced.
+
+P6 residual risks and carry-forward items:
+
+- P7 real Provider Adapter execution must add SSRF-safe outbound transport or `DialContext` connect-time IP validation. Save/test URL validation alone is not enough against DNS rebinding.
+- P7 must decide whether `(tenant_id, provider_id, model_name)` uniqueness is required before task execution depends on model lookup semantics.
+- P7/P8 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- Production startup hardening must reject default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
+- Legacy frontend generation still uses browser Provider adapters, localStorage Provider API keys, and IndexedDB history as migration baseline. These remain P8 removal targets, not acceptable platform behavior.
+- `ProviderModelAdminPanel` is large and should be split during later frontend maintenance, but this is not a security or merge blocker.
+
 ## P7: Task queue, worker, Provider Adapter, and SSE
 
-Tasks:
+Status: planned. P7 starts from latest `main` after R6. P7 must be developed in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
 
-- Implement generation/edit task creation.
-- Persist tasks and task events in MySQL.
-- Enqueue Redis jobs after task persistence.
-- Implement worker claim, execution, cancellation, retry, timeout, and recovery.
-- Add backend Provider Adapter interface and concrete OpenAI/Gemini/OpenAI-compatible adapters.
-- Store generated outputs in MinIO and create asset records.
-- Record API call logs and usage records.
-- Implement SSE with heartbeat, `Last-Event-ID`, `lastEventId` fallback, replay from MySQL, and authorization filtering.
-- Enforce global, tenant, user, Provider, and model concurrency limits.
+P7 execution order:
+
+1. `P7-BE-TASK-FOUNDATION`: MySQL task/event/output/log/usage models and migrations, task repository/service, task create/list/detail/cancel/retry APIs, task event writer, and Redis enqueue abstraction. No real Provider call yet.
+2. `P7-BE-SSE-STREAM`: SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay, tenant/project/task authorization filtering, and tests. Starts only after task event schema is merged.
+3. `P7-BE-WORKER-QUEUE`: Redis reliable queue, Worker claim loop, task state machine, idempotency, cancellation, retry, timeout, recovery, and concurrency limits using fake/stub Provider execution first.
+4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
+5. `P7-FE-TASK-CLIENT-SSE`: frontend task API wrappers, task/SSE types, SSE client integration tests, and task event reducer utilities. This must not replace the main workbench generation flow; P8 owns that migration.
+6. `R7`: main-agent review, integration regression, security review, and public contract cleanup before P8.
+
+P7 serial/parallel policy:
+
+- Start serially with `P7-BE-TASK-FOUNDATION`; do not parallelize until task schema, task event schema, status names, and API response contracts are merged.
+- After foundation merge, `P7-BE-SSE-STREAM` and `P7-BE-WORKER-QUEUE` may run as a limited two-agent parallel batch if their write scopes stay disjoint.
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` depends on Worker state handling and SSRF-safe transport decisions; do not start it against unstable queue/state code.
+- `P7-FE-TASK-CLIENT-SSE` starts only after task and SSE contracts are stable enough for frontend types and API wrappers.
+
+P7 canonical status decision:
+
+- Backend/API task statuses are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, and `TIMED_OUT`.
+- SSE event type `TASK_COMPLETED` represents a transition to task status `SUCCEEDED`.
+- Existing transitional frontend type `COMPLETED` must be updated in P7/P8 before frontend task status is used in production paths.
 
 ## P8: Frontend backendization
 

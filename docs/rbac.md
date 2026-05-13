@@ -131,6 +131,15 @@ P6 Provider/model role mapping:
 - Provider and model object APIs must still filter by `tenant_id`; RBAC alone is not sufficient.
 - Sellers and viewers should not receive Provider/model management permissions by default.
 
+P7 task role mapping:
+
+- Task create requires `task:create` plus project `OWNER` or `EDITOR`, unless tenant admin.
+- Task list/detail requires `task:read` plus project visibility, unless tenant admin.
+- Task cancel requires `task:cancel` plus project `OWNER` or `EDITOR`, unless tenant admin.
+- Task retry requires `task:retry` plus project `OWNER` or `EDITOR`, unless tenant admin.
+- Task event SSE streams require the same visibility rules as task read. Event filtering must be applied per tenant and per project/task object, not only when the connection is opened.
+- Worker execution uses backend service authority only; it must not bypass tenant/project checks when reading task-related assets and metadata.
+
 ## Audit requirements
 
 Record operation logs for:
@@ -140,3 +149,4 @@ Record operation logs for:
 - Provider and model changes.
 - Project member changes.
 - Asset deletion and downloads when required by policy.
+- Task create, cancel, retry, failure, timeout, and terminal completion when required by policy.

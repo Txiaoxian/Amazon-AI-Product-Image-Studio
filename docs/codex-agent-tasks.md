@@ -1233,20 +1233,21 @@ P6 的核心目标是安全落地 Provider/model 管理，为 P7 worker 调用 A
 
 - `P6-BE-PROVIDER-SECURITY` 已 review 并合并到 `main`。
 - `P6-BE-MODEL-CAPABILITIES` 已 review 并合并到 `main`。
-- 下一步只启动 `P6-FE-PROVIDER-MODEL-MGMT`，从最新 `main` 创建或重置 `codex/p6-frontend-provider-model-mgmt`。
+- `P6-FE-PROVIDER-MODEL-MGMT` 已 review、修复阻塞问题并合并到 `main`。
+- `R6` 已完成。项目下一步进入 P7。
 
 执行顺序：
 
 1. `P6-BE-PROVIDER-SECURITY` - completed.
 2. `P6-BE-MODEL-CAPABILITIES` - completed.
-3. `P6-FE-PROVIDER-MODEL-MGMT` - next. 在后端 Provider/model 合同稳定后做前端管理 UI。
-4. `R6` - 主 agent 串行 review、合并、回归和合同校准。
+3. `P6-FE-PROVIDER-MODEL-MGMT` - completed.
+4. `R6` - completed.
 
 并行策略：
 
 - P6 第一批已只开 1 个子 agent：`P6-BE-PROVIDER-SECURITY`。
 - `P6-BE-MODEL-CAPABILITIES` 已串行完成并合并，不再与前端 Provider/model UI 并行。
-- `P6-FE-PROVIDER-MODEL-MGMT` 现在可以单独启动。仍不要并行启动 P7 任务队列、Worker、Provider Adapter 执行或 SSE。
+- `P6-FE-PROVIDER-MODEL-MGMT` 已串行完成并合并。P7 仍必须按新的 P7 执行策略推进，不要把任务队列、Worker、Provider Adapter runtime 和 SSE 合成一个大任务。
 
 ## 子任务 13：Provider 后端安全底座
 
@@ -1582,6 +1583,14 @@ npm run build
 git diff --check
 ```
 
+### Review 结果
+
+- 允许合并，已合并。
+- 已实现 Provider/model API wrappers、管理员 Provider/model 管理 UI、Provider test UI、启用/禁用/删除/编辑表单、权限隐藏、错误状态和 masked key metadata 展示。
+- 初次 review 发现 Provider API Key draft 在关闭弹窗后仍可能残留；子 agent 已在 `fix: clear Provider key draft on admin modal close` 中修复，并新增回归测试。
+- 验证确认 Provider API Key 只作为一次性请求字段提交；关闭弹窗后清空未提交 key；没有写入 localStorage、sessionStorage、IndexedDB、URL 或 client-visible config。
+- 没有新增浏览器 Provider 直连、Provider Authorization header、任务轮询、旧生成路径替换或前端 Provider Adapter 修改。
+
 ## 串行阶段 6：P6 review 和集成
 
 ### 任务名称
@@ -1648,30 +1657,75 @@ docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
 
-## 子任务 17：任务队列、Worker 和 SSE 服务端
+### R6 结果
+
+- P6 三个开发任务均已合并到 `main`。
+- 主 agent 完成 P6 review、前端阻塞问题复审、合并和 R6 回归。
+- 前端验证通过：`cd frontend && npm run lint && npm run type-check && npm run test && npm run build`，16 个 test files / 58 个 tests 全部通过。
+- 后端验证通过：`cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`。
+- Compose 验证通过：`docker compose -f deploy/docker-compose.yml config`。
+- P6 frontend diff security scan 只命中 Provider 类型枚举和测试文本中的 `OPENAI`、`GEMINI`、`OPENAI_COMPATIBLE`；未发现新增 Provider direct fetch、Authorization header、API Key persistence 或任务轮询路径。
+- 公共合同已更新 P6 实际完成状态、R6 验证结果和 P7 遗留风险。
+
+## P7 执行策略
+
+P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider Adapter 运行时、MinIO 输出资产、用量/API 调用日志和 SSE 实时事件流。P7 不替换前端主工作台生成链路；P8 才负责把旧浏览器直连生成迁移到 task API + SSE。
+
+执行顺序：
+
+1. `P7-BE-TASK-FOUNDATION` - 串行第一项，冻结 task schema、status、event writer 和 API 合同。
+2. `P7-BE-SSE-STREAM` - 依赖 task event schema，可在 foundation 合并后启动。
+3. `P7-BE-WORKER-QUEUE` - 依赖 task foundation，可与 SSE 作为最多两个子 agent 的有限并行开发，前提是写入范围保持隔离。
+4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - 依赖 Worker 状态机和 SSRF-safe outbound transport 决策。
+5. `P7-FE-TASK-CLIENT-SSE` - 依赖 task/SSE 合同稳定，只做 API/SSE client 与 reducer，不替换主工作台。
+6. `R7` - 主 agent 串行 review、集成回归、安全审查和公共合同校准。
+
+并行策略：
+
+- 第一项 `P7-BE-TASK-FOUNDATION` 必须串行。
+- Foundation 合并后，第一批最多 2 个子 agent：`P7-BE-SSE-STREAM` 与 `P7-BE-WORKER-QUEUE`。
+- Provider Adapter runtime 不与 Worker foundation 并行，避免真实外部调用压在不稳定状态机上。
+- 前端 task client 只在后端合同稳定后启动，不提前替换 P8 工作台。
+
+P7 统一状态约定：
+
+- 任务状态：`QUEUED`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELLED`、`RETRYING`、`TIMED_OUT`。
+- SSE `TASK_COMPLETED` event 表示 task status 进入 `SUCCEEDED`。
+- 前端已有 transitional `COMPLETED` 类型不得作为新后端合同继续扩散；P7/P8 使用 `SUCCEEDED`。
+
+## 子任务 17：P7 后端任务基础
 
 ### 任务名称
 
-P7-TASK-SSE - Redis 队列、Worker 状态机、Provider Adapter 执行与 SSE
+P7-BE-TASK-FOUNDATION - 任务 schema、状态机基础、事件写入和任务 API
 
 ### 目标
 
-实现生成/编辑任务的后端执行链路和实时事件流。
+建立任务系统基础合同：MySQL task/event/output/log/usage schema、任务 API、事件写入、Redis enqueue 抽象和状态机基础。此任务不执行真实 Provider 调用，不实现 SSE 长连接，不替换前端工作台。
 
 ### 允许修改文件
 
-- `backend/**`
-- `frontend/src/api/**`
-- `frontend/src/lib/taskSseClient.ts`
-- `frontend/src/types/**`
-- `frontend/src/test/**`
+- `backend/internal/task/**`
+- `backend/internal/database/**`
+- `backend/internal/api/**`
+- `backend/internal/config/**` 仅限任务/队列配置
+- `backend/internal/queue/**` 或等价 Redis enqueue 抽象
+- `backend/cmd/api/**` 仅限路由/依赖注入
+- `backend/cmd/worker/**` 仅限空依赖注入或编译兼容
+- `backend/internal/audit/**` 仅限复用 operation log helper
+- `backend/internal/rbac/**` 仅限复用权限 helper
 
 ### 禁止修改文件
 
+- `frontend/**`
+- `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- 前端工作台主流程替换，除非仅为类型或 client 兼容
+- 真实 Provider Adapter 执行
+- SSE 长连接实现
+- Worker claim/execution loop
+- 前端工作台后端化替换
 
 ### 前置依赖
 
@@ -1679,26 +1733,31 @@ P7-TASK-SSE - Redis 队列、Worker 状态机、Provider Adapter 执行与 SSE
 
 ### 具体开发内容
 
-- 后端实现 task 创建、取消、重试、详情、列表 API。
-- 持久化 generation_tasks 和 task_events。
-- Redis 入队和 worker claim。
-- Worker 实现状态机、幂等、超时、取消、重试和恢复。
-- Worker 通过 Provider Adapter 调用 AI Provider，输出上传 MinIO，创建 asset，记录 usage_records 和 api_call_logs。
-- 后端 SSE 支持 heartbeat、`Last-Event-ID`、`lastEventId` query fallback、MySQL 历史补发和权限过滤。
-- 实现 global、tenant、user、Provider、model 并发限制。
+- 增加或补齐 `generation_tasks`、`task_events`、`task_outputs`、`api_call_logs`、`usage_records` migration 和 GORM models。
+- 实现 task repository/service，所有查询显式过滤 `tenant_id`。
+- 实现 `POST /projects/{projectId}/tasks`、`GET /projects/{projectId}/tasks`、`GET /tasks/{taskId}`、`POST /tasks/{taskId}/cancel`、`POST /tasks/{taskId}/retry`。
+- 创建任务时校验项目权限、Provider/model 同租户、Provider/model enabled、模型能力和任务参数。
+- MySQL 持久化成功后再 enqueue Redis；任务创建在 MySQL 与 enqueue 之间必须有可恢复策略。
+- 实现 task event writer：先写 MySQL task_events，再预留 live fanout hook。
+- 实现取消/重试的持久状态变更和事件写入，但 Worker 实际执行留给后续任务。
+- 写 operation logs：task create/cancel/retry。
+- 增加测试覆盖 tenant 隔离、项目权限、Provider/model 约束、状态流转、event 持久化、enqueue 失败处理和日志脱敏。
 
 ### 安全要求
 
 - Redis 不是最终任务状态源。
-- 所有任务查询和事件流必须按 tenant/project 权限过滤。
-- Provider 原始错误和请求响应必须脱敏后记录。
-- SSE payload 不包含 API Key、Cookie、Authorization 或图片 base64。
+- 所有任务 API 必须鉴权、RBAC、tenant filter 和项目成员/管理员对象级校验。
+- 请求参数不得允许前端传入 `tenantId`、`createdBy`、`status` 等服务端字段。
+- Task/event payload 不得包含 API Key、Authorization、Cookie、图片 base64 或原始 Provider 响应。
+- 创建任务不能调用 AI Provider，不能上传输出资产。
 
 ### 验收标准
 
-- 任务状态机测试覆盖 queued/running/completed/failed/cancelled/retry/timed_out。
-- SSE replay 和不可见事件过滤有测试。
-- Worker 重复领取不会重复输出资产或用量记录。
+- 任务 API 符合 `docs/api-contract.md`。
+- `generation_tasks` 和 `task_events` 以 MySQL 为最终状态源。
+- 创建任务写入 `TASK_QUEUED` event 并 enqueue Redis。
+- 跨租户、无项目权限、disabled Provider/model、能力不匹配的请求被拒绝。
+- 不存在真实 Provider 调用、输出 asset 创建或 SSE 长连接业务。
 
 ### 测试命令
 
@@ -1707,9 +1766,345 @@ cd backend
 go test ./...
 go test -race ./...
 go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
 ```
 
-## 子任务 18：前端工作台后端化
+## 子任务 18：P7 SSE 服务端事件流
+
+### 任务名称
+
+P7-BE-SSE-STREAM - 任务事件 SSE、heartbeat、Last-Event-ID 和历史补发
+
+### 目标
+
+实现后端任务事件 SSE 流，支持 heartbeat、断线重连、`Last-Event-ID`、`lastEventId` query fallback、MySQL 历史补发和 tenant/project/task 权限过滤。
+
+### 允许修改文件
+
+- `backend/internal/sse/**`
+- `backend/internal/task/**` 仅限事件读取/fanout 接口
+- `backend/internal/api/**`
+- `backend/internal/rbac/**` 仅限复用权限 helper
+- `backend/cmd/api/**` 仅限依赖注入
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- Worker 执行 loop
+- 真实 Provider Adapter 调用
+
+### 前置依赖
+
+- `P7-BE-TASK-FOUNDATION` 已合并。
+
+### 具体开发内容
+
+- 实现 `GET /api/v1/events/tasks`。
+- 支持 `projectId`、`taskId`、`lastEventId` query，以及 `Last-Event-ID` header。
+- 从 MySQL `task_events` replay 可见历史事件，再进入 live stream。
+- 实现 heartbeat event，避免连接静默断开。
+- 实现 live fanout，可使用 Redis pub/sub 或进程内 broker；MySQL 仍是 replay source。
+- 事件 payload 使用 camelCase，禁止敏感字段。
+- 增加测试覆盖 replay、heartbeat frame、Last-Event-ID、query fallback、不可见 task/project 过滤、跨租户隔离和断开清理。
+
+### 安全要求
+
+- SSE endpoint 必须使用 Cookie auth。
+- 每个事件在发送前必须做 tenant/project/task 可见性校验。
+- 不得向无权限用户泄露事件存在性。
+- Payload 不得包含 API Key、Authorization、Cookie、图片 base64 或原始 Provider 响应。
+
+### 验收标准
+
+- SSE 合同符合 `docs/sse-contract.md`。
+- `Last-Event-ID` 和 `lastEventId` 均能补发历史事件。
+- heartbeat 可被测试验证。
+- 不可见事件不会发送给当前用户。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
+```
+
+## 子任务 19：P7 Worker 队列和状态机
+
+### 任务名称
+
+P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和并发限制
+
+### 目标
+
+实现 Worker 对 Redis 队列的可靠消费和任务状态机执行骨架，使用 fake/stub Provider execution 验证 claim、幂等、取消、重试、超时、恢复和并发限制。真实 Provider 调用留给 `P7-BE-PROVIDER-ADAPTER-RUNTIME`。
+
+### 允许修改文件
+
+- `backend/cmd/worker/**`
+- `backend/internal/task/**`
+- `backend/internal/queue/**`
+- `backend/internal/config/**`
+- `backend/internal/database/**` 仅限必要索引或状态字段补齐
+- `backend/internal/api/**` 仅限状态兼容测试
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- 真实 Provider Adapter HTTP 调用
+- 前端工作台后端化替换
+
+### 前置依赖
+
+- `P7-BE-TASK-FOUNDATION` 已合并。
+
+### 具体开发内容
+
+- 实现 Redis reliable queue claim/ack/retry/dead-letter 或等价可靠队列模式。
+- Worker 从队列加载 task ID，再从 MySQL 加载完整任务状态。
+- 实现事务性 `QUEUED/RETRYING -> RUNNING` claim 和 `TASK_STARTED` event。
+- 实现 fake/stub execution 完成路径，写 `TASK_PROGRESS`、`TASK_COMPLETED` 或失败事件。
+- 实现取消、重试、超时和 recovery loop。
+- 实现 global、tenant、user、Provider、model concurrency limiter，确保 crash recovery 能释放 stale locks。
+- 保证重复领取不会重复创建 task output、usage 或 terminal events。
+
+### 安全要求
+
+- Worker 不信任 Redis payload 中除 task ID 以外的信息。
+- Worker 每次执行都从 MySQL 重读 task、tenant、Provider、model 和 project 状态。
+- 日志不得包含 prompt 以外敏感数据；不得记录 API Key、Authorization、Cookie、图片 base64。
+
+### 验收标准
+
+- 状态机测试覆盖 queued/running/succeeded/failed/cancelled/retrying/timed_out。
+- 重复领取和 worker crash/recovery 测试不产生重复输出或重复 terminal event。
+- 并发限制覆盖 global、tenant、user、Provider、model。
+- Worker 可独立 build 和 test。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
+```
+
+## 子任务 20：P7 Provider Adapter 运行时
+
+### 任务名称
+
+P7-BE-PROVIDER-ADAPTER-RUNTIME - 真实 Provider 调用、SSRF-safe transport、MinIO 输出、用量和 API 调用日志
+
+### 目标
+
+把 Worker fake execution 替换为后端 Provider Adapter 真实执行路径，支持 OpenAI、Gemini 和 OpenAI-compatible Provider，输出图片进入 MinIO 和资产库，并记录 api_call_logs 与 usage_records。
+
+### 允许修改文件
+
+- `backend/internal/provider/**`
+- `backend/internal/provideradapter/**` 或等价 adapter 包
+- `backend/internal/task/**`
+- `backend/internal/asset/**`
+- `backend/internal/storage/**`
+- `backend/internal/database/**`
+- `backend/internal/config/**`
+- `backend/cmd/worker/**`
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- 浏览器 Provider adapter 生产路径
+
+### 前置依赖
+
+- `P7-BE-WORKER-QUEUE` 已合并。
+- P7 SSRF-safe outbound transport 方案已由主 agent 或文档确认。
+
+### 具体开发内容
+
+- 定义 backend Provider Adapter interface 和 normalized request/result types。
+- 实现 OpenAI、Gemini、OpenAI-compatible adapters 或最小可测试执行路径。
+- 实现 SSRF-safe HTTP transport / `DialContext`，连接时校验最终 IP，防 DNS rebinding。
+- Worker 解密 API key 只在 backend memory 中使用，不写日志或响应。
+- 按 model capability 校验尺寸、质量、输出格式、n、多参考图和编辑能力。
+- 输出图片上传 MinIO，创建 GENERATED/EDITED asset，写 task_outputs。
+- 记录 api_call_logs、usage_records 和 task events：`IMAGE_OUTPUT`、`USAGE_RECORDED`、`TASK_COMPLETED`/`TASK_FAILED`。
+- Provider 错误、request/response metadata 必须递归脱敏。
+
+### 安全要求
+
+- 不允许业务代码绕过 Provider Adapter 直接拼 Provider HTTP 调用。
+- 出站 HTTP 必须做 connect-time SSRF 防护。
+- API Key 不落库明文、不返回前端、不写日志。
+- API call logs 不保存 Authorization、Cookie、完整 API Key、图片 base64 或原始图片字节。
+
+### 验收标准
+
+- Adapter 单元测试覆盖 OpenAI/Gemini/OpenAI-compatible request mapping、错误脱敏和 usage normalization。
+- SSRF-safe transport 测试覆盖 DNS rebinding/blocked IP/redirect blocked。
+- Worker 成功路径创建 MinIO object、asset、task_output、usage_record、api_call_log 和 task events。
+- Worker 失败路径写 sanitized error，不创建半成品资产。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
+```
+
+## 子任务 21：P7 前端 Task API 和 SSE Client 合同
+
+### 任务名称
+
+P7-FE-TASK-CLIENT-SSE - Task API wrappers、SSE client 类型和事件 reducer
+
+### 目标
+
+为 P8 工作台后端化准备前端 task API wrappers、SSE client 类型和事件 reducer。P7 前端只做合同层和测试，不替换现有生成工作台主流程。
+
+### 允许修改文件
+
+- `frontend/src/api/**`
+- `frontend/src/types/**`
+- `frontend/src/lib/taskSseClient.ts`
+- `frontend/src/test/**`
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/providers/**`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/db/**`
+- `frontend/src/components/studio/**` 主流程替换
+
+### 前置依赖
+
+- `P7-BE-TASK-FOUNDATION` 已合并。
+- `P7-BE-SSE-STREAM` 合同稳定。
+
+### 具体开发内容
+
+- 新增 task API wrappers：create/list/detail/cancel/retry，复用 authenticated API client 和 CSRF。
+- 更新 task/status/event TypeScript 类型，使用 `SUCCEEDED` 而不是 transitional `COMPLETED`。
+- 扩展 `taskSseClient` 以匹配后端 SSE event frame、heartbeat、Last-Event-ID query fallback 和 typed payloads。
+- 增加 task event reducer utility，能把 queued/started/progress/output/usage/failed/completed/cancelled/retried/timed_out event 合成为 UI 可消费状态。
+- 增加测试覆盖 wrappers、credentials/CSRF、SSE URL、heartbeat 忽略或处理、replay id、event reducer。
+
+### 安全要求
+
+- 不使用轮询、`setInterval` 或 repeated fetch 查询任务状态。
+- 不新增浏览器 Provider direct fetch 或 Provider Authorization header。
+- 不保存 API Key 到 localStorage、sessionStorage、IndexedDB、URL 或 client-visible config。
+
+### 验收标准
+
+- 前端 task/SSE 合同与 `docs/api-contract.md`、`docs/sse-contract.md` 一致。
+- 任务状态不再扩散 `COMPLETED` 作为后端新合同。
+- 没有替换 P8 工作台主流程。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+git diff --check
+```
+
+## 串行阶段 7：P7 review 和集成
+
+### 任务名称
+
+R7 - P7 task/Worker/Provider/SSE review、集成和合同校准
+
+### 目标
+
+主 agent 串行 review P7 子任务，确认任务状态、Redis 队列、Worker 幂等、Provider Adapter 安全、MinIO 输出、用量/API 日志和 SSE replay 均满足平台规则，再进入 P8 前端工作台后端化。
+
+### 允许修改文件
+
+- P7 子任务允许修改的文件。
+- 公共合同文件，仅限主 agent 根据实际实现校准。
+
+### 禁止修改文件
+
+- P8 前端工作台主流程替换。
+- 未经 review 的部署环境大改。
+
+### 前置依赖
+
+- `P7-BE-TASK-FOUNDATION`、`P7-BE-SSE-STREAM`、`P7-BE-WORKER-QUEUE`、`P7-BE-PROVIDER-ADAPTER-RUNTIME`、`P7-FE-TASK-CLIENT-SSE` 均已提交。
+
+### 具体开发内容
+
+- Review P7 全部代码和测试。
+- 串行合并或要求整改。
+- 使用共享本地 MySQL/Redis/MinIO 做必要集成检查，不创建项目专属开发环境。
+- 跑前后端、Compose config 和必要 Worker/SSE 集成测试。
+- 更新公共合同中的 P7 实际完成状态和遗留风险。
+
+### 安全要求
+
+- 重点检查 SSE replay 可见性、tenant/project/task authorization、Provider Adapter SSRF-safe transport、API Key 解密范围、日志脱敏、Worker 幂等和并发限制。
+- 不允许引入 frontend AI Provider direct call、API Key persistence 或任务状态轮询。
+
+### 验收标准
+
+- P7 合并后前端、后端、Compose config 均通过。
+- Worker 重复领取不会重复输出资产、usage 或 terminal event。
+- SSE replay 不泄露跨租户或无权限事件。
+- Provider runtime 不泄露 API Key、Authorization、Cookie、图片 base64 或原始 Provider payload。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 子任务 22：前端工作台后端化
 
 ### 任务名称
 
@@ -1733,7 +2128,7 @@ P8-FE-BACKENDIZATION - 替换前端生成链路并移除本地密钥路径
 
 ### 前置依赖
 
-- P7-TASK-SSE 合并完成。
+- R7 P7 task/Worker/Provider/SSE 集成完成。
 
 ### 具体开发内容
 
@@ -1767,7 +2162,7 @@ npm run test
 npm run build
 ```
 
-## 子任务 19：审计、用量、系统设置和发布硬化
+## 子任务 23：审计、用量、系统设置和发布硬化
 
 ### 任务名称
 

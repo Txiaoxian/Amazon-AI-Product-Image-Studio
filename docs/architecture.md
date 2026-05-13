@@ -13,16 +13,16 @@ The current repository is a pure frontend local app:
 
 This baseline must be preserved while the platform backend is added. Platformization is not a rewrite.
 
-## Current transition state after P5
+## Current transition state after R6
 
-The repository is now structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has backend/frontend infrastructure, authentication/RBAC, project management, and reference asset management foundations.
+The repository is now structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has backend/frontend infrastructure, authentication/RBAC, project management, reference asset management, and Provider/model management foundations.
 
 Important transition facts:
 
-- The frontend still has legacy local Provider adapters, localStorage Provider settings, and IndexedDB image/history storage.
-- The backend currently has configuration, logging, router, health, response helpers, middleware, MySQL/GORM migrations, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, and authorized downloads.
-- The frontend has an API client, SSE client foundation, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, and project-scoped reference selection.
-- The workbench still uses the legacy local generation flow. Provider/model management, task queue execution, Provider Adapter runtime, and SSE task updates are not implemented yet.
+- The frontend still has legacy local Provider adapters, localStorage Provider settings for the old workbench, and IndexedDB image/history storage.
+- The backend currently has configuration, logging, router, health, response helpers, middleware, MySQL/GORM migrations, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, and SSRF-validated Provider testing.
+- The frontend has an API client, SSE client foundation, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection, and admin Provider/model management UI.
+- The workbench still uses the legacy local generation flow. Task queue execution, real backend Provider Adapter runtime, and SSE task updates are not implemented yet.
 - Docker Compose has buildable runtime foundations from P3. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
 This transition state is allowed only as an incremental migration baseline. It is not the target architecture and must not be copied into new platform features.

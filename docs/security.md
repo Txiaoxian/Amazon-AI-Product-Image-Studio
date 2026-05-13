@@ -1,6 +1,6 @@
 # Security Plan
 
-## Current transition risks after P5
+## Current transition risks after R6
 
 The current `main` branch is still a migration baseline, not a compliant platform release. The following risks are known and must be removed in the documented phases:
 
@@ -18,6 +18,8 @@ Resolved transition item:
 - P3 removed the frontend Nginx AI relay route. The frontend container must continue to proxy `/api/` only to `backend-api` and must not proxy AI Providers.
 - P5 backend asset upload now validates MIME, magic bytes, size, dimensions, and pixel count before storing reference images in MinIO.
 - P5 frontend project/asset UI now uses authenticated backend project and asset APIs for reference uploads, metadata, favorite/delete, and downloads. It does not talk to MinIO directly and did not add new AI Provider direct calls, Provider API key persistence, auth token persistence, or task polling.
+- P6 backend Provider/model management now stores Provider API keys encrypted at rest, returns only masked key metadata, validates Provider URLs for save/update/test, records redacted operation logs, and exposes tenant-scoped Provider/model APIs.
+- P6 frontend Provider/model management now submits Provider API keys only to backend APIs, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
 
 P5 review hardening backlog:
 
@@ -75,6 +77,7 @@ Current P6 Provider backend status:
 
 - Provider API key encryption, masked responses, rotation metadata, backend-only Provider test, and recursive operation-log metadata redaction are implemented.
 - Provider test does not create tasks, assets, or usage records.
+- Frontend Provider/model management is implemented and does not persist Provider API keys or create Provider direct browser calls.
 - Full production startup hardening must still reject default placeholder `API_KEY_ENCRYPTION_KEY` before release.
 
 ## Sensitive logging policy
@@ -121,6 +124,12 @@ Current P6 Provider backend status:
 
 - Provider save/update/test SSRF tests cover blocked schemes, embedded credentials, localhost, loopback, private ranges, link-local, multicast, Docker service names, DNS resolution to blocked ranges, and redirects to blocked targets.
 - Before P7 real Provider Adapter execution, outbound Provider clients must use connect-time IP validation or an SSRF-safe dialer to prevent DNS rebinding between validation and connection.
+
+P7 Provider runtime requirement:
+
+- Real Provider generation/edit calls must not start until the outbound HTTP transport validates the final dial target at connection time.
+- Provider runtime logs and api_call_logs must recursively redact Authorization, Cookie, API keys, bearer tokens, image base64, and raw image bytes.
+- Provider runtime must treat model capability rows as the trusted parameter allowlist.
 
 ## Upload defense
 

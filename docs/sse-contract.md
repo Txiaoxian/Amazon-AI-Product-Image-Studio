@@ -14,6 +14,11 @@ Query params:
 
 Authentication uses the normal HttpOnly Cookie.
 
+P7 implementation scope:
+
+- `P7-BE-SSE-STREAM` implements this endpoint after `task_events` exists.
+- `P7-FE-TASK-CLIENT-SSE` may update the frontend SSE client and event types, but it must not replace the main generation workbench flow. P8 owns workbench backendization.
+
 ## Browser rules
 
 - Frontend must use EventSource or an equivalent SSE client.
@@ -58,6 +63,12 @@ data: {"taskId":"task_...","status":"RUNNING","startedAt":"2026-05-09T07:00:00Z"
 - `TASK_TIMED_OUT`: task timed out.
 - `HEARTBEAT`: connection keepalive.
 
+Status mapping:
+
+- `TASK_COMPLETED` is an event type, not the canonical terminal task status.
+- Successful task records use status `SUCCEEDED`.
+- Failed/cancelled/timed-out task records use `FAILED`, `CANCELLED`, and `TIMED_OUT`.
+
 ## Payload principles
 
 - Payloads use camelCase.
@@ -83,3 +94,10 @@ The stream only emits events visible to the authenticated user:
 - Tenant must match.
 - User must have project visibility or admin permission.
 - Task filter must still pass object-level checks.
+
+P7 tests must prove:
+
+- Reconnect with `Last-Event-ID` replays only visible events after that ID.
+- `lastEventId` query fallback behaves the same as the header.
+- Cross-tenant and non-member project events are not emitted.
+- Heartbeat frames do not leak task metadata.

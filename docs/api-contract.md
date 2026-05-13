@@ -171,6 +171,34 @@ Asset payload rules for P5:
 
 Task creation persists the task and enqueues Redis work. Task progress must be consumed through SSE.
 
+Task request fields for P7:
+
+- `type`: `IMAGE_GENERATION` or `IMAGE_EDIT`.
+- `prompt`: required text prompt.
+- `providerId`: required Provider ID in the current tenant.
+- `modelId`: required model ID in the current tenant and owned by the Provider.
+- `imageType`: optional ecommerce image category such as `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, or `COMPARISON`.
+- `referenceAssetIds`: optional list of project asset IDs for generation/edit references.
+- `editSourceAssetId`: required for edit tasks when the selected model needs an edit source.
+- `parameters`: structured object containing only model-supported values such as size, quality, output format, output count, aspect ratio, and image type settings.
+
+Task response fields for P7:
+
+- `id`, `tenantId`, `projectId`, `type`, `status`, `prompt`, `providerId`, `modelId`, `imageType`, `parameters`, `inputAssetIds`, `outputAssetIds`, `attempt`, `maxAttempts`, `queuedAt`, `startedAt`, `finishedAt`, `timeoutAt`, `errorCode`, `errorMessage`, `createdBy`, `createdAt`, `updatedAt`.
+
+Task statuses for P7:
+
+- `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, `TIMED_OUT`.
+
+P7 task API requirements:
+
+- Task APIs require Cookie auth and CSRF for state-changing requests.
+- Project-scoped task APIs must check tenant, RBAC, and project membership or admin access.
+- Task creation must validate Provider/model enabled state, same-tenant ownership, model capabilities, reference asset ownership, and parameter values before enqueue.
+- The frontend must not provide or override `tenantId`, `createdBy`, `status`, `attempt`, `queuedAt`, or other server-owned fields.
+- Redis enqueue payload should contain task ID only; Worker reloads full state from MySQL.
+- P7 may add task API wrappers to the frontend, but P8 owns replacing the main generation workbench flow.
+
 ## Provider APIs
 
 - `GET /providers`
@@ -210,7 +238,7 @@ Current P6 Provider backend implementation status:
 
 - Backend implements Provider CRUD, soft delete, enable/disable, Provider test, tenant-scoped queries, RBAC, operation logs, API key encryption, and masked Provider responses.
 - Provider test is backend-only and does not create tasks, assets, or usage records.
-- Frontend Provider/model management is not implemented yet; it starts after Provider and model backend APIs are stable.
+- Frontend Provider/model management is implemented and merged. The UI sends Provider API keys only as immediate form submissions, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
 
 ## Model APIs
 
@@ -243,6 +271,7 @@ Current P6 model backend implementation status:
 
 - Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
+- Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
 - P7 must decide whether `(tenant_id, provider_id, model_name)` uniqueness is required before task execution depends on model lookup semantics.
 - P7/P8 must decide how linked models behave when their Provider is soft-deleted.
 

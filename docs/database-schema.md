@@ -128,6 +128,14 @@ Stores durable task state.
 
 Key fields: `id`, `tenant_id`, `project_id`, `provider_id`, `model_id`, `status`, `prompt`, `image_type`, `params_json`, `input_asset_ids_json`, `attempt`, `max_attempts`, `queued_at`, `started_at`, `finished_at`, `timeout_at`, `created_by`, `error_code`, `error_message`, `created_at`, `updated_at`.
 
+P7 implementation notes:
+
+- `tenant_id` is mandatory and all task queries must filter by it.
+- Canonical status values: `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, `TIMED_OUT`.
+- `TASK_COMPLETED` is an SSE event type; task rows use `SUCCEEDED` for successful terminal status.
+- Task rows should store service-owned fields only from backend logic; clients must not provide `tenant_id`, `status`, `attempt`, timestamps, or `created_by`.
+- Suggested indexes: `(tenant_id, project_id, created_at)`, `(tenant_id, status)`, `(tenant_id, created_by, created_at)`, `(tenant_id, provider_id, status)`, `(tenant_id, model_id, status)`, and `(tenant_id, timeout_at)`.
+
 ### task_events
 
 Stores SSE-replayable task events.
@@ -135,6 +143,12 @@ Stores SSE-replayable task events.
 Key fields: `id`, `tenant_id`, `task_id`, `project_id`, `event_type`, `event_payload_json`, `created_at`.
 
 The `id` is the SSE `id` and must be monotonically sortable.
+
+P7 implementation notes:
+
+- `task_events` is the replay source for SSE. Redis pub/sub or in-process fanout may only accelerate live delivery.
+- Payload JSON must be bounded, structured, camelCase, and redacted.
+- Suggested indexes: `(tenant_id, task_id, id)`, `(tenant_id, project_id, id)`, and `(tenant_id, id)`.
 
 ### task_outputs
 

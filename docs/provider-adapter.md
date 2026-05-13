@@ -58,6 +58,18 @@ Current P6 model capability result:
 - P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
 - P7/P8 must decide whether same-Provider `model_name` uniqueness and Provider soft-delete linked-model behavior need stricter enforcement.
 
+Current P6 frontend management result:
+
+- Frontend Provider/model management is implemented and merged.
+- Provider API keys are submitted only through authenticated backend Provider APIs, displayed only as masked metadata, and cleared from form drafts after save or modal close.
+- The P6 frontend did not add browser Provider direct calls, Provider Authorization headers, task polling, or workbench generation backendization.
+
+P7 runtime boundary:
+
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` is the first phase allowed to execute real backend Provider generation/edit calls.
+- Runtime execution must use the Provider Adapter interface and the backend model capability table as the trusted source of allowed parameters.
+- Browser Provider adapters under `frontend/src/providers/**` remain migration references until P8 removes or isolates them from production generation paths.
+
 ## Adapter interface
 
 The backend should define an internal interface equivalent to:
