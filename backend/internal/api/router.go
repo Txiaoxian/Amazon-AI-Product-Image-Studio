@@ -8,6 +8,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/httpx"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
@@ -47,21 +48,22 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		project.NewService(options.Database, options.Logger),
 		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore),
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
+		model.NewService(options.Database, options.Logger),
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -81,5 +83,8 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	}
 	if providerService != nil {
 		providerService.RegisterRoutes(protected)
+	}
+	if modelService != nil {
+		modelService.RegisterRoutes(protected)
 	}
 }

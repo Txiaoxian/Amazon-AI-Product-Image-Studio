@@ -38,6 +38,7 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"project_members",
 		"image_assets",
 		"ai_providers",
+		"ai_models",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
@@ -74,6 +75,34 @@ func TestAIProvidersMigrationProtectsSecretsAndTenantScope(t *testing.T) {
 	}
 	if strings.Contains(statement, " plain_api_key") {
 		t.Fatal("ai_providers migration must not include plaintext API key storage")
+	}
+}
+
+func TestAIModelsMigrationValidatesTenantScopeAndCapabilityStorage(t *testing.T) {
+	statement := findCreateTableStatement(t, "ai_models")
+	for _, required := range []string{
+		"tenant_id VARCHAR(36) NOT NULL",
+		"provider_id VARCHAR(36) NOT NULL",
+		"supports_generate BOOLEAN NOT NULL DEFAULT FALSE",
+		"supports_edit BOOLEAN NOT NULL DEFAULT FALSE",
+		"supports_multi_reference BOOLEAN NOT NULL DEFAULT FALSE",
+		"supports_n BOOLEAN NOT NULL DEFAULT FALSE",
+		"max_output_count INT UNSIGNED NOT NULL DEFAULT 1",
+		"supported_sizes_json JSON NOT NULL",
+		"supported_qualities_json JSON NOT NULL",
+		"supported_output_formats_json JSON NOT NULL",
+		"pricing_json JSON NOT NULL",
+		"UNIQUE KEY uk_ai_models_tenant_id (tenant_id, id)",
+		"KEY idx_ai_models_tenant_provider (tenant_id, provider_id)",
+		"KEY idx_ai_models_tenant_status (tenant_id, status)",
+		"KEY idx_ai_models_tenant_generate (tenant_id, supports_generate)",
+		"KEY idx_ai_models_tenant_edit (tenant_id, supports_edit)",
+		"CONSTRAINT fk_ai_models_provider FOREIGN KEY (tenant_id, provider_id) REFERENCES ai_providers(tenant_id, id)",
+		"Tenant-scoped AI model capability configuration with validated JSON fields",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Fatalf("ai_models migration missing %q", required)
+		}
 	}
 }
 
