@@ -7,9 +7,10 @@ interface ModalProps {
   onClose: () => void
   children: ReactNode
   footer?: ReactNode
+  maxWidthClass?: string
 }
 
-export function Modal({ title, isOpen, onClose, children, footer }: ModalProps) {
+export function Modal({ title, isOpen, onClose, children, footer, maxWidthClass = 'max-w-3xl' }: ModalProps) {
   if (!isOpen) {
     return null
   }
@@ -18,7 +19,7 @@ export function Modal({ title, isOpen, onClose, children, footer }: ModalProps) 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/45 px-4 py-6" role="presentation">
       <div
         aria-modal="true"
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-2xl"
+        className={`flex max-h-[90vh] w-full ${maxWidthClass} flex-col rounded-lg bg-white shadow-2xl`}
         role="dialog"
       >
         <header className="flex items-center justify-between border-b border-ink-200 px-5 py-4">

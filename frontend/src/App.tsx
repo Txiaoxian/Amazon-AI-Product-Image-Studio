@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Settings } from 'lucide-react'
 import type { HistoryWithImage } from './db/historyRepository'
 import { AuthStatus } from './components/auth/AuthStatus'
 import { LoginPanel } from './components/auth/LoginPanel'
+import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
 import { ImageDetailModal } from './components/modals/ImageDetailModal'
@@ -76,6 +78,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
   const storageUsage = useStorageUsage()
   const [isSettingsOpen, setSettingsOpen] = useState(false)
+  const [isAdminOpen, setAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
   const [assetDetail, setAssetDetail] = useState<Asset | null>(null)
   const [notice, setNotice] = useState('')
@@ -97,6 +100,10 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const showNotice = (message: string) => {
     setNotice(message)
   }
+
+  const canManageProviders = hasPermission(session, 'provider:manage')
+  const canManageModels = hasPermission(session, 'model:manage')
+  const canOpenAdmin = canManageProviders || canManageModels
 
   const handleGenerate = async (request: GenerationRequest) => {
     const results = await generation.generate(request)
@@ -230,7 +237,23 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
   return (
     <AppShell
-      accountSlot={<AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />}
+      accountSlot={
+        <>
+          {canOpenAdmin ? (
+            <button
+              aria-label="Provider/model 管理"
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-ink-200 bg-white px-3 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-50 hover:text-ink-900 focus:outline-none focus:ring-2 focus:ring-amazon-500/30"
+              onClick={() => setAdminOpen(true)}
+              title="Provider/model 管理"
+              type="button"
+            >
+              <Settings className="h-4 w-4" />
+              <span className="hidden sm:inline">Provider/model 管理</span>
+            </button>
+          ) : null}
+          <AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />
+        </>
+      }
       notice={authError ?? notice}
       onOpenSettings={() => setSettingsOpen(true)}
     >
@@ -301,6 +324,16 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         settings={settings}
       />
 
+      {canOpenAdmin ? (
+        <ProviderModelAdminPanel
+          canManageModels={canManageModels}
+          canManageProviders={canManageProviders}
+          csrfToken={session.csrfToken}
+          isOpen={isAdminOpen}
+          onClose={() => setAdminOpen(false)}
+        />
+      ) : null}
+
       <ImageDetailModal
         current={generation.current}
         isOpen={isDetailOpen}
@@ -318,6 +351,10 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       />
     </AppShell>
   )
+}
+
+function hasPermission(session: AuthSession, permission: string): boolean {
+  return session.permissions.some((candidate) => candidate === permission)
 }
 
 export default App
