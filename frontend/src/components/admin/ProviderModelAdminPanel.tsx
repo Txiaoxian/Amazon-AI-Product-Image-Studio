@@ -97,6 +97,17 @@ export function ProviderModelAdminPanel({
   const [providerDraft, setProviderDraft] = useState<ProviderDraft>(() => emptyProviderDraft())
   const [modelDraft, setModelDraft] = useState<ModelDraft>(() => emptyModelDraft())
 
+  const resetProviderFormState = useCallback(() => {
+    setProviderDraft(emptyProviderDraft())
+    setProviderFormError(null)
+    setProviderNotice(null)
+  }, [])
+
+  const handleClose = () => {
+    resetProviderFormState()
+    onClose()
+  }
+
   useEffect(() => {
     if (!canManageProviders && !canManageModels) {
       return
@@ -145,6 +156,7 @@ export function ProviderModelAdminPanel({
 
   useEffect(() => {
     if (!isOpen) {
+      resetProviderFormState()
       return
     }
 
@@ -154,7 +166,7 @@ export function ProviderModelAdminPanel({
     setModelFormError(null)
     void refreshProviders()
     void refreshModels()
-  }, [isOpen, refreshModels, refreshProviders])
+  }, [isOpen, refreshModels, refreshProviders, resetProviderFormState])
 
   useEffect(() => {
     if (modelDraft.providerId || providers.length === 0) {
@@ -295,7 +307,7 @@ export function ProviderModelAdminPanel({
   }
 
   return (
-    <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={onClose} title="Provider 与模型管理">
+    <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={handleClose} title="Provider 与模型管理">
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="inline-flex rounded-md border border-ink-200 bg-ink-50 p-1">

@@ -204,6 +204,47 @@ describe('admin Provider and model management UI', () => {
     expect(getBrowserStorage('session').getItem(plainKey)).toBeNull()
   })
 
+  it('clears an unsubmitted Provider API key when the management modal closes', async () => {
+    const user = userEvent.setup()
+    const plainKey = 'unsubmitted-secret-4321'
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({
+          ...baseSession,
+          permissions: ['provider:manage', 'model:manage'],
+        })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/providers?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/models?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Provider/model 管理' }))
+    await user.type(await screen.findByLabelText('API Key'), plainKey)
+    expect(screen.getByLabelText('API Key')).toHaveValue(plainKey)
+
+    await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
+    await user.click(screen.getByRole('button', { name: 'Provider/model 管理' }))
+
+    expect(await screen.findByLabelText('API Key')).toHaveValue('')
+    expect(screen.queryByDisplayValue(plainKey)).not.toBeInTheDocument()
+    expect(getBrowserStorage('local').getItem(plainKey)).toBeNull()
+    expect(getBrowserStorage('session').getItem(plainKey)).toBeNull()
+  })
+
   it('surfaces permission and validation failures as text error states', async () => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
