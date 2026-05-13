@@ -217,3 +217,101 @@ type AIModel struct {
 func (AIModel) TableName() string {
 	return "ai_models"
 }
+
+type GenerationTask struct {
+	ID                string     `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_generation_tasks_tenant_id,priority:2"`
+	TenantID          string     `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_generation_tasks_tenant_id,priority:1;index:idx_generation_tasks_tenant_project_created,priority:1;index:idx_generation_tasks_tenant_status,priority:1;index:idx_generation_tasks_tenant_created_by,priority:1;index:idx_generation_tasks_tenant_provider_status,priority:1;index:idx_generation_tasks_tenant_model_status,priority:1;index:idx_generation_tasks_tenant_timeout,priority:1"`
+	ProjectID         string     `gorm:"type:varchar(36);not null;index;index:idx_generation_tasks_tenant_project_created,priority:2"`
+	Type              string     `gorm:"type:varchar(32);not null;index"`
+	ProviderID        string     `gorm:"type:varchar(36);not null;index:idx_generation_tasks_tenant_provider_status,priority:2"`
+	ModelID           string     `gorm:"type:varchar(36);not null;index:idx_generation_tasks_tenant_model_status,priority:2"`
+	Status            string     `gorm:"type:varchar(32);not null;index:idx_generation_tasks_tenant_status,priority:2;index:idx_generation_tasks_tenant_provider_status,priority:3;index:idx_generation_tasks_tenant_model_status,priority:3"`
+	Prompt            string     `gorm:"type:text;not null"`
+	ImageType         string     `gorm:"type:varchar(64)"`
+	ParamsJSON        string     `gorm:"type:json;not null"`
+	InputAssetIDsJSON string     `gorm:"type:json;not null"`
+	Attempt           int        `gorm:"type:int unsigned;not null"`
+	MaxAttempts       int        `gorm:"type:int unsigned;not null"`
+	QueuedAt          *time.Time `gorm:"type:datetime(3)"`
+	StartedAt         *time.Time `gorm:"type:datetime(3)"`
+	FinishedAt        *time.Time `gorm:"type:datetime(3)"`
+	TimeoutAt         *time.Time `gorm:"type:datetime(3);index:idx_generation_tasks_tenant_timeout,priority:2"`
+	CreatedBy         string     `gorm:"type:varchar(36);not null;index;index:idx_generation_tasks_tenant_created_by,priority:2"`
+	ErrorCode         string     `gorm:"type:varchar(128)"`
+	ErrorMessage      string     `gorm:"type:varchar(512)"`
+	CreatedAt         time.Time  `gorm:"type:datetime(3);not null;index:idx_generation_tasks_tenant_project_created,priority:3;index:idx_generation_tasks_tenant_created_by,priority:3"`
+	UpdatedAt         time.Time  `gorm:"type:datetime(3);not null"`
+}
+
+func (GenerationTask) TableName() string {
+	return "generation_tasks"
+}
+
+type TaskEvent struct {
+	ID               string    `gorm:"type:varchar(64);primaryKey"`
+	TenantID         string    `gorm:"type:varchar(36);not null;index;index:idx_task_events_tenant_task_id,priority:1;index:idx_task_events_tenant_project_id,priority:1;index:idx_task_events_tenant_id,priority:1"`
+	TaskID           string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_task_id,priority:2"`
+	ProjectID        string    `gorm:"type:varchar(36);not null;index:idx_task_events_tenant_project_id,priority:2"`
+	EventType        string    `gorm:"type:varchar(64);not null;index"`
+	EventPayloadJSON string    `gorm:"type:json;not null"`
+	CreatedAt        time.Time `gorm:"type:datetime(3);not null;index:idx_task_events_tenant_task_id,priority:3;index:idx_task_events_tenant_project_id,priority:3;index:idx_task_events_tenant_id,priority:2"`
+}
+
+func (TaskEvent) TableName() string {
+	return "task_events"
+}
+
+type TaskOutput struct {
+	ID          string    `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_task_outputs_tenant_id,priority:2"`
+	TenantID    string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_task_outputs_tenant_id,priority:1;uniqueIndex:uk_task_outputs_tenant_task_index,priority:1;index:idx_task_outputs_tenant_task,priority:1;index:idx_task_outputs_tenant_asset,priority:1"`
+	TaskID      string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_task_outputs_tenant_task_index,priority:2;index:idx_task_outputs_tenant_task,priority:2"`
+	AssetID     string    `gorm:"type:varchar(36);not null;index:idx_task_outputs_tenant_asset,priority:2"`
+	OutputIndex int       `gorm:"type:int unsigned;not null;uniqueIndex:uk_task_outputs_tenant_task_index,priority:3"`
+	CreatedAt   time.Time `gorm:"type:datetime(3);not null"`
+}
+
+func (TaskOutput) TableName() string {
+	return "task_outputs"
+}
+
+type APICallLog struct {
+	ID                   string    `gorm:"type:varchar(36);primaryKey"`
+	TenantID             string    `gorm:"type:varchar(36);not null;index;index:idx_api_call_logs_tenant_task,priority:1;index:idx_api_call_logs_tenant_provider,priority:1;index:idx_api_call_logs_tenant_created,priority:1"`
+	TaskID               string    `gorm:"type:varchar(36);not null;index:idx_api_call_logs_tenant_task,priority:2"`
+	ProviderID           string    `gorm:"type:varchar(36);not null;index:idx_api_call_logs_tenant_provider,priority:2"`
+	ModelID              string    `gorm:"type:varchar(36);not null;index"`
+	Status               string    `gorm:"type:varchar(32);not null;index"`
+	DurationMs           int64     `gorm:"type:bigint unsigned;not null"`
+	RequestID            string    `gorm:"type:varchar(128)"`
+	HTTPStatus           *int      `gorm:"type:int unsigned"`
+	ErrorCode            string    `gorm:"type:varchar(128)"`
+	ErrorMessage         string    `gorm:"type:varchar(512)"`
+	RedactedRequestJSON  string    `gorm:"type:json"`
+	RedactedResponseJSON string    `gorm:"type:json"`
+	CreatedAt            time.Time `gorm:"type:datetime(3);not null;index:idx_api_call_logs_tenant_created,priority:2"`
+}
+
+func (APICallLog) TableName() string {
+	return "api_call_logs"
+}
+
+type UsageRecord struct {
+	ID            string    `gorm:"type:varchar(36);primaryKey"`
+	TenantID      string    `gorm:"type:varchar(36);not null;index;index:idx_usage_records_tenant_task,priority:1;index:idx_usage_records_tenant_project_created,priority:1;index:idx_usage_records_tenant_user_created,priority:1"`
+	TaskID        string    `gorm:"type:varchar(36);not null;index:idx_usage_records_tenant_task,priority:2"`
+	UserID        string    `gorm:"type:varchar(36);not null;index:idx_usage_records_tenant_user_created,priority:2"`
+	ProjectID     string    `gorm:"type:varchar(36);not null;index:idx_usage_records_tenant_project_created,priority:2"`
+	ProviderID    string    `gorm:"type:varchar(36);not null;index"`
+	ModelID       string    `gorm:"type:varchar(36);not null;index"`
+	InputTokens   int64     `gorm:"type:bigint unsigned;not null"`
+	OutputTokens  int64     `gorm:"type:bigint unsigned;not null"`
+	ImageCount    int       `gorm:"type:int unsigned;not null"`
+	EstimatedCost string    `gorm:"type:decimal(18,8);not null"`
+	Currency      string    `gorm:"type:char(3);not null"`
+	RawUsageJSON  string    `gorm:"type:json"`
+	CreatedAt     time.Time `gorm:"type:datetime(3);not null;index:idx_usage_records_tenant_project_created,priority:3;index:idx_usage_records_tenant_user_created,priority:3"`
+}
+
+func (UsageRecord) TableName() string {
+	return "usage_records"
+}
