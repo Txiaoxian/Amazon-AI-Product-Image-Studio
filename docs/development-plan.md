@@ -331,12 +331,12 @@ P6 residual risks and carry-forward items:
 
 ## P7: Task queue, worker, Provider Adapter, and SSE
 
-Status: planned. P7 starts from latest `main` after R6. P7 must be developed in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
+Status: in progress. `P7-BE-TASK-FOUNDATION` has been reviewed, fixed, merged into `main`, and verified. P7 must continue in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
 
 P7 execution order:
 
-1. `P7-BE-TASK-FOUNDATION`: MySQL task/event/output/log/usage models and migrations, task repository/service, task create/list/detail/cancel/retry APIs, task event writer, and Redis enqueue abstraction. No real Provider call yet.
-2. `P7-BE-SSE-STREAM`: SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay, tenant/project/task authorization filtering, and tests. Starts only after task event schema is merged.
+1. `P7-BE-TASK-FOUNDATION`: completed and merged. Added MySQL task/event/output/log/usage models and migrations, task repository/service, task create/list/detail/cancel/retry APIs, task event writer, Redis enqueue abstraction, and stable `task_events.sequence` replay cursor. No real Provider call yet.
+2. `P7-BE-SSE-STREAM`: next task. Implement SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay by `task_events.sequence`, tenant/project/task authorization filtering, and tests.
 3. `P7-BE-WORKER-QUEUE`: Redis reliable queue, Worker claim loop, task state machine, idempotency, cancellation, retry, timeout, recovery, and concurrency limits using fake/stub Provider execution first.
 4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
 5. `P7-FE-TASK-CLIENT-SSE`: frontend task API wrappers, task/SSE types, SSE client integration tests, and task event reducer utilities. This must not replace the main workbench generation flow; P8 owns that migration.
@@ -354,6 +354,13 @@ P7 canonical status decision:
 - Backend/API task statuses are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, and `TIMED_OUT`.
 - SSE event type `TASK_COMPLETED` represents a transition to task status `SUCCEEDED`.
 - Existing transitional frontend type `COMPLETED` must be updated in P7/P8 before frontend task status is used in production paths.
+
+P7 task foundation result:
+
+- Task creation persists MySQL task state, writes `TASK_QUEUED`, then enqueues Redis with task ID only.
+- Enqueue failure transitions the task to `FAILED` with sanitized `ENQUEUE_FAILED` metadata; it must not return success with an unqueued `QUEUED` task.
+- `task_events.sequence` is the durable, monotonic replay cursor. `task_events.id` is derived from that sequence as an SSE-safe string such as `evt_00000000000000000001`.
+- SSE replay must compare by `sequence`, not by `created_at` or lexical random IDs.
 
 ## P8: Frontend backendization
 

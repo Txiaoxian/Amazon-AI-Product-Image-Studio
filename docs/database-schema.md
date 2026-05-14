@@ -140,15 +140,16 @@ P7 implementation notes:
 
 Stores SSE-replayable task events.
 
-Key fields: `id`, `tenant_id`, `task_id`, `project_id`, `event_type`, `event_payload_json`, `created_at`.
+Key fields: `sequence`, `id`, `tenant_id`, `task_id`, `project_id`, `event_type`, `event_payload_json`, `created_at`.
 
-The `id` is the SSE `id` and must be monotonically sortable.
+`sequence` is a MySQL `BIGINT UNSIGNED AUTO_INCREMENT` primary key and is the durable replay cursor. `id` is a unique SSE-safe event ID derived from `sequence`, formatted like `evt_00000000000000000001`.
 
 P7 implementation notes:
 
 - `task_events` is the replay source for SSE. Redis pub/sub or in-process fanout may only accelerate live delivery.
+- Historical replay must compare by `sequence`; do not use `created_at` or random ID suffixes for replay ordering.
 - Payload JSON must be bounded, structured, camelCase, and redacted.
-- Suggested indexes: `(tenant_id, task_id, id)`, `(tenant_id, project_id, id)`, and `(tenant_id, id)`.
+- Implemented indexes: `(tenant_id, task_id, sequence)`, `(tenant_id, project_id, sequence)`, and `(tenant_id, sequence)`.
 
 ### task_outputs
 
@@ -187,4 +188,4 @@ Key fields: `id`, `tenant_id`, `key`, `value_json`, `created_at`, `updated_at`.
 - All business tables index `tenant_id`.
 - Common filters should use compound indexes such as `(tenant_id, project_id, created_at)`.
 - Task queries need indexes on `(tenant_id, status)`, `(tenant_id, project_id, created_at)`, and `(tenant_id, created_by, created_at)`.
-- Task events need `(tenant_id, task_id, id)` and `(tenant_id, project_id, id)`.
+- Task events need `(tenant_id, task_id, sequence)`, `(tenant_id, project_id, sequence)`, and `(tenant_id, sequence)`.

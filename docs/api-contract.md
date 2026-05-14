@@ -199,6 +199,12 @@ P7 task API requirements:
 - Redis enqueue payload should contain task ID only; Worker reloads full state from MySQL.
 - P7 may add task API wrappers to the frontend, but P8 owns replacing the main generation workbench flow.
 
+Current P7 foundation implementation status:
+
+- Backend implements task create/list/detail/cancel/retry APIs, MySQL task/event/output/log/usage schema, operation logs, and Redis enqueue abstraction.
+- Task event replay cursor is `task_events.sequence`; `task_events.id` is derived from that sequence and is safe to use as the SSE `id`.
+- Backend does not yet implement SSE long connections, Worker execution, real Provider calls, output asset creation, or frontend workbench backendization.
+
 ## Provider APIs
 
 - `GET /providers`

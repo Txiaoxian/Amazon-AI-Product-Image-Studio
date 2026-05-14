@@ -54,7 +54,8 @@ The queue payload should contain task ID only. Worker loads full task state from
 
 P7 foundation requirement:
 
-- `P7-BE-TASK-FOUNDATION` may create the enqueue abstraction and write task IDs to Redis after MySQL persistence.
+- `P7-BE-TASK-FOUNDATION` has created the enqueue abstraction and writes task IDs to Redis after MySQL persistence.
+- Enqueue failure marks the task `FAILED` with sanitized `ENQUEUE_FAILED` metadata rather than returning success for an unqueued task.
 - Worker claim, visibility timeout, ack, retry, and dead-letter handling belong to `P7-BE-WORKER-QUEUE`.
 
 ## Concurrency limits
@@ -125,4 +126,5 @@ Every meaningful transition writes to `task_events`:
 P7 SSE boundary:
 
 - `P7-BE-SSE-STREAM` consumes persisted `task_events` and live fanout only.
+- Replay must use `task_events.sequence` as the cursor and emit `task_events.id` as the SSE `id`.
 - MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.

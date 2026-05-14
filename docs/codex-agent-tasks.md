@@ -1673,8 +1673,8 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 
 执行顺序：
 
-1. `P7-BE-TASK-FOUNDATION` - 串行第一项，冻结 task schema、status、event writer 和 API 合同。
-2. `P7-BE-SSE-STREAM` - 依赖 task event schema，可在 foundation 合并后启动。
+1. `P7-BE-TASK-FOUNDATION` - completed and merged. It freezes task schema, status names, event writer, task API, Redis enqueue abstraction, and `task_events.sequence` replay cursor.
+2. `P7-BE-SSE-STREAM` - next task. It depends on the merged task event schema and must replay by `task_events.sequence`.
 3. `P7-BE-WORKER-QUEUE` - 依赖 task foundation，可与 SSE 作为最多两个子 agent 的有限并行开发，前提是写入范围保持隔离。
 4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - 依赖 Worker 状态机和 SSRF-safe outbound transport 决策。
 5. `P7-FE-TASK-CLIENT-SSE` - 依赖 task/SSE 合同稳定，只做 API/SSE client 与 reducer，不替换主工作台。
@@ -1682,8 +1682,8 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 
 并行策略：
 
-- 第一项 `P7-BE-TASK-FOUNDATION` 必须串行。
-- Foundation 合并后，第一批最多 2 个子 agent：`P7-BE-SSE-STREAM` 与 `P7-BE-WORKER-QUEUE`。
+- 第一项 `P7-BE-TASK-FOUNDATION` 已串行完成。
+- Foundation 合并后，最多 2 个子 agent 可并行：`P7-BE-SSE-STREAM` 与 `P7-BE-WORKER-QUEUE`。当前下一任务优先启动 `P7-BE-SSE-STREAM`，Worker 可在用户明确要求时作为第二个并行 worktree 启动。
 - Provider Adapter runtime 不与 Worker foundation 并行，避免真实外部调用压在不稳定状态机上。
 - 前端 task client 只在后端合同稳定后启动，不提前替换 P8 工作台。
 
@@ -1692,6 +1692,15 @@ P7 统一状态约定：
 - 任务状态：`QUEUED`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELLED`、`RETRYING`、`TIMED_OUT`。
 - SSE `TASK_COMPLETED` event 表示 task status 进入 `SUCCEEDED`。
 - 前端已有 transitional `COMPLETED` 类型不得作为新后端合同继续扩散；P7/P8 使用 `SUCCEEDED`。
+
+P7 foundation actual result:
+
+- `P7-BE-TASK-FOUNDATION` merged into `main` after review and fix.
+- Task create/list/detail/cancel/retry APIs are implemented under `/api/v1`.
+- `generation_tasks` and `task_events` are the MySQL source of truth.
+- `task_events.sequence` is the stable monotonic replay cursor; `task_events.id` is derived from sequence and emitted as SSE `id`.
+- Redis enqueue payload contains task ID only. Enqueue failure transitions the task to `FAILED` with sanitized `ENQUEUE_FAILED` metadata.
+- Real Provider calls, Worker execution, output asset creation, and SSE long connection are still pending.
 
 ## 子任务 17：P7 后端任务基础
 
@@ -1702,6 +1711,10 @@ P7-BE-TASK-FOUNDATION - 任务 schema、状态机基础、事件写入和任务 
 ### 目标
 
 建立任务系统基础合同：MySQL task/event/output/log/usage schema、任务 API、事件写入、Redis enqueue 抽象和状态机基础。此任务不执行真实 Provider 调用，不实现 SSE 长连接，不替换前端工作台。
+
+### 状态
+
+Completed and merged into `main`. Review required one fix for deterministic SSE replay cursors; the final implementation uses `task_events.sequence` and sequence-derived `task_events.id`.
 
 ### 允许修改文件
 
@@ -1807,6 +1820,7 @@ P7-BE-SSE-STREAM - 任务事件 SSE、heartbeat、Last-Event-ID 和历史补发
 - 实现 `GET /api/v1/events/tasks`。
 - 支持 `projectId`、`taskId`、`lastEventId` query，以及 `Last-Event-ID` header。
 - 从 MySQL `task_events` replay 可见历史事件，再进入 live stream。
+- 解析 `Last-Event-ID` / `lastEventId` 的 `evt_000...` 值为 `sequence`，历史补发查询必须使用 `sequence > cursor` 并按 `sequence ASC` 排序。
 - 实现 heartbeat event，避免连接静默断开。
 - 实现 live fanout，可使用 Redis pub/sub 或进程内 broker；MySQL 仍是 replay source。
 - 事件 payload 使用 camelCase，禁止敏感字段。

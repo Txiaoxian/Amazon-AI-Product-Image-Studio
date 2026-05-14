@@ -37,6 +37,14 @@ The server must support:
 
 If a client reconnects with a known event ID, the server sends all visible events after that ID before streaming live events.
 
+Replay cursor contract:
+
+- `task_events.sequence` is the durable monotonic replay cursor.
+- `task_events.id` is the SSE `id` derived from `sequence`, formatted as `evt_` plus a zero-padded decimal sequence.
+- `Last-Event-ID` and `lastEventId` must be parsed back to a sequence cursor.
+- Historical replay must query visible events with `sequence > cursor`, ordered by `sequence ASC`.
+- Malformed event IDs should be rejected with a sanitized validation error before opening a stream.
+
 ## Event frame
 
 Example:
@@ -47,7 +55,7 @@ event: TASK_STARTED
 data: {"taskId":"task_...","status":"RUNNING","startedAt":"2026-05-09T07:00:00Z"}
 ```
 
-`id` is the durable `task_events.id`.
+`id` is the durable `task_events.id`; the server must use its underlying `task_events.sequence` for replay ordering.
 
 ## Event types
 
