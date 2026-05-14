@@ -39,6 +39,11 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"image_assets",
 		"ai_providers",
 		"ai_models",
+		"generation_tasks",
+		"task_events",
+		"task_outputs",
+		"api_call_logs",
+		"usage_records",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
@@ -53,6 +58,72 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 	}
 	if !strings.Contains(permissions, "System-level permission dictionary") {
 		t.Fatal("permissions migration must document the system-level tenant_id exception")
+	}
+}
+
+func TestTaskMigrationsUseTenantScopeStatusAndRedactedEventStorage(t *testing.T) {
+	tasks := findCreateTableStatement(t, "generation_tasks")
+	for _, required := range []string{
+		"tenant_id VARCHAR(36) NOT NULL",
+		"type VARCHAR(32) NOT NULL",
+		"status VARCHAR(32) NOT NULL",
+		"params_json JSON NOT NULL",
+		"input_asset_ids_json JSON NOT NULL",
+		"attempt INT UNSIGNED NOT NULL DEFAULT 1",
+		"max_attempts INT UNSIGNED NOT NULL DEFAULT 3",
+		"UNIQUE KEY uk_generation_tasks_tenant_id (tenant_id, id)",
+		"KEY idx_generation_tasks_tenant_project_created (tenant_id, project_id, created_at)",
+		"KEY idx_generation_tasks_tenant_status (tenant_id, status)",
+		"KEY idx_generation_tasks_tenant_created_by (tenant_id, created_by, created_at)",
+		"KEY idx_generation_tasks_tenant_timeout (tenant_id, timeout_at)",
+		"CONSTRAINT fk_generation_tasks_provider FOREIGN KEY (tenant_id, provider_id) REFERENCES ai_providers(tenant_id, id)",
+		"MySQL final source of durable generation task state",
+	} {
+		if !strings.Contains(tasks, required) {
+			t.Fatalf("generation_tasks migration missing %q", required)
+		}
+	}
+
+	events := findCreateTableStatement(t, "task_events")
+	for _, required := range []string{
+		"sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT",
+		"tenant_id VARCHAR(36) NOT NULL",
+		"event_payload_json JSON NOT NULL",
+		"PRIMARY KEY (sequence)",
+		"UNIQUE KEY uk_task_events_id (id)",
+		"KEY idx_task_events_tenant_task_sequence (tenant_id, task_id, sequence)",
+		"KEY idx_task_events_tenant_project_sequence (tenant_id, project_id, sequence)",
+		"KEY idx_task_events_tenant_sequence (tenant_id, sequence)",
+		"SSE replay source; payloads must be structured and redacted",
+	} {
+		if !strings.Contains(events, required) {
+			t.Fatalf("task_events migration missing %q", required)
+		}
+	}
+}
+
+func TestTaskOutputAPICallAndUsageMigrationsAvoidSensitiveBlobStorage(t *testing.T) {
+	for _, table := range []string{"task_outputs", "api_call_logs", "usage_records"} {
+		statement := findCreateTableStatement(t, table)
+		if !strings.Contains(statement, "tenant_id VARCHAR(36) NOT NULL") {
+			t.Fatalf("%s migration missing tenant_id", table)
+		}
+		for _, forbidden := range []string{" BLOB", " LONGBLOB", " MEDIUMBLOB", " TINYBLOB", "plain_api_key"} {
+			if strings.Contains(strings.ToLower(statement), strings.ToLower(forbidden)) {
+				t.Fatalf("%s migration must not store sensitive binary or plaintext secrets: found %q", table, forbidden)
+			}
+		}
+	}
+
+	apiCallLogs := findCreateTableStatement(t, "api_call_logs")
+	for _, required := range []string{
+		"redacted_request_json JSON NULL",
+		"redacted_response_json JSON NULL",
+		"never store API keys, Authorization headers, Cookies, image base64, or raw image bytes",
+	} {
+		if !strings.Contains(apiCallLogs, required) {
+			t.Fatalf("api_call_logs migration missing %q", required)
+		}
 	}
 }
 

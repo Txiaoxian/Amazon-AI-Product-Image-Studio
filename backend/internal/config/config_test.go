@@ -112,6 +112,21 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Provider.MaxRetries != 2 {
 		t.Fatalf("Provider.MaxRetries = %d, want 2", cfg.Provider.MaxRetries)
 	}
+	if cfg.Queue.RedisAddr != "127.0.0.1:6379" {
+		t.Fatalf("Queue.RedisAddr = %q, want 127.0.0.1:6379", cfg.Queue.RedisAddr)
+	}
+	if cfg.Queue.RedisPassword != "" {
+		t.Fatal("Queue.RedisPassword default should be empty")
+	}
+	if cfg.Queue.RedisDB != 0 {
+		t.Fatalf("Queue.RedisDB = %d, want 0", cfg.Queue.RedisDB)
+	}
+	if cfg.Queue.TaskQueueName != "image-tasks" {
+		t.Fatalf("Queue.TaskQueueName = %q, want image-tasks", cfg.Queue.TaskQueueName)
+	}
+	if cfg.Queue.EnqueueTimeout != 5*time.Second {
+		t.Fatalf("Queue.EnqueueTimeout = %s, want 5s", cfg.Queue.EnqueueTimeout)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -162,6 +177,11 @@ func TestLoadOverrides(t *testing.T) {
 		"API_KEY_ENCRYPTION_KEY_ID":    "test-key-v1",
 		"PROVIDER_TIMEOUT_SECONDS":     "45",
 		"PROVIDER_MAX_RETRIES":         "5",
+		"REDIS_ADDR":                   "redis.example.com:6380",
+		"REDIS_PASSWORD":               "local-redis-password",
+		"REDIS_DB":                     "2",
+		"TASK_QUEUE_NAME":              "task-queue-test",
+		"TASK_ENQUEUE_TIMEOUT":         "9s",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -303,6 +323,21 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Provider.MaxRetries != 5 {
 		t.Fatalf("Provider.MaxRetries = %d, want 5", cfg.Provider.MaxRetries)
+	}
+	if cfg.Queue.RedisAddr != "redis.example.com:6380" {
+		t.Fatalf("Queue.RedisAddr = %q, want redis.example.com:6380", cfg.Queue.RedisAddr)
+	}
+	if cfg.Queue.RedisPassword != "local-redis-password" {
+		t.Fatal("Queue.RedisPassword override was not loaded")
+	}
+	if cfg.Queue.RedisDB != 2 {
+		t.Fatalf("Queue.RedisDB = %d, want 2", cfg.Queue.RedisDB)
+	}
+	if cfg.Queue.TaskQueueName != "task-queue-test" {
+		t.Fatalf("Queue.TaskQueueName = %q, want task-queue-test", cfg.Queue.TaskQueueName)
+	}
+	if cfg.Queue.EnqueueTimeout != 9*time.Second {
+		t.Fatalf("Queue.EnqueueTimeout = %s, want 9s", cfg.Queue.EnqueueTimeout)
 	}
 }
 

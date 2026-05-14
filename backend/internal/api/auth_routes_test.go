@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,7 +199,9 @@ func TestProductionAuthCookieIsSecure(t *testing.T) {
 func newAuthRouteTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	dsn := "file:" + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()) + "?mode=memory&cache=shared&_loc=auto"
+	id := atomic.AddUint64(&authRouteTestDBCounter, 1)
+	dsnName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	dsn := "file:" + dsnName + "_" + time.Now().UTC().Format("20060102150405.000000000") + "_" + strconv.FormatUint(id, 10) + "?mode=memory&cache=shared&_loc=auto"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
 		Logger:                                   gormlogger.Discard,
@@ -220,6 +224,8 @@ func newAuthRouteTestDB(t *testing.T) *gorm.DB {
 
 	return db
 }
+
+var authRouteTestDBCounter uint64
 
 var authRouteTestSchema = []string{
 	`CREATE TABLE tenants (
@@ -368,6 +374,80 @@ var authRouteTestSchema = []string{
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL,
 		deleted_at TIMESTAMP NULL
+	)`,
+	`CREATE TABLE generation_tasks (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		type TEXT NOT NULL,
+		provider_id TEXT NOT NULL,
+		model_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		image_type TEXT NOT NULL,
+		params_json TEXT NOT NULL,
+		input_asset_ids_json TEXT NOT NULL,
+		attempt INTEGER NOT NULL,
+		max_attempts INTEGER NOT NULL,
+		queued_at TIMESTAMP NULL,
+		started_at TIMESTAMP NULL,
+		finished_at TIMESTAMP NULL,
+		timeout_at TIMESTAMP NULL,
+		created_by TEXT NOT NULL,
+		error_code TEXT NOT NULL,
+		error_message TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`,
+	`CREATE TABLE task_events (
+		sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+		id TEXT NOT NULL UNIQUE,
+		tenant_id TEXT NOT NULL,
+		task_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		event_type TEXT NOT NULL,
+		event_payload_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	)`,
+	`CREATE TABLE task_outputs (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		task_id TEXT NOT NULL,
+		asset_id TEXT NOT NULL,
+		output_index INTEGER NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	)`,
+	`CREATE TABLE api_call_logs (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		task_id TEXT NOT NULL,
+		provider_id TEXT NOT NULL,
+		model_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		request_id TEXT NOT NULL,
+		http_status INTEGER NULL,
+		error_code TEXT NOT NULL,
+		error_message TEXT NOT NULL,
+		redacted_request_json TEXT NULL,
+		redacted_response_json TEXT NULL,
+		created_at TIMESTAMP NOT NULL
+	)`,
+	`CREATE TABLE usage_records (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		task_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		provider_id TEXT NOT NULL,
+		model_id TEXT NOT NULL,
+		input_tokens INTEGER NOT NULL,
+		output_tokens INTEGER NOT NULL,
+		image_count INTEGER NOT NULL,
+		estimated_cost TEXT NOT NULL,
+		currency TEXT NOT NULL,
+		raw_usage_json TEXT NULL,
+		created_at TIMESTAMP NOT NULL
 	)`,
 }
 

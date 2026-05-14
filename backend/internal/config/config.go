@@ -51,6 +51,10 @@ const (
 	defaultAPIKeyEncryptionKeyID = "local-dev-v1"
 	defaultProviderTimeout       = 120 * time.Second
 	defaultProviderMaxRetries    = 2
+	defaultRedisAddr             = "127.0.0.1:6379"
+	defaultRedisDB               = 0
+	defaultTaskQueueName         = "image-tasks"
+	defaultTaskEnqueueTimeout    = 5 * time.Second
 )
 
 type Config struct {
@@ -63,6 +67,7 @@ type Config struct {
 	Storage  StorageConfig
 	Upload   UploadConfig
 	Provider ProviderConfig
+	Queue    QueueConfig
 }
 
 type APIConfig struct {
@@ -124,6 +129,14 @@ type ProviderConfig struct {
 	APIKeyEncryptionKeyID string
 	DefaultTimeout        time.Duration
 	MaxRetries            int
+}
+
+type QueueConfig struct {
+	RedisAddr      string
+	RedisPassword  string
+	RedisDB        int
+	TaskQueueName  string
+	EnqueueTimeout time.Duration
 }
 
 type CookieConfig struct {
@@ -215,6 +228,11 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	queue, err := queueConfigFromEnv(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
@@ -236,6 +254,7 @@ func load(lookup lookupFunc) (Config, error) {
 		Storage:  storage,
 		Upload:   upload,
 		Provider: provider,
+		Queue:    queue,
 	}, nil
 }
 
@@ -714,6 +733,71 @@ func providerConfigFromEnv(lookup lookupFunc) (ProviderConfig, error) {
 		DefaultTimeout:        time.Duration(timeoutSeconds) * time.Second,
 		MaxRetries:            maxRetries,
 	}, nil
+}
+
+func queueConfigFromEnv(lookup lookupFunc) (QueueConfig, error) {
+	redisAddr := stringFromEnv(lookup, "REDIS_ADDR", defaultRedisAddr)
+	if err := validateRedisAddr(redisAddr); err != nil {
+		return QueueConfig{}, err
+	}
+
+	redisDB, err := nonNegativeIntFromEnv(lookup, "REDIS_DB", defaultRedisDB)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	taskQueueName := stringFromEnv(lookup, "TASK_QUEUE_NAME", defaultTaskQueueName)
+	if err := validateQueueName("TASK_QUEUE_NAME", taskQueueName); err != nil {
+		return QueueConfig{}, err
+	}
+
+	enqueueTimeout, err := durationFromEnv(lookup, "TASK_ENQUEUE_TIMEOUT", defaultTaskEnqueueTimeout)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	return QueueConfig{
+		RedisAddr:      redisAddr,
+		RedisPassword:  stringFromEnv(lookup, "REDIS_PASSWORD", ""),
+		RedisDB:        redisDB,
+		TaskQueueName:  taskQueueName,
+		EnqueueTimeout: enqueueTimeout,
+	}, nil
+}
+
+func validateRedisAddr(addr string) error {
+	if err := validateRequiredValue("REDIS_ADDR", addr); err != nil {
+		return err
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid REDIS_ADDR: %w", err)
+	}
+	if err := validateHost("REDIS_ADDR", host); err != nil {
+		return err
+	}
+	if _, err := parsePort("REDIS_ADDR", port); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateQueueName(key string, value string) error {
+	if err := validateRequiredValue(key, value); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("invalid %s: value must not contain surrounding whitespace", key)
+	}
+	if len(value) > 128 {
+		return fmt.Errorf("invalid %s: value must be at most 128 bytes", key)
+	}
+	for _, r := range value {
+		if r <= 31 || r == 127 {
+			return fmt.Errorf("invalid %s: value contains control character", key)
+		}
+	}
+	return nil
 }
 
 func validateStorageEndpoint(endpoint string) error {

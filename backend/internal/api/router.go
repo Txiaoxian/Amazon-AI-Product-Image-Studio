@@ -11,7 +11,9 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -23,6 +25,7 @@ type RouterOptions struct {
 	Database     *gorm.DB
 	ObjectStore  storage.ObjectStore
 	ProviderOpts []provider.Option
+	TaskEnqueuer queue.TaskEnqueuer
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -49,21 +52,22 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore),
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
 		model.NewService(options.Database, options.Logger),
+		task.NewService(options.Database, options.Logger, taskEnqueuer(options)),
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -87,4 +91,14 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	if modelService != nil {
 		modelService.RegisterRoutes(protected)
 	}
+	if taskService != nil {
+		taskService.RegisterRoutes(protected)
+	}
+}
+
+func taskEnqueuer(options RouterOptions) queue.TaskEnqueuer {
+	if options.TaskEnqueuer != nil {
+		return options.TaskEnqueuer
+	}
+	return queue.NewRedisTaskEnqueuer(options.Config.Queue)
 }
