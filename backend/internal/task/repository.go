@@ -14,6 +14,11 @@ type Repository struct {
 	db *gorm.DB
 }
 
+type EventFilter struct {
+	ProjectID string
+	TaskID    string
+}
+
 func NewRepository(db *gorm.DB) Repository {
 	return Repository{db: db}
 }
@@ -152,6 +157,28 @@ func (r Repository) CreateEvent(ctx context.Context, scope tenant.Scope, record 
 		record.ID = stableID
 		return nil
 	})
+}
+
+func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cursor uint64, filter EventFilter) ([]database.TaskEvent, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	query := db.Model(&database.TaskEvent{}).
+		Where("tenant_id = ? AND sequence > ?", scope.ID(), cursor)
+	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
+	if taskID := strings.TrimSpace(filter.TaskID); taskID != "" {
+		query = query.Where("task_id = ?", taskID)
+	}
+
+	var events []database.TaskEvent
+	if err := query.Order("sequence ASC").Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func (r Repository) OutputAssetIDs(ctx context.Context, scope tenant.Scope, taskID string) ([]string, error) {

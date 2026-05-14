@@ -24,18 +24,27 @@ import (
 )
 
 type Service struct {
-	db       *gorm.DB
-	repo     Repository
-	enqueuer queue.TaskEnqueuer
-	log      *slog.Logger
-	now      func() time.Time
+	db             *gorm.DB
+	repo           Repository
+	enqueuer       queue.TaskEnqueuer
+	eventPublisher EventPublisher
+	log            *slog.Logger
+	now            func() time.Time
 }
 
-func NewService(db *gorm.DB, log *slog.Logger, enqueuer queue.TaskEnqueuer) *Service {
+type Option func(*Service)
+
+func WithEventPublisher(publisher EventPublisher) Option {
+	return func(s *Service) {
+		s.eventPublisher = publisher
+	}
+}
+
+func NewService(db *gorm.DB, log *slog.Logger, enqueuer queue.TaskEnqueuer, options ...Option) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{
+	service := &Service{
 		db:       db,
 		repo:     NewRepository(db),
 		enqueuer: enqueuer,
@@ -44,6 +53,12 @@ func NewService(db *gorm.DB, log *slog.Logger, enqueuer queue.TaskEnqueuer) *Ser
 			return time.Now().UTC()
 		},
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
@@ -191,6 +206,7 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 	}
 
 	var created database.GenerationTask
+	var events []database.TaskEvent
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		projectRecord, err := project.NewAuthorizer(tx).Authorize(ctx, principal, projectID, PermissionCreate, rolesForPermission(PermissionCreate)...)
 		if err != nil {
@@ -261,11 +277,13 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 		if err := repo.CreateTask(ctx, scope, &created); err != nil {
 			return err
 		}
-		if err := writeTaskEvent(ctx, repo, scope, created, EventTaskQueued, map[string]any{
+		event, err := writeTaskEvent(ctx, repo, scope, created, EventTaskQueued, map[string]any{
 			"queuedAt": formatTime(queuedAt),
-		}, now); err != nil {
+		}, now)
+		if err != nil {
 			return err
 		}
+		events = append(events, event)
 		return audit.NewRecorder(tx).Record(ctx, audit.Event{
 			TenantID:     scope.ID(),
 			ActorUserID:  &principal.UserID,
@@ -287,6 +305,7 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 	if err != nil {
 		return Response{}, err
 	}
+	s.publishTaskEvents(ctx, events)
 
 	if err := s.enqueueTask(ctx, created.ID); err != nil {
 		_ = s.markQueueFailure(ctx, scope, created.ID)
@@ -306,6 +325,7 @@ func (s *Service) cancelTask(ctx context.Context, principal auth.Principal, task
 	}
 
 	var updated database.GenerationTask
+	var events []database.TaskEvent
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
 		current, err := s.authorizeTask(ctx, repo, principal, scope, taskID, PermissionCancel)
@@ -328,11 +348,13 @@ func (s *Service) cancelTask(ctx context.Context, principal auth.Principal, task
 		if err != nil {
 			return err
 		}
-		if err := writeTaskEvent(ctx, repo, scope, updated, EventTaskCancelled, map[string]any{
+		event, err := writeTaskEvent(ctx, repo, scope, updated, EventTaskCancelled, map[string]any{
 			"finishedAt": formatTime(finishedAt),
-		}, now); err != nil {
+		}, now)
+		if err != nil {
 			return err
 		}
+		events = append(events, event)
 		return audit.NewRecorder(tx).Record(ctx, audit.Event{
 			TenantID:     scope.ID(),
 			ActorUserID:  &principal.UserID,
@@ -352,6 +374,7 @@ func (s *Service) cancelTask(ctx context.Context, principal auth.Principal, task
 	if err != nil {
 		return Response{}, err
 	}
+	s.publishTaskEvents(ctx, events)
 	return s.responseForRecord(ctx, scope, updated)
 }
 
@@ -365,6 +388,7 @@ func (s *Service) retryTask(ctx context.Context, principal auth.Principal, taskI
 	}
 
 	var queued database.GenerationTask
+	var events []database.TaskEvent
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
 		current, err := s.authorizeTask(ctx, repo, principal, scope, taskID, PermissionRetry)
@@ -391,11 +415,13 @@ func (s *Service) retryTask(ctx context.Context, principal auth.Principal, taskI
 		if err != nil {
 			return err
 		}
-		if err := writeTaskEvent(ctx, repo, scope, retrying, EventTaskRetried, map[string]any{
+		event, err := writeTaskEvent(ctx, repo, scope, retrying, EventTaskRetried, map[string]any{
 			"previousStatus": current.Status,
-		}, now); err != nil {
+		}, now)
+		if err != nil {
 			return err
 		}
+		events = append(events, event)
 
 		queuedAt := now
 		queued, err = repo.UpdateTask(ctx, scope, retrying.ID, []string{StatusRetrying}, map[string]any{
@@ -406,11 +432,13 @@ func (s *Service) retryTask(ctx context.Context, principal auth.Principal, taskI
 		if err != nil {
 			return err
 		}
-		if err := writeTaskEvent(ctx, repo, scope, queued, EventTaskQueued, map[string]any{
+		event, err = writeTaskEvent(ctx, repo, scope, queued, EventTaskQueued, map[string]any{
 			"queuedAt": formatTime(queuedAt),
-		}, now); err != nil {
+		}, now)
+		if err != nil {
 			return err
 		}
+		events = append(events, event)
 		return audit.NewRecorder(tx).Record(ctx, audit.Event{
 			TenantID:     scope.ID(),
 			ActorUserID:  &principal.UserID,
@@ -430,6 +458,7 @@ func (s *Service) retryTask(ctx context.Context, principal auth.Principal, taskI
 	if err != nil {
 		return Response{}, err
 	}
+	s.publishTaskEvents(ctx, events)
 
 	if err := s.enqueueTask(ctx, queued.ID); err != nil {
 		_ = s.markQueueFailure(ctx, scope, queued.ID)
@@ -472,7 +501,8 @@ func (s *Service) markQueueFailure(ctx context.Context, scope tenant.Scope, task
 	if s.db == nil {
 		return database.ErrNilDB
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var events []database.TaskEvent
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
 		now := s.now()
 		finishedAt := now
@@ -489,11 +519,30 @@ func (s *Service) markQueueFailure(ctx context.Context, scope tenant.Scope, task
 			}
 			return err
 		}
-		return writeTaskEvent(ctx, repo, scope, failed, EventTaskFailed, map[string]any{
+		event, err := writeTaskEvent(ctx, repo, scope, failed, EventTaskFailed, map[string]any{
 			"errorCode": "ENQUEUE_FAILED",
 			"message":   "Task could not be queued.",
 		}, now)
+		if err != nil {
+			return err
+		}
+		events = append(events, event)
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	s.publishTaskEvents(ctx, events)
+	return nil
+}
+
+func (s *Service) publishTaskEvents(ctx context.Context, events []database.TaskEvent) {
+	if s.eventPublisher == nil {
+		return
+	}
+	for _, event := range events {
+		s.eventPublisher.PublishTaskEvent(ctx, event)
+	}
 }
 
 func rolesForPermission(permission string) []string {

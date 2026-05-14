@@ -42,7 +42,7 @@ func TestWriteTaskEventUsesSequenceForStableReplayOrderWithSameTimestamp(t *test
 	}
 
 	for _, eventType := range []string{EventTaskRetried, EventTaskQueued, EventTaskFailed} {
-		if err := writeTaskEvent(context.Background(), repo, scope, record, eventType, nil, createdAt); err != nil {
+		if _, err := writeTaskEvent(context.Background(), repo, scope, record, eventType, nil, createdAt); err != nil {
 			t.Fatalf("write event %s: %v", eventType, err)
 		}
 	}

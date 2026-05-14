@@ -12,20 +12,28 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 )
 
-func writeTaskEvent(ctx context.Context, repo Repository, scope tenant.Scope, record database.GenerationTask, eventType string, payload map[string]any, createdAt time.Time) error {
+type EventPublisher interface {
+	PublishTaskEvent(ctx context.Context, event database.TaskEvent)
+}
+
+func writeTaskEvent(ctx context.Context, repo Repository, scope tenant.Scope, record database.GenerationTask, eventType string, payload map[string]any, createdAt time.Time) (database.TaskEvent, error) {
 	payload = safeEventPayload(record, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return database.TaskEvent{}, err
 	}
-	return repo.CreateEvent(ctx, scope, &database.TaskEvent{
+	event := database.TaskEvent{
 		TenantID:         scope.ID(),
 		TaskID:           record.ID,
 		ProjectID:        record.ProjectID,
 		EventType:        eventType,
 		EventPayloadJSON: string(encoded),
 		CreatedAt:        createdAt.UTC(),
-	})
+	}
+	if err := repo.CreateEvent(ctx, scope, &event); err != nil {
+		return database.TaskEvent{}, err
+	}
+	return event, nil
 }
 
 func safeEventPayload(record database.GenerationTask, extra map[string]any) map[string]any {
