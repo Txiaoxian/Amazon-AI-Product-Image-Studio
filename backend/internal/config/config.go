@@ -11,50 +11,61 @@ import (
 )
 
 const (
-	defaultAppEnv                = "development"
-	defaultLogLevel              = "info"
-	defaultAPIHost               = ""
-	defaultAPIPort               = 8080
-	defaultHTTPTimeout           = 15 * time.Second
-	defaultAPIShutdownTimeout    = 10 * time.Second
-	defaultWorkerName            = "backend-worker"
-	defaultWorkerShutdownTimeout = 10 * time.Second
-	defaultMySQLHost             = "127.0.0.1"
-	defaultMySQLPort             = 3306
-	defaultMySQLDatabase         = "amazon_ai_image_studio"
-	defaultMySQLUser             = "studio_app"
-	defaultDatabaseConnectTime   = 10 * time.Second
-	defaultDatabaseMaxOpenConns  = 25
-	defaultDatabaseMaxIdleConns  = 5
-	defaultDatabaseConnLifetime  = 30 * time.Minute
-	defaultMigrationsMode        = "startup-gate"
-	defaultJWTSigningSecret      = "change-me-at-least-32-bytes-prod-must-replace"
-	defaultJWTIssuer             = "amazon-ai-product-image-studio"
-	defaultJWTAccessTokenTTL     = 60 * time.Minute
-	defaultAuthCookieName        = "studio_auth"
-	defaultCSRFCookieName        = "studio_csrf"
-	defaultCSRFHeaderName        = "X-CSRF-Token"
-	defaultCookieSameSite        = "Lax"
-	defaultMinIOEndpoint         = "http://127.0.0.1:9000"
-	defaultMinIORegion           = "us-east-1"
-	defaultMinIOAccessKey        = "minioadmin"
-	defaultMinIOSecretKey        = "change-me-local-minio-password"
-	defaultMinIOBucketOriginals  = "product-originals"
-	defaultMinIOBucketGenerated  = "product-generated"
-	defaultMinIOBucketThumbnails = "product-thumbnails"
-	defaultUploadMaxFileSizeMB   = 25
-	defaultUploadMaxWidth        = 8192
-	defaultUploadMaxHeight       = 8192
-	defaultUploadMaxPixels       = 40000000
-	defaultUploadAllowedMIMEs    = "image/jpeg,image/png,image/webp"
-	defaultAPIKeyEncryptionKey   = "change-me-32-byte-base64-key-prod-must-replace"
-	defaultAPIKeyEncryptionKeyID = "local-dev-v1"
-	defaultProviderTimeout       = 120 * time.Second
-	defaultProviderMaxRetries    = 2
-	defaultRedisAddr             = "127.0.0.1:6379"
-	defaultRedisDB               = 0
-	defaultTaskQueueName         = "image-tasks"
-	defaultTaskEnqueueTimeout    = 5 * time.Second
+	defaultAppEnv                  = "development"
+	defaultLogLevel                = "info"
+	defaultAPIHost                 = ""
+	defaultAPIPort                 = 8080
+	defaultHTTPTimeout             = 15 * time.Second
+	defaultAPIShutdownTimeout      = 10 * time.Second
+	defaultWorkerName              = "backend-worker"
+	defaultWorkerShutdownTimeout   = 10 * time.Second
+	defaultMySQLHost               = "127.0.0.1"
+	defaultMySQLPort               = 3306
+	defaultMySQLDatabase           = "amazon_ai_image_studio"
+	defaultMySQLUser               = "studio_app"
+	defaultDatabaseConnectTime     = 10 * time.Second
+	defaultDatabaseMaxOpenConns    = 25
+	defaultDatabaseMaxIdleConns    = 5
+	defaultDatabaseConnLifetime    = 30 * time.Minute
+	defaultMigrationsMode          = "startup-gate"
+	defaultJWTSigningSecret        = "change-me-at-least-32-bytes-prod-must-replace"
+	defaultJWTIssuer               = "amazon-ai-product-image-studio"
+	defaultJWTAccessTokenTTL       = 60 * time.Minute
+	defaultAuthCookieName          = "studio_auth"
+	defaultCSRFCookieName          = "studio_csrf"
+	defaultCSRFHeaderName          = "X-CSRF-Token"
+	defaultCookieSameSite          = "Lax"
+	defaultMinIOEndpoint           = "http://127.0.0.1:9000"
+	defaultMinIORegion             = "us-east-1"
+	defaultMinIOAccessKey          = "minioadmin"
+	defaultMinIOSecretKey          = "change-me-local-minio-password"
+	defaultMinIOBucketOriginals    = "product-originals"
+	defaultMinIOBucketGenerated    = "product-generated"
+	defaultMinIOBucketThumbnails   = "product-thumbnails"
+	defaultUploadMaxFileSizeMB     = 25
+	defaultUploadMaxWidth          = 8192
+	defaultUploadMaxHeight         = 8192
+	defaultUploadMaxPixels         = 40000000
+	defaultUploadAllowedMIMEs      = "image/jpeg,image/png,image/webp"
+	defaultAPIKeyEncryptionKey     = "change-me-32-byte-base64-key-prod-must-replace"
+	defaultAPIKeyEncryptionKeyID   = "local-dev-v1"
+	defaultProviderTimeout         = 120 * time.Second
+	defaultProviderMaxRetries      = 2
+	defaultRedisAddr               = "127.0.0.1:6379"
+	defaultRedisDB                 = 0
+	defaultTaskQueueName           = "image-tasks"
+	defaultTaskEnqueueTimeout      = 5 * time.Second
+	defaultTaskClaimTimeout        = 5 * time.Second
+	defaultTaskVisibilityTimeout   = 5 * time.Minute
+	defaultTaskRetryBackoff        = 5 * time.Second
+	defaultTaskRecoveryInterval    = 30 * time.Second
+	defaultTaskConcurrencyTTL      = 10 * time.Minute
+	defaultTaskMaxDeliveries       = 5
+	defaultTaskGlobalConcurrency   = 4
+	defaultTaskTenantConcurrency   = 2
+	defaultTaskUserConcurrency     = 2
+	defaultTaskProviderConcurrency = 2
+	defaultTaskModelConcurrency    = 2
 )
 
 type Config struct {
@@ -132,11 +143,22 @@ type ProviderConfig struct {
 }
 
 type QueueConfig struct {
-	RedisAddr      string
-	RedisPassword  string
-	RedisDB        int
-	TaskQueueName  string
-	EnqueueTimeout time.Duration
+	RedisAddr           string
+	RedisPassword       string
+	RedisDB             int
+	TaskQueueName       string
+	EnqueueTimeout      time.Duration
+	ClaimTimeout        time.Duration
+	VisibilityTimeout   time.Duration
+	RetryBackoff        time.Duration
+	RecoveryInterval    time.Duration
+	ConcurrencyLeaseTTL time.Duration
+	MaxDeliveries       int
+	GlobalConcurrency   int
+	TenantConcurrency   int
+	UserConcurrency     int
+	ProviderConcurrency int
+	ModelConcurrency    int
 }
 
 type CookieConfig struct {
@@ -756,12 +778,78 @@ func queueConfigFromEnv(lookup lookupFunc) (QueueConfig, error) {
 		return QueueConfig{}, err
 	}
 
+	claimTimeout, err := durationFromEnv(lookup, "TASK_CLAIM_TIMEOUT", defaultTaskClaimTimeout)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	visibilityTimeout, err := durationFromEnv(lookup, "TASK_VISIBILITY_TIMEOUT", defaultTaskVisibilityTimeout)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	retryBackoff, err := durationFromEnv(lookup, "TASK_RETRY_BACKOFF", defaultTaskRetryBackoff)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	recoveryInterval, err := durationFromEnv(lookup, "TASK_RECOVERY_INTERVAL", defaultTaskRecoveryInterval)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	concurrencyLeaseTTL, err := durationFromEnv(lookup, "TASK_CONCURRENCY_LEASE_TTL", defaultTaskConcurrencyTTL)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	maxDeliveries, err := positiveIntFromEnv(lookup, "TASK_MAX_DELIVERIES", defaultTaskMaxDeliveries)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	globalConcurrency, err := positiveIntFromEnv(lookup, "TASK_GLOBAL_CONCURRENCY", defaultTaskGlobalConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	tenantConcurrency, err := positiveIntFromEnv(lookup, "TASK_TENANT_CONCURRENCY", defaultTaskTenantConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	userConcurrency, err := positiveIntFromEnv(lookup, "TASK_USER_CONCURRENCY", defaultTaskUserConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	providerConcurrency, err := positiveIntFromEnv(lookup, "TASK_PROVIDER_CONCURRENCY", defaultTaskProviderConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	modelConcurrency, err := positiveIntFromEnv(lookup, "TASK_MODEL_CONCURRENCY", defaultTaskModelConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
 	return QueueConfig{
-		RedisAddr:      redisAddr,
-		RedisPassword:  stringFromEnv(lookup, "REDIS_PASSWORD", ""),
-		RedisDB:        redisDB,
-		TaskQueueName:  taskQueueName,
-		EnqueueTimeout: enqueueTimeout,
+		RedisAddr:           redisAddr,
+		RedisPassword:       stringFromEnv(lookup, "REDIS_PASSWORD", ""),
+		RedisDB:             redisDB,
+		TaskQueueName:       taskQueueName,
+		EnqueueTimeout:      enqueueTimeout,
+		ClaimTimeout:        claimTimeout,
+		VisibilityTimeout:   visibilityTimeout,
+		RetryBackoff:        retryBackoff,
+		RecoveryInterval:    recoveryInterval,
+		ConcurrencyLeaseTTL: concurrencyLeaseTTL,
+		MaxDeliveries:       maxDeliveries,
+		GlobalConcurrency:   globalConcurrency,
+		TenantConcurrency:   tenantConcurrency,
+		UserConcurrency:     userConcurrency,
+		ProviderConcurrency: providerConcurrency,
+		ModelConcurrency:    modelConcurrency,
 	}, nil
 }
 

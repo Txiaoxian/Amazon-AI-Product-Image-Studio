@@ -16,6 +16,29 @@ type EventPublisher interface {
 	PublishTaskEvent(ctx context.Context, event database.TaskEvent)
 }
 
+type multiEventPublisher []EventPublisher
+
+func MultiEventPublisher(publishers ...EventPublisher) EventPublisher {
+	filtered := make(multiEventPublisher, 0, len(publishers))
+	for _, publisher := range publishers {
+		if publisher != nil {
+			filtered = append(filtered, publisher)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func (p multiEventPublisher) PublishTaskEvent(ctx context.Context, event database.TaskEvent) {
+	for _, publisher := range p {
+		if publisher != nil {
+			publisher.PublishTaskEvent(ctx, event)
+		}
+	}
+}
+
 func writeTaskEvent(ctx context.Context, repo Repository, scope tenant.Scope, record database.GenerationTask, eventType string, payload map[string]any, createdAt time.Time) (database.TaskEvent, error) {
 	payload = safeEventPayload(record, payload)
 	encoded, err := json.Marshal(payload)

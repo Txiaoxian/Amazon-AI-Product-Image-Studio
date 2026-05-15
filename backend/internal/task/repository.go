@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
@@ -96,6 +97,40 @@ func (r Repository) FindTask(ctx context.Context, scope tenant.Scope, taskID str
 	return record, err
 }
 
+func (r Repository) ResolveTaskTenantID(ctx context.Context, taskID string) (string, error) {
+	if r.db == nil {
+		return "", database.ErrNilDB
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", ErrValidation
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Queue payloads intentionally carry only task IDs; resolve tenant_id first,
+	// then perform all full task reads and mutations through tenant-scoped paths.
+	var record struct {
+		TenantID string
+	}
+	err := r.db.WithContext(ctx).
+		Model(&database.GenerationTask{}).
+		Select("tenant_id").
+		Where("id = ?", taskID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(record.TenantID) == "" {
+		return "", ErrNotFound
+	}
+	return record.TenantID, nil
+}
+
 func (r Repository) CreateTask(ctx context.Context, scope tenant.Scope, record *database.GenerationTask) error {
 	db, err := r.base(ctx, scope)
 	if err != nil {
@@ -128,6 +163,49 @@ func (r Repository) UpdateTask(ctx context.Context, scope tenant.Scope, taskID s
 	return r.FindTask(ctx, scope, taskID)
 }
 
+func (r Repository) FindTenant(ctx context.Context, tenantID string) (database.Tenant, error) {
+	if r.db == nil {
+		return database.Tenant{}, database.ErrNilDB
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return database.Tenant{}, tenant.ErrMissingTenantID
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var record database.Tenant
+	err := r.db.WithContext(ctx).
+		Model(&database.Tenant{}).
+		Where("id = ?", tenantID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.Tenant{}, ErrNotFound
+	}
+	return record, err
+}
+
+func (r Repository) FindProject(ctx context.Context, scope tenant.Scope, projectID string) (database.Project, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.Project{}, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return database.Project{}, ErrValidation
+	}
+
+	var record database.Project
+	err = db.Model(&database.Project{}).
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), projectID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.Project{}, ErrNotFound
+	}
+	return record, err
+}
+
 func (r Repository) CreateEvent(ctx context.Context, scope tenant.Scope, record *database.TaskEvent) error {
 	db, err := r.base(ctx, scope)
 	if err != nil {
@@ -157,6 +235,31 @@ func (r Repository) CreateEvent(ctx context.Context, scope tenant.Scope, record 
 		record.ID = stableID
 		return nil
 	})
+}
+
+func (r Repository) ListRunningTimedOutTasks(ctx context.Context, now time.Time, limit int) ([]database.GenerationTask, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Recovery scans global overdue candidates, then each timeout transition is
+	// applied through tenant-scoped UpdateTask in the worker processor.
+	var records []database.GenerationTask
+	if err := r.db.WithContext(ctx).
+		Model(&database.GenerationTask{}).
+		Where("status = ? AND timeout_at IS NOT NULL AND timeout_at <= ?", StatusRunning, now.UTC()).
+		Order("timeout_at ASC, id ASC").
+		Limit(limit).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cursor uint64, filter EventFilter) ([]database.TaskEvent, error) {

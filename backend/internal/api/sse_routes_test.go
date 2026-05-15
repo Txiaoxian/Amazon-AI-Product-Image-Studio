@@ -196,7 +196,7 @@ func TestTaskSSELiveFanoutUsesMySQLReplaySource(t *testing.T) {
 	}
 
 	event := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-live", "TASK_PROGRESS")
-	broker.PublishTaskEvent(context.Background(), event)
+	broker.PublishTaskEvent(context.Background(), database.TaskEvent{Sequence: event.Sequence})
 	frame := readSSEFrame(t, reader)
 	assertSSETaskEventFrame(t, frame, event)
 }

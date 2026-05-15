@@ -12,7 +12,11 @@ import (
 	"syscall"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
+	"gorm.io/gorm"
 )
 
 const defaultWorkerHealthcheckFile = "/tmp/worker-ready"
@@ -35,6 +39,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	db, err := openWorkerDatabase(cfg, log)
+	if err != nil {
+		log.Error("worker database startup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := database.Close(db); err != nil {
+			log.Warn("worker database close failed", slog.String("error", err.Error()))
+		}
+	}()
+
+	taskQueue := queue.NewRedisReliableTaskQueue(cfg.Queue)
+	processor := task.NewWorkerProcessor(db, log, task.WorkerProcessorOptions{
+		Limiter:             queue.NewRedisConcurrencyLimiter(cfg.Queue),
+		EventPublisher:      queue.NewRedisTaskEventPublisher(cfg.Queue),
+		ConcurrencyLeaseTTL: cfg.Queue.ConcurrencyLeaseTTL,
+		GlobalConcurrency:   cfg.Queue.GlobalConcurrency,
+		TenantConcurrency:   cfg.Queue.TenantConcurrency,
+		UserConcurrency:     cfg.Queue.UserConcurrency,
+		ProviderConcurrency: cfg.Queue.ProviderConcurrency,
+		ModelConcurrency:    cfg.Queue.ModelConcurrency,
+		RetryBackoff:        cfg.Queue.RetryBackoff,
+		RecoveryBatch:       100,
+	})
+	worker := task.NewWorker(taskQueue, processor, log, task.WorkerOptions{
+		RetryBackoff:     cfg.Queue.RetryBackoff,
+		RecoveryInterval: cfg.Queue.RecoveryInterval,
+		RecoveryBatch:    100,
+	})
+
 	healthcheckFile := workerHealthcheckFile()
 	if err := markWorkerReady(healthcheckFile); err != nil {
 		log.Error("worker readiness failed", slog.String("error", err.Error()))
@@ -51,7 +85,11 @@ func main() {
 	log.Info("worker starting", slog.String("name", cfg.Worker.Name))
 	log.Info("worker healthy", slog.String("name", cfg.Worker.Name), slog.String("healthcheck_file", healthcheckFile))
 
-	<-ctx.Done()
+	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Error("worker stopped with error", slog.String("error", err.Error()))
+		cleanupReadyFile()
+		os.Exit(1)
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Worker.ShutdownTimeout)
 	defer cancel()
@@ -67,6 +105,28 @@ func main() {
 
 func stopWorker(context.Context) error {
 	return nil
+}
+
+func openWorkerDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Database.ConnectTimeout)
+	defer cancel()
+
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Database.MigrationsMode == "startup-gate" {
+		if err := database.RunMigrations(ctx, db); err != nil {
+			_ = database.Close(db)
+			return nil, err
+		}
+		log.Info("worker database migrations complete")
+	} else {
+		log.Info("worker database migrations skipped", slog.String("mode", cfg.Database.MigrationsMode))
+	}
+
+	return db, nil
 }
 
 func workerHealthcheckFile() string {

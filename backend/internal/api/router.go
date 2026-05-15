@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
@@ -53,7 +55,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	if eventBroker == nil {
 		eventBroker = sse.NewBroker(0)
 	}
-	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventBroker))
+	eventPublisher := task.EventPublisher(eventBroker)
+	if shouldStartRedisTaskEventBridge(options.Config) {
+		redisEventPublisher := queue.NewRedisTaskEventPublisher(options.Config.Queue)
+		eventPublisher = task.MultiEventPublisher(eventBroker, redisEventPublisher)
+		queue.StartTaskEventSubscriber(context.Background(), queue.NewRedisTaskEventSubscriber(options.Config.Queue), eventBroker, options.Logger)
+	}
+	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventPublisher))
 
 	RegisterRoutes(
 		router,
@@ -115,4 +123,8 @@ func taskEnqueuer(options RouterOptions) queue.TaskEnqueuer {
 		return options.TaskEnqueuer
 	}
 	return queue.NewRedisTaskEnqueuer(options.Config.Queue)
+}
+
+func shouldStartRedisTaskEventBridge(cfg config.Config) bool {
+	return !strings.EqualFold(strings.TrimSpace(cfg.AppEnv), "test")
 }

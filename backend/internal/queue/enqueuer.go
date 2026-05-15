@@ -19,6 +19,14 @@ type TaskEnqueuer interface {
 	EnqueueTask(ctx context.Context, taskID string) error
 }
 
+func NewRedisClient(cfg config.QueueConfig) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+}
+
 type RedisTaskEnqueuer struct {
 	client  redis.Cmdable
 	queue   string
@@ -27,11 +35,7 @@ type RedisTaskEnqueuer struct {
 
 func NewRedisTaskEnqueuer(cfg config.QueueConfig) *RedisTaskEnqueuer {
 	return &RedisTaskEnqueuer{
-		client: redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
-		}),
+		client:  NewRedisClient(cfg),
 		queue:   cfg.TaskQueueName,
 		timeout: cfg.EnqueueTimeout,
 	}
