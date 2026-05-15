@@ -500,7 +500,7 @@ func (s *Service) downloadAsset(ctx context.Context, principal auth.Principal, a
 		return database.ImageAsset{}, storage.Object{}, err
 	}
 
-	object, err := s.store.GetObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey)
+	object, err := s.store.GetObject(ctx, bucketForKind(s.storageConfig, record.Kind), record.ObjectKey)
 	if err != nil {
 		return database.ImageAsset{}, storage.Object{}, err
 	}
@@ -658,6 +658,16 @@ func parseOptionalBool(raw string, fallback bool) (bool, error) {
 
 func objectKey(tenantID string, projectID string, assetID string, ext string) string {
 	return "tenants/" + tenantID + "/projects/" + projectID + "/assets/" + assetID + "/original." + ext
+}
+
+func bucketForKind(storageConfig config.StorageConfig, kind string) string {
+	storageConfig = config.NormalizeStorageConfig(storageConfig)
+	switch kind {
+	case KindGenerated, KindEdited:
+		return storageConfig.BucketGenerated
+	default:
+		return storageConfig.BucketOriginals
+	}
 }
 
 func contentDisposition(record database.ImageAsset) string {

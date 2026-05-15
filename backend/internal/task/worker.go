@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	modelpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	providerpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
 )
@@ -54,6 +56,9 @@ type WorkerProcessorOptions struct {
 	RetryBackoff        time.Duration
 	DisableAutoRetry    bool
 	RecoveryBatch       int
+	Store               storage.ObjectStore
+	StorageConfig       config.StorageConfig
+	UploadConfig        config.UploadConfig
 	Now                 func() time.Time
 }
 
@@ -77,6 +82,9 @@ type ProgressUpdate struct {
 
 type ExecutionResult struct {
 	Progress     []ProgressUpdate
+	Outputs      []GeneratedImageOutput
+	Usage        UsageResult
+	APICall      APICallResult
 	ErrorCode    string
 	ErrorMessage string
 	Retryable    bool
@@ -97,6 +105,9 @@ type WorkerProcessor struct {
 	publisher EventPublisher
 	limiter   queue.ConcurrencyLimiter
 	executor  Executor
+	store     storage.ObjectStore
+	storage   config.StorageConfig
+	upload    config.UploadConfig
 	now       func() time.Time
 }
 
@@ -161,6 +172,9 @@ func NewWorkerProcessor(db *gorm.DB, log *slog.Logger, options WorkerProcessorOp
 		publisher: options.EventPublisher,
 		limiter:   options.Limiter,
 		executor:  options.Executor,
+		store:     options.Store,
+		storage:   config.NormalizeStorageConfig(options.StorageConfig),
+		upload:    config.NormalizeUploadConfig(options.UploadConfig),
 		now:       now,
 	}
 }
@@ -303,6 +317,11 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
 		}
 	}
+	if hasAPICall(result.APICall) {
+		if err := p.recordAPICall(ctx, scope, running, result.APICall); err != nil {
+			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
+		}
+	}
 
 	if result.TimedOut || errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 		if err := p.timeoutTask(ctx, scope, running.ID); err != nil {
@@ -323,6 +342,9 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 		return ProcessResult{Action: claimActionAck}, nil
 	}
 
+	if err := p.persistSuccessfulResult(ctx, scope, running.ID, snapshot.Model, result); err != nil {
+		return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
+	}
 	if err := p.completeTask(ctx, scope, running.ID); err != nil {
 		return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
 	}
@@ -726,6 +748,20 @@ func validateExecutionContext(snapshot ExecutionContext) error {
 	}
 	if snapshot.Model.ProviderID != snapshot.Provider.ID || snapshot.Model.Status != modelpkg.StatusEnabled {
 		return fmt.Errorf("%w: disabled model", ErrValidation)
+	}
+	inputAssetIDs, err := taskInputAssetIDs(snapshot.Task)
+	if err != nil {
+		return fmt.Errorf("%w: invalid task inputs", ErrValidation)
+	}
+	if err := validateModelCapability(snapshot.Task.Type, snapshot.Model, inputAssetIDs); err != nil {
+		return fmt.Errorf("%w: model capability mismatch", ErrValidation)
+	}
+	parameters, err := taskParameters(snapshot.Task)
+	if err != nil {
+		return fmt.Errorf("%w: invalid task parameters", ErrValidation)
+	}
+	if _, _, err := normalizeParameters(parameters, snapshot.Model); err != nil {
+		return fmt.Errorf("%w: model parameter mismatch", ErrValidation)
 	}
 	return nil
 }

@@ -23,6 +23,8 @@ const (
 	EventTaskQueued    = "TASK_QUEUED"
 	EventTaskStarted   = "TASK_STARTED"
 	EventTaskProgress  = "TASK_PROGRESS"
+	EventImageOutput   = "IMAGE_OUTPUT"
+	EventUsageRecorded = "USAGE_RECORDED"
 	EventTaskFailed    = "TASK_FAILED"
 	EventTaskCompleted = "TASK_COMPLETED"
 	EventTaskCancelled = "TASK_CANCELLED"
