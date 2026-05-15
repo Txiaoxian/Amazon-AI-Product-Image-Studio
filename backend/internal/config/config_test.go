@@ -127,6 +127,27 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Queue.EnqueueTimeout != 5*time.Second {
 		t.Fatalf("Queue.EnqueueTimeout = %s, want 5s", cfg.Queue.EnqueueTimeout)
 	}
+	if cfg.Queue.ClaimTimeout != 5*time.Second {
+		t.Fatalf("Queue.ClaimTimeout = %s, want 5s", cfg.Queue.ClaimTimeout)
+	}
+	if cfg.Queue.VisibilityTimeout != 5*time.Minute {
+		t.Fatalf("Queue.VisibilityTimeout = %s, want 5m", cfg.Queue.VisibilityTimeout)
+	}
+	if cfg.Queue.RetryBackoff != 5*time.Second {
+		t.Fatalf("Queue.RetryBackoff = %s, want 5s", cfg.Queue.RetryBackoff)
+	}
+	if cfg.Queue.RecoveryInterval != 30*time.Second {
+		t.Fatalf("Queue.RecoveryInterval = %s, want 30s", cfg.Queue.RecoveryInterval)
+	}
+	if cfg.Queue.ConcurrencyLeaseTTL != 10*time.Minute {
+		t.Fatalf("Queue.ConcurrencyLeaseTTL = %s, want 10m", cfg.Queue.ConcurrencyLeaseTTL)
+	}
+	if cfg.Queue.MaxDeliveries != 5 {
+		t.Fatalf("Queue.MaxDeliveries = %d, want 5", cfg.Queue.MaxDeliveries)
+	}
+	if cfg.Queue.GlobalConcurrency != 4 || cfg.Queue.TenantConcurrency != 2 || cfg.Queue.UserConcurrency != 2 || cfg.Queue.ProviderConcurrency != 2 || cfg.Queue.ModelConcurrency != 2 {
+		t.Fatalf("Queue concurrency defaults = %#v", cfg.Queue)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -182,6 +203,17 @@ func TestLoadOverrides(t *testing.T) {
 		"REDIS_DB":                     "2",
 		"TASK_QUEUE_NAME":              "task-queue-test",
 		"TASK_ENQUEUE_TIMEOUT":         "9s",
+		"TASK_CLAIM_TIMEOUT":           "10s",
+		"TASK_VISIBILITY_TIMEOUT":      "11s",
+		"TASK_RETRY_BACKOFF":           "12s",
+		"TASK_RECOVERY_INTERVAL":       "13s",
+		"TASK_CONCURRENCY_LEASE_TTL":   "14s",
+		"TASK_MAX_DELIVERIES":          "6",
+		"TASK_GLOBAL_CONCURRENCY":      "7",
+		"TASK_TENANT_CONCURRENCY":      "8",
+		"TASK_USER_CONCURRENCY":        "9",
+		"TASK_PROVIDER_CONCURRENCY":    "10",
+		"TASK_MODEL_CONCURRENCY":       "11",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -338,6 +370,24 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Queue.EnqueueTimeout != 9*time.Second {
 		t.Fatalf("Queue.EnqueueTimeout = %s, want 9s", cfg.Queue.EnqueueTimeout)
+	}
+	if cfg.Queue.ClaimTimeout != 10*time.Second {
+		t.Fatalf("Queue.ClaimTimeout = %s, want 10s", cfg.Queue.ClaimTimeout)
+	}
+	if cfg.Queue.VisibilityTimeout != 11*time.Second {
+		t.Fatalf("Queue.VisibilityTimeout = %s, want 11s", cfg.Queue.VisibilityTimeout)
+	}
+	if cfg.Queue.RetryBackoff != 12*time.Second {
+		t.Fatalf("Queue.RetryBackoff = %s, want 12s", cfg.Queue.RetryBackoff)
+	}
+	if cfg.Queue.RecoveryInterval != 13*time.Second {
+		t.Fatalf("Queue.RecoveryInterval = %s, want 13s", cfg.Queue.RecoveryInterval)
+	}
+	if cfg.Queue.ConcurrencyLeaseTTL != 14*time.Second {
+		t.Fatalf("Queue.ConcurrencyLeaseTTL = %s, want 14s", cfg.Queue.ConcurrencyLeaseTTL)
+	}
+	if cfg.Queue.MaxDeliveries != 6 || cfg.Queue.GlobalConcurrency != 7 || cfg.Queue.TenantConcurrency != 8 || cfg.Queue.UserConcurrency != 9 || cfg.Queue.ProviderConcurrency != 10 || cfg.Queue.ModelConcurrency != 11 {
+		t.Fatalf("Queue concurrency overrides = %#v", cfg.Queue)
 	}
 }
 

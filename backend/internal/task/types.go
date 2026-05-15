@@ -21,9 +21,13 @@ const (
 	StatusTimedOut  = "TIMED_OUT"
 
 	EventTaskQueued    = "TASK_QUEUED"
+	EventTaskStarted   = "TASK_STARTED"
+	EventTaskProgress  = "TASK_PROGRESS"
 	EventTaskFailed    = "TASK_FAILED"
+	EventTaskCompleted = "TASK_COMPLETED"
 	EventTaskCancelled = "TASK_CANCELLED"
 	EventTaskRetried   = "TASK_RETRIED"
+	EventTaskTimedOut  = "TASK_TIMED_OUT"
 
 	PermissionRead   = "task:read"
 	PermissionCreate = "task:create"
