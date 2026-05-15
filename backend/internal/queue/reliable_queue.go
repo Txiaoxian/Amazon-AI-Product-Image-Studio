@@ -35,8 +35,22 @@ type ReliableTaskQueue interface {
 	PromoteDue(ctx context.Context, now time.Time, limit int) ([]string, error)
 }
 
+type reliableQueueRedisClient interface {
+	RPush(ctx context.Context, key string, values ...interface{}) *redis.IntCmd
+	BLMove(ctx context.Context, source, destination, srcpos, destpos string, timeout time.Duration) *redis.StringCmd
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+	LRem(ctx context.Context, key string, count int64, value interface{}) *redis.IntCmd
+	HDel(ctx context.Context, key string, fields ...string) *redis.IntCmd
+	HSet(ctx context.Context, key string, values ...interface{}) *redis.IntCmd
+	HGet(ctx context.Context, key, field string) *redis.StringCmd
+	LRange(ctx context.Context, key string, start, stop int64) *redis.StringSliceCmd
+	ZAdd(ctx context.Context, key string, members ...redis.Z) *redis.IntCmd
+	ZRangeByScore(ctx context.Context, key string, opt *redis.ZRangeBy) *redis.StringSliceCmd
+	ZRem(ctx context.Context, key string, members ...interface{}) *redis.IntCmd
+}
+
 type RedisReliableTaskQueue struct {
-	client            redis.Cmdable
+	client            reliableQueueRedisClient
 	queue             string
 	processing        string
 	processingClaims  string
@@ -49,10 +63,14 @@ type RedisReliableTaskQueue struct {
 }
 
 func NewRedisReliableTaskQueue(cfg config.QueueConfig) *RedisReliableTaskQueue {
-	return NewRedisReliableTaskQueueWithClient(NewRedisClient(cfg), cfg)
+	return newRedisReliableTaskQueueWithClient(NewRedisClient(cfg), cfg)
 }
 
 func NewRedisReliableTaskQueueWithClient(client redis.Cmdable, cfg config.QueueConfig) *RedisReliableTaskQueue {
+	return newRedisReliableTaskQueueWithClient(client, cfg)
+}
+
+func newRedisReliableTaskQueueWithClient(client reliableQueueRedisClient, cfg config.QueueConfig) *RedisReliableTaskQueue {
 	queueName := strings.TrimSpace(cfg.TaskQueueName)
 	return &RedisReliableTaskQueue{
 		client:            client,
@@ -106,11 +124,8 @@ func (q *RedisReliableTaskQueue) Claim(ctx context.Context) (TaskClaim, error) {
 		return TaskClaim{}, ErrInvalidTask
 	}
 
-	deliveryCount, err := q.client.HIncrBy(ctx, q.deliveries, taskID, 1).Result()
+	deliveryCount, err := q.recordClaim(ctx, taskID, now)
 	if err != nil {
-		return TaskClaim{}, err
-	}
-	if err := q.client.HSet(ctx, q.processingClaims, taskID, strconv.FormatInt(now.UnixMilli(), 10)).Err(); err != nil {
 		return TaskClaim{}, err
 	}
 
@@ -208,17 +223,24 @@ func (q *RedisReliableTaskQueue) RecoverStale(ctx context.Context, now time.Time
 		limit = 100
 	}
 	before := now.UTC().Add(-q.visibilityTimeout).UnixMilli()
-	claims, err := q.client.HGetAll(ctx, q.processingClaims).Result()
+	processingTasks, err := q.client.LRange(ctx, q.processing, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
 	recovered := make([]string, 0)
-	for taskID, rawClaimedAt := range claims {
+	for _, taskID := range processingTasks {
 		if len(recovered) >= limit {
 			break
 		}
-		claimedAt, err := strconv.ParseInt(rawClaimedAt, 10, 64)
-		if err != nil || claimedAt > before {
+		taskID = strings.TrimSpace(taskID)
+		if taskID == "" {
+			continue
+		}
+		shouldRecover, err := q.shouldRecoverProcessingTask(ctx, taskID, before)
+		if err != nil {
+			return recovered, err
+		}
+		if !shouldRecover {
 			continue
 		}
 		if err := q.client.LRem(ctx, q.processing, 1, taskID).Err(); err != nil {
@@ -279,6 +301,46 @@ func (q *RedisReliableTaskQueue) validate() error {
 	return nil
 }
 
+func (q *RedisReliableTaskQueue) recordClaim(ctx context.Context, taskID string, now time.Time) (int64, error) {
+	result, err := q.client.Eval(ctx, redisRecordClaimScript, []string{q.deliveries, q.processingClaims}, taskID, strconv.FormatInt(now.UTC().UnixMilli(), 10)).Result()
+	if err != nil {
+		return 0, err
+	}
+	return redisIntegerResult(result)
+}
+
+func (q *RedisReliableTaskQueue) shouldRecoverProcessingTask(ctx context.Context, taskID string, staleBeforeUnixMillis int64) (bool, error) {
+	rawClaimedAt, err := q.client.HGet(ctx, q.processingClaims, taskID).Result()
+	if errors.Is(err, redis.Nil) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	claimedAt, err := strconv.ParseInt(strings.TrimSpace(rawClaimedAt), 10, 64)
+	if err != nil {
+		return true, nil
+	}
+	return claimedAt <= staleBeforeUnixMillis, nil
+}
+
+func redisIntegerResult(result interface{}) (int64, error) {
+	switch value := result.(type) {
+	case int64:
+		return value, nil
+	case int:
+		return int64(value), nil
+	case string:
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("%w: unexpected redis integer result %T", ErrInvalidConfig, result)
+	}
+}
+
 func taskIDFromClaim(claim TaskClaim) (string, error) {
 	taskID := strings.TrimSpace(claim.TaskID)
 	if taskID == "" {
@@ -286,3 +348,9 @@ func taskIDFromClaim(claim TaskClaim) (string, error) {
 	}
 	return taskID, nil
 }
+
+const redisRecordClaimScript = `
+local delivery = redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+return delivery
+`
