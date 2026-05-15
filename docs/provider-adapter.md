@@ -68,6 +68,7 @@ P7 runtime boundary:
 
 - `P7-BE-PROVIDER-ADAPTER-RUNTIME` is the first phase allowed to execute real backend Provider generation/edit calls.
 - Runtime execution must use the Provider Adapter interface and the backend model capability table as the trusted source of allowed parameters.
+- Runtime execution starts after `P7-BE-WORKER-QUEUE` merged reliable queue consumption, Worker state handling, Redis SSE wakeups, and fake/stub execution.
 - Browser Provider adapters under `frontend/src/providers/**` remain migration references until P8 removes or isolates them from production generation paths.
 
 ## Adapter interface

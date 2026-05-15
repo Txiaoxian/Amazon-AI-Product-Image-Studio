@@ -1675,16 +1675,16 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 
 1. `P7-BE-TASK-FOUNDATION` - completed and merged. It freezes task schema, status names, event writer, task API, Redis enqueue abstraction, and `task_events.sequence` replay cursor.
 2. `P7-BE-SSE-STREAM` - completed and merged. It depends on the merged task event schema and replays by `task_events.sequence`.
-3. `P7-BE-WORKER-QUEUE` - next task. It depends on task foundation and the merged SSE stream, and must bridge Worker-written events to live SSE clients with Redis pub/sub or an equivalent cross-process wakeup.
-4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - 依赖 Worker 状态机和 SSRF-safe outbound transport 决策。
+3. `P7-BE-WORKER-QUEUE` - completed and merged. It added reliable Redis queue consumption, Worker state handling, Redis wakeups, concurrency limits, and fake/stub execution.
+4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - next task. It depends on the merged Worker state machine and must add SSRF-safe outbound transport before real Provider calls.
 5. `P7-FE-TASK-CLIENT-SSE` - 依赖 task/SSE 合同稳定，只做 API/SSE client 与 reducer，不替换主工作台。
 6. `R7` - 主 agent 串行 review、集成回归、安全审查和公共合同校准。
 
 并行策略：
 
 - 第一项 `P7-BE-TASK-FOUNDATION` 已串行完成。
-- SSE stream 合并后，下一任务串行启动 `P7-BE-WORKER-QUEUE`。不要与 Provider Adapter runtime 并行，避免真实外部调用建立在不稳定 Worker 状态机上。
-- Provider Adapter runtime 不与 Worker foundation 并行，避免真实外部调用压在不稳定状态机上。
+- `P7-BE-WORKER-QUEUE` 已串行完成并合并。
+- 下一任务串行启动 `P7-BE-PROVIDER-ADAPTER-RUNTIME`。不要与前端 task client 并行，避免前端合同建立在未落地的真实输出/usage/API call log 行为上。
 - 前端 task client 只在后端合同稳定后启动，不提前替换 P8 工作台。
 
 P7 统一状态约定：
@@ -1708,7 +1708,17 @@ P7 SSE stream actual result:
 - Backend SSE endpoint is available at `GET /api/v1/events/tasks`.
 - Replay uses MySQL `task_events.sequence` and emits sequence-derived `task_events.id`.
 - `Last-Event-ID`, `lastEventId`, heartbeat, visible project/task filtering, cross-tenant isolation, and disconnect cleanup are covered by tests.
-- The current live fanout is in-process only. `P7-BE-WORKER-QUEUE` must add Redis pub/sub or another cross-process wakeup after Worker persists task events.
+- Live fanout uses the API-process broker plus Redis wakeups from Worker/API processes. MySQL remains the source of truth for replay and authorization.
+
+P7 Worker queue actual result:
+
+- `P7-BE-WORKER-QUEUE` merged into `main` after review and fix.
+- Redis reliable queue supports enqueue, delayed promotion, claim, ack, stale claim recovery, max-delivery dead-letter handling, and malformed claim recovery tests.
+- Worker consumes task ID payloads only, reloads task state from MySQL, writes `TASK_STARTED`, `TASK_PROGRESS`, terminal events, and uses fake/stub execution until Provider Adapter runtime is implemented.
+- Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events without Redis becoming the event source of truth.
+- Global, tenant, user, Provider, and model concurrency limits are implemented with stale lock cleanup.
+- Non-blocking carry-forward risks: Worker currently runs a single processing loop and does not yet use `WORKER_CONCURRENCY` as a pool; API Redis event subscription uses a background context that should later be tied to server lifecycle.
+- Real Provider calls, MinIO output assets, `task_outputs`, `usage_records`, and `api_call_logs` remain pending for `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
 
 ## 子任务 17：P7 后端任务基础
 
@@ -1869,6 +1879,10 @@ git diff --check
 
 P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和并发限制
 
+### 状态
+
+Completed and merged into `main`. Review required one fix for orphaned Worker queue claims; the final implementation recovers stale processing entries, routes exceeded deliveries to dead-letter, publishes Redis wakeups after persisted task events, and keeps fake/stub execution until Provider Adapter runtime.
+
 ### 目标
 
 实现 Worker 对 Redis 队列的可靠消费和任务状态机执行骨架，使用 fake/stub Provider execution 验证 claim、幂等、取消、重试、超时、恢复和并发限制。真实 Provider 调用留给 `P7-BE-PROVIDER-ADAPTER-RUNTIME`。
@@ -1967,7 +1981,7 @@ P7-BE-PROVIDER-ADAPTER-RUNTIME - 真实 Provider 调用、SSRF-safe transport、
 ### 前置依赖
 
 - `P7-BE-WORKER-QUEUE` 已合并。
-- P7 SSRF-safe outbound transport 方案已由主 agent 或文档确认。
+- P7 SSRF-safe outbound transport 方案已由主 agent 或文档确认：real Provider runtime must validate Provider URL at save/use time and also validate the final dial target at connection time to defend against DNS rebinding.
 
 ### 具体开发内容
 

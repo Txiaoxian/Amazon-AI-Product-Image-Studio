@@ -56,7 +56,7 @@ P7 foundation requirement:
 
 - `P7-BE-TASK-FOUNDATION` has created the enqueue abstraction and writes task IDs to Redis after MySQL persistence.
 - Enqueue failure marks the task `FAILED` with sanitized `ENQUEUE_FAILED` metadata rather than returning success for an unqueued task.
-- Worker claim, visibility timeout, ack, retry, and dead-letter handling belong to `P7-BE-WORKER-QUEUE`.
+- `P7-BE-WORKER-QUEUE` has implemented reliable queue claim, visibility timeout, ack, delayed retry promotion, stale claim recovery, and dead-letter handling.
 
 ## Concurrency limits
 
@@ -85,6 +85,14 @@ P7 implementation boundary:
 
 - `P7-BE-WORKER-QUEUE` validates idempotency and status transitions with fake/stub execution.
 - `P7-BE-PROVIDER-ADAPTER-RUNTIME` adds real Provider calls, MinIO outputs, task_outputs, usage_records, and api_call_logs after the Worker state machine is stable.
+
+P7 Worker queue result:
+
+- Worker queue execution is merged and uses MySQL task state as the authority before every claim and transition.
+- Redis payloads contain task ID only; Worker reloads tenant, project, Provider, model, prompt, and task parameters from MySQL.
+- Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events.
+- Concurrency limits exist for global, tenant, user, Provider, and model dimensions, with stale lock cleanup.
+- Non-blocking carry-forward risks: Worker uses a single processing loop despite `WORKER_CONCURRENCY`; API Redis subscription lifecycle should later be tied to server shutdown.
 
 ## Cancellation
 
@@ -128,4 +136,4 @@ P7 SSE boundary:
 - `P7-BE-SSE-STREAM` consumes persisted `task_events` and live fanout only.
 - Replay must use `task_events.sequence` as the cursor and emit `task_events.id` as the SSE `id`.
 - MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.
-- The merged SSE implementation currently has an API-process in-process broker. Worker execution runs in a separate process, so `P7-BE-WORKER-QUEUE` must publish a Redis pub/sub or equivalent cross-process wakeup after persisting task events. The SSE API must still reload events from MySQL before sending them.
+- The merged SSE implementation uses an API-process in-process broker plus Redis cross-process wakeups. The SSE API must still reload events from MySQL before sending them.
