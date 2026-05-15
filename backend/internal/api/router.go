@@ -2,6 +2,7 @@ package api
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
@@ -12,6 +13,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/sse"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"github.com/gin-gonic/gin"
@@ -26,6 +28,8 @@ type RouterOptions struct {
 	ObjectStore  storage.ObjectStore
 	ProviderOpts []provider.Option
 	TaskEnqueuer queue.TaskEnqueuer
+	SSEBroker    *sse.Broker
+	SSEHeartbeat time.Duration
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -45,6 +49,12 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		}
 	}
 
+	eventBroker := options.SSEBroker
+	if eventBroker == nil {
+		eventBroker = sse.NewBroker(0)
+	}
+	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventBroker))
+
 	RegisterRoutes(
 		router,
 		auth.NewService(options.Database, options.Config, options.Logger),
@@ -52,22 +62,23 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore),
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
 		model.NewService(options.Database, options.Logger),
-		task.NewService(options.Database, options.Logger, taskEnqueuer(options)),
+		taskService,
+		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -93,6 +104,9 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	}
 	if taskService != nil {
 		taskService.RegisterRoutes(protected)
+	}
+	if sseService != nil {
+		sseService.RegisterRoutes(protected)
 	}
 }
 
