@@ -1674,8 +1674,8 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 执行顺序：
 
 1. `P7-BE-TASK-FOUNDATION` - completed and merged. It freezes task schema, status names, event writer, task API, Redis enqueue abstraction, and `task_events.sequence` replay cursor.
-2. `P7-BE-SSE-STREAM` - next task. It depends on the merged task event schema and must replay by `task_events.sequence`.
-3. `P7-BE-WORKER-QUEUE` - 依赖 task foundation，可与 SSE 作为最多两个子 agent 的有限并行开发，前提是写入范围保持隔离。
+2. `P7-BE-SSE-STREAM` - completed and merged. It depends on the merged task event schema and replays by `task_events.sequence`.
+3. `P7-BE-WORKER-QUEUE` - next task. It depends on task foundation and the merged SSE stream, and must bridge Worker-written events to live SSE clients with Redis pub/sub or an equivalent cross-process wakeup.
 4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - 依赖 Worker 状态机和 SSRF-safe outbound transport 决策。
 5. `P7-FE-TASK-CLIENT-SSE` - 依赖 task/SSE 合同稳定，只做 API/SSE client 与 reducer，不替换主工作台。
 6. `R7` - 主 agent 串行 review、集成回归、安全审查和公共合同校准。
@@ -1683,7 +1683,7 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 并行策略：
 
 - 第一项 `P7-BE-TASK-FOUNDATION` 已串行完成。
-- Foundation 合并后，最多 2 个子 agent 可并行：`P7-BE-SSE-STREAM` 与 `P7-BE-WORKER-QUEUE`。当前下一任务优先启动 `P7-BE-SSE-STREAM`，Worker 可在用户明确要求时作为第二个并行 worktree 启动。
+- SSE stream 合并后，下一任务串行启动 `P7-BE-WORKER-QUEUE`。不要与 Provider Adapter runtime 并行，避免真实外部调用建立在不稳定 Worker 状态机上。
 - Provider Adapter runtime 不与 Worker foundation 并行，避免真实外部调用压在不稳定状态机上。
 - 前端 task client 只在后端合同稳定后启动，不提前替换 P8 工作台。
 
@@ -1701,6 +1701,14 @@ P7 foundation actual result:
 - `task_events.sequence` is the stable monotonic replay cursor; `task_events.id` is derived from sequence and emitted as SSE `id`.
 - Redis enqueue payload contains task ID only. Enqueue failure transitions the task to `FAILED` with sanitized `ENQUEUE_FAILED` metadata.
 - Real Provider calls, Worker execution, output asset creation, and SSE long connection are still pending.
+
+P7 SSE stream actual result:
+
+- `P7-BE-SSE-STREAM` merged into `main` after review.
+- Backend SSE endpoint is available at `GET /api/v1/events/tasks`.
+- Replay uses MySQL `task_events.sequence` and emits sequence-derived `task_events.id`.
+- `Last-Event-ID`, `lastEventId`, heartbeat, visible project/task filtering, cross-tenant isolation, and disconnect cleanup are covered by tests.
+- The current live fanout is in-process only. `P7-BE-WORKER-QUEUE` must add Redis pub/sub or another cross-process wakeup after Worker persists task events.
 
 ## 子任务 17：P7 后端任务基础
 
@@ -1793,6 +1801,10 @@ P7-BE-SSE-STREAM - 任务事件 SSE、heartbeat、Last-Event-ID 和历史补发
 
 实现后端任务事件 SSE 流，支持 heartbeat、断线重连、`Last-Event-ID`、`lastEventId` query fallback、MySQL 历史补发和 tenant/project/task 权限过滤。
 
+### 状态
+
+Completed and merged into `main`. The implementation uses MySQL replay as source of truth and an in-process broker as an API-process live wakeup. Cross-process Worker-to-SSE wakeup remains a required `P7-BE-WORKER-QUEUE` item.
+
 ### 允许修改文件
 
 - `backend/internal/sse/**`
@@ -1883,6 +1895,7 @@ P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和
 ### 前置依赖
 
 - `P7-BE-TASK-FOUNDATION` 已合并。
+- `P7-BE-SSE-STREAM` 已合并；Worker must integrate with the established task event writer and live wakeup contract.
 
 ### 具体开发内容
 
@@ -1890,6 +1903,7 @@ P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和
 - Worker 从队列加载 task ID，再从 MySQL 加载完整任务状态。
 - 实现事务性 `QUEUED/RETRYING -> RUNNING` claim 和 `TASK_STARTED` event。
 - 实现 fake/stub execution 完成路径，写 `TASK_PROGRESS`、`TASK_COMPLETED` 或失败事件。
+- Worker 写入 task event 后必须发布 Redis pub/sub 或等价跨进程 wakeup，使 API 进程内 SSE stream 能及时 replay MySQL 新事件；Redis 不能成为事件状态源。
 - 实现取消、重试、超时和 recovery loop。
 - 实现 global、tenant、user、Provider、model concurrency limiter，确保 crash recovery 能释放 stale locks。
 - 保证重复领取不会重复创建 task output、usage 或 terminal events。
@@ -1898,6 +1912,7 @@ P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和
 
 - Worker 不信任 Redis payload 中除 task ID 以外的信息。
 - Worker 每次执行都从 MySQL 重读 task、tenant、Provider、model 和 project 状态。
+- Worker event fanout 只能传递事件 ID/sequence 或最小唤醒信号；不得传递 API Key、Authorization、Cookie、图片 base64 或原始 Provider 响应。
 - 日志不得包含 prompt 以外敏感数据；不得记录 API Key、Authorization、Cookie、图片 base64。
 
 ### 验收标准
@@ -1905,6 +1920,7 @@ P7-BE-WORKER-QUEUE - Redis reliable queue、Worker claim、状态机、幂等和
 - 状态机测试覆盖 queued/running/succeeded/failed/cancelled/retrying/timed_out。
 - 重复领取和 worker crash/recovery 测试不产生重复输出或重复 terminal event。
 - 并发限制覆盖 global、tenant、user、Provider、model。
+- Worker 写入事件后，SSE stream 能通过跨进程 wakeup 从 MySQL replay 出 `TASK_STARTED`、`TASK_PROGRESS`、`TASK_COMPLETED` 或失败事件。
 - Worker 可独立 build 和 test。
 
 ### 测试命令

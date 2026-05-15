@@ -128,3 +128,4 @@ P7 SSE boundary:
 - `P7-BE-SSE-STREAM` consumes persisted `task_events` and live fanout only.
 - Replay must use `task_events.sequence` as the cursor and emit `task_events.id` as the SSE `id`.
 - MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.
+- The merged SSE implementation currently has an API-process in-process broker. Worker execution runs in a separate process, so `P7-BE-WORKER-QUEUE` must publish a Redis pub/sub or equivalent cross-process wakeup after persisting task events. The SSE API must still reload events from MySQL before sending them.

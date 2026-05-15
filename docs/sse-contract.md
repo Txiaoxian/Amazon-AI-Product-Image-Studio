@@ -16,7 +16,8 @@ Authentication uses the normal HttpOnly Cookie.
 
 P7 implementation scope:
 
-- `P7-BE-SSE-STREAM` implements this endpoint after `task_events` exists.
+- `P7-BE-SSE-STREAM` implements this endpoint after `task_events` exists. It is merged with MySQL replay and API-process in-process wakeups.
+- `P7-BE-WORKER-QUEUE` must add cross-process Worker-to-API wakeups, such as Redis pub/sub, after Worker persists task events.
 - `P7-FE-TASK-CLIENT-SSE` may update the frontend SSE client and event types, but it must not replace the main generation workbench flow. P8 owns workbench backendization.
 
 ## Browser rules
@@ -94,6 +95,8 @@ For task events:
 2. Publish or fan out to active SSE clients.
 
 MySQL is the replay source. Redis pub/sub may accelerate live delivery but cannot be the only event source.
+
+Worker processes must not send complete event payloads as the source of truth through Redis. They should publish an event ID/sequence or minimal wakeup message, and the API SSE service must load visible events from MySQL before writing frames.
 
 ## Authorization
 
