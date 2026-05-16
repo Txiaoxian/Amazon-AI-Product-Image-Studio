@@ -298,13 +298,22 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 	defer cancel()
 
 	result := p.executor.Execute(execCtx, snapshot)
+	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+		if err := p.timeoutTask(ctx, scope, running.ID); err != nil {
+			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
+		}
+		return ProcessResult{Action: claimActionAck}, nil
+	}
+	if errors.Is(execCtx.Err(), context.Canceled) {
+		return ProcessResult{Action: claimActionNone}, nil
+	}
 	for _, progress := range result.Progress {
 		if err := p.writeProgress(ctx, scope, running, progress); err != nil {
 			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
 		}
 	}
 
-	if result.TimedOut || errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+	if result.TimedOut {
 		if err := p.timeoutTask(ctx, scope, running.ID); err != nil {
 			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
 		}
