@@ -403,6 +403,65 @@ func TestWorkerProcessorHonorsCancellationBeforeCompletion(t *testing.T) {
 	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskCancelled})
 }
 
+func TestWorkerProcessorContextCanceledDoesNotCompleteTask(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-context-canceled", Status: StatusQueued})
+	var cancel context.CancelFunc
+	ctx, cancel := context.WithCancel(context.Background())
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			cancel()
+			return ExecutionResult{}
+		}),
+	})
+
+	result, err := processor.Process(ctx, queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionNone {
+		t.Fatalf("Process action = %v, want none", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status == StatusSucceeded {
+		t.Fatalf("task status = %q, must not succeed after context cancellation", record.Status)
+	}
+	if record.Status != StatusRunning {
+		t.Fatalf("task status = %q, want RUNNING for recovery/timeout", record.Status)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress})
+}
+
+func TestWorkerProcessorDeadlineExceededStillTimesOutTask(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{
+		ID:        "task-deadline-exceeded",
+		Status:    StatusQueued,
+		TimeoutAt: time.Now().UTC().Add(-time.Second),
+	})
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			<-ctx.Done()
+			return ExecutionResult{}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusTimedOut {
+		t.Fatalf("task status = %q, want TIMED_OUT", record.Status)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskTimedOut})
+}
+
 func TestWorkerProcessorConcurrencyLimitsAllDimensions(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)

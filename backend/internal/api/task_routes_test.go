@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	assetpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
@@ -94,6 +95,105 @@ func TestTaskRoutesCreateListDetailCancelRetryAndAudit(t *testing.T) {
 	assertTaskEventsHaveStableReplayCursor(t, db, taskID)
 	assertTaskOperationLogs(t, db, []string{"task.create", "task.cancel", "task.retry"})
 	assertNoTaskEventOrOperationLogSecrets(t, db)
+}
+
+func TestTaskRoutesAllowGeneratedAndEditedEditSourceAssetsOnlyForEditSource(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Edit Source Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "edit-source", provider.StatusEnabled, model.StatusEnabled, false, true, true, false, 1)
+	generatedAssetID := seedTaskAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, assetpkg.KindGenerated, "generated-edit-source")
+	editedAssetID := seedTaskAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, assetpkg.KindEdited, "edited-edit-source")
+
+	for _, tc := range []struct {
+		name    string
+		assetID string
+	}{
+		{name: "generated edit source", assetID: generatedAssetID},
+		{name: "edited edit source", assetID: editedAssetID},
+	} {
+		response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+			"type":              task.TypeImageEdit,
+			"prompt":            "Edit the selected asset",
+			"providerId":        providerID,
+			"modelId":           modelID,
+			"editSourceAssetId": tc.assetID,
+			"parameters":        map[string]any{"size": "1024x1024", "outputFormat": "png"},
+		}, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusCreated {
+			t.Fatalf("%s status = %d, want %d: %s", tc.name, response.Code, http.StatusCreated, response.Body.String())
+		}
+		data := decodeData(t, response)
+		inputAssetIDs := asStringSlice(t, data["inputAssetIds"])
+		if len(inputAssetIDs) != 1 || inputAssetIDs[0] != tc.assetID {
+			t.Fatalf("%s inputAssetIds = %#v, want [%s]", tc.name, inputAssetIDs, tc.assetID)
+		}
+	}
+	if len(enqueuer.taskIDs) != 2 {
+		t.Fatalf("successful edit source requests enqueued %d tasks, want 2", len(enqueuer.taskIDs))
+	}
+}
+
+func TestTaskRoutesRejectNonReferenceAssetsInReferenceAssetIDs(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Reference Kind Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "reference-kind", provider.StatusEnabled, model.StatusEnabled, true, true, true, false, 1)
+	generatedAssetID := seedTaskAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, assetpkg.KindGenerated, "generated-reference")
+	editedAssetID := seedTaskAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, assetpkg.KindEdited, "edited-reference")
+
+	for _, tc := range []struct {
+		name    string
+		assetID string
+	}{
+		{name: "generated reference", assetID: generatedAssetID},
+		{name: "edited reference", assetID: editedAssetID},
+	} {
+		response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+			"type":              task.TypeImageGeneration,
+			"prompt":            "Generate with invalid reference",
+			"providerId":        providerID,
+			"modelId":           modelID,
+			"referenceAssetIds": []string{tc.assetID},
+			"parameters":        map[string]any{"size": "1024x1024", "outputFormat": "png"},
+		}, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s status = %d, want %d: %s", tc.name, response.Code, http.StatusUnprocessableEntity, response.Body.String())
+		}
+	}
+	if len(enqueuer.taskIDs) != 0 {
+		t.Fatalf("rejected reference requests must not enqueue tasks: %#v", enqueuer.taskIDs)
+	}
+}
+
+func TestTaskRoutesRejectEditSourceAssetsOutsideCurrentProjectAndTenant(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Scoped Edit Source Project")
+	otherProjectID := createTaskTestProject(t, router, adminSession, "Other Edit Source Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "edit-source-scope", provider.StatusEnabled, model.StatusEnabled, false, true, true, false, 1)
+	crossProjectAssetID := seedTaskAsset(t, db, adminSession.tenantID, otherProjectID, adminSession.userID, assetpkg.KindGenerated, "cross-project-edit-source")
+	crossTenantAssetID := seedTaskCrossTenantAsset(t, db, assetpkg.KindGenerated, "cross-tenant-edit-source")
+
+	for _, tc := range []struct {
+		name    string
+		assetID string
+	}{
+		{name: "cross-project edit source", assetID: crossProjectAssetID},
+		{name: "cross-tenant edit source", assetID: crossTenantAssetID},
+	} {
+		response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+			"type":              task.TypeImageEdit,
+			"prompt":            "Edit an asset outside current scope",
+			"providerId":        providerID,
+			"modelId":           modelID,
+			"editSourceAssetId": tc.assetID,
+			"parameters":        map[string]any{"size": "1024x1024", "outputFormat": "png"},
+		}, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s status = %d, want %d: %s", tc.name, response.Code, http.StatusUnprocessableEntity, response.Body.String())
+		}
+	}
+	if len(enqueuer.taskIDs) != 0 {
+		t.Fatalf("rejected scoped edit source requests must not enqueue tasks: %#v", enqueuer.taskIDs)
+	}
 }
 
 func TestTaskRoutesEnforceTenantAndProjectAuthorization(t *testing.T) {
@@ -351,6 +451,10 @@ func seedTaskProviderModel(t *testing.T, db *gorm.DB, tenantID string, suffix st
 }
 
 func seedTaskReferenceAsset(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string, suffix string) string {
+	return seedTaskAsset(t, db, tenantID, projectID, userID, assetpkg.KindReference, suffix)
+}
+
+func seedTaskAsset(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string, kind string, suffix string) string {
 	t.Helper()
 	now := time.Now().UTC()
 	assetID := "asset-" + suffix
@@ -358,7 +462,7 @@ func seedTaskReferenceAsset(t *testing.T, db *gorm.DB, tenantID string, projectI
 		ID:        assetID,
 		TenantID:  tenantID,
 		ProjectID: projectID,
-		Kind:      "REFERENCE",
+		Kind:      kind,
 		Category:  "MAIN",
 		Filename:  suffix + ".png",
 		ObjectKey: "tenant/project/" + suffix + ".png",
@@ -371,9 +475,27 @@ func seedTaskReferenceAsset(t *testing.T, db *gorm.DB, tenantID string, projectI
 		CreatedAt: now,
 		UpdatedAt: now,
 	}).Error; err != nil {
-		t.Fatalf("seed reference asset %s: %v", suffix, err)
+		t.Fatalf("seed %s asset %s: %v", kind, suffix, err)
 	}
 	return assetID
+}
+
+func seedTaskCrossTenantAsset(t *testing.T, db *gorm.DB, kind string, suffix string) string {
+	t.Helper()
+	now := time.Now().UTC()
+	tenantID := "tenant-asset-scope"
+	userID := "user-asset-scope"
+	projectID := "project-asset-scope"
+	if err := db.Create(&database.Tenant{ID: tenantID, Name: "Asset Scope Tenant", Status: auth.TenantStatusActive, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed asset scope tenant: %v", err)
+	}
+	if err := db.Create(&database.User{ID: userID, TenantID: tenantID, Email: "asset-scope@example.com", DisplayName: "Asset Scope", PasswordHash: "hash", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed asset scope user: %v", err)
+	}
+	if err := db.Create(&database.Project{ID: projectID, TenantID: tenantID, Name: "Asset Scope Project", Status: project.StatusActive, CreatedBy: userID, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed asset scope project: %v", err)
+	}
+	return seedTaskAsset(t, db, tenantID, projectID, userID, kind, suffix)
 }
 
 func seedOtherTenantTask(t *testing.T, db *gorm.DB) {
