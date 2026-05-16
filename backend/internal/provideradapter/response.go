@@ -116,8 +116,11 @@ func (c *Client) fetchImageURL(ctx context.Context, rawURL string) ([]byte, stri
 	return data, contentType, nil
 }
 
-func normalizeOpenAIUsage(raw map[string]any) Usage {
-	usage := Usage{Raw: SanitizeMetadata(raw)}
+func normalizeOpenAIUsage(raw map[string]any, redactor *Redactor) Usage {
+	if redactor == nil {
+		redactor = NewRedactor()
+	}
+	usage := Usage{Raw: redactor.SanitizeMetadata(raw)}
 	usage.InputTokens = int64FromAny(raw["input_tokens"])
 	if usage.InputTokens == 0 {
 		usage.InputTokens = int64FromAny(raw["prompt_tokens"])
@@ -130,7 +133,10 @@ func normalizeOpenAIUsage(raw map[string]any) Usage {
 	return usage
 }
 
-func parseGeminiResponse(data []byte) ([]Image, Usage, error) {
+func parseGeminiResponse(data []byte, redactor *Redactor) ([]Image, Usage, error) {
+	if redactor == nil {
+		redactor = NewRedactor()
+	}
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, Usage{}, err
@@ -182,7 +188,7 @@ func parseGeminiResponse(data []byte) ([]Image, Usage, error) {
 	usage := Usage{
 		InputTokens:  int64FromAny(usageMetadata["promptTokenCount"]),
 		OutputTokens: int64FromAny(usageMetadata["candidatesTokenCount"]),
-		Raw:          SanitizeMetadata(usageMetadata),
+		Raw:          redactor.SanitizeMetadata(usageMetadata),
 		ImageCount:   len(images),
 	}
 	return images, usage, nil

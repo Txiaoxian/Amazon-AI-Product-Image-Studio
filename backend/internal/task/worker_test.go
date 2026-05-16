@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -321,6 +323,112 @@ func TestWorkerProcessorFailureRecordsSanitizedAPICallWithoutAssets(t *testing.T
 	assertWorkerRuntimeMetadataSanitized(t, db)
 }
 
+func TestProviderRuntimeExecutorRedactsCurrentAPIKeyBeforeWorkerPersistsAPICall(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-runtime-redacts-current-key", Status: StatusQueued})
+	apiKey := "relay_live_1234567890abcdef"
+	httpStatus := 502
+	runtimeExecutor, err := NewProviderRuntimeExecutor(db, nil, ProviderRuntimeExecutorOptions{
+		Runtime: fakeProviderRuntime(func(_ context.Context, req provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+			if req.Provider.APIKey != apiKey {
+				t.Fatalf("runtime API key = %q, want decrypted key", req.Provider.APIKey)
+			}
+			return provideradapter.ImageResult{
+					APICall: provideradapter.APICall{
+						Status:       provideradapter.APICallStatusFailure,
+						DurationMs:   17,
+						HTTPStatus:   &httpStatus,
+						ErrorCode:    "provider_http_error",
+						ErrorMessage: "provider echoed " + apiKey,
+						RequestMetadata: map[string]any{
+							"message":       "request had " + apiKey,
+							"Authorization": "Bearer " + apiKey,
+						},
+						ResponseMetadata: map[string]any{
+							"nested": map[string]any{
+								"message": "response had " + apiKey,
+								"Cookie":  "session=" + apiKey,
+							},
+						},
+					},
+				}, provideradapter.ProviderError{
+					Code:       "PROVIDER_HTTP_ERROR",
+					Message:    "provider error included " + apiKey,
+					HTTPStatus: &httpStatus,
+				}
+		}),
+		Decrypter:    staticAPIKeyDecrypter(apiKey),
+		URLValidator: providerpkg.NewURLValidator(staticIPResolver{ip: net.ParseIP("8.8.8.8")}),
+	})
+	if err != nil {
+		t.Fatalf("create runtime executor: %v", err)
+	}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed {
+		t.Fatalf("task status = %q, want FAILED", record.Status)
+	}
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	assertNoWorkerPersistedText(t, db, apiKey)
+	for _, forbidden := range []string{"authorization", "cookie"} {
+		assertNoWorkerPersistedText(t, db, forbidden)
+	}
+}
+
+func TestExecutionResultFromProviderRedactsCurrentAPIKeyInOutputsAndUsage(t *testing.T) {
+	apiKey := "relay_live_abcdef1234567890"
+	httpStatus := 200
+
+	result := executionResultFromProvider(provideradapter.ImageResult{
+		Images: []provideradapter.Image{{
+			Data:     workerTinyPNG(t),
+			MIMEType: "image/png",
+			Metadata: map[string]any{
+				"message": "output included " + apiKey,
+			},
+		}},
+		Usage: provideradapter.Usage{
+			InputTokens: 1,
+			ImageCount:  1,
+			Raw: map[string]any{
+				"providerNote": "usage included " + apiKey,
+			},
+		},
+		APICall: provideradapter.APICall{
+			Status:       provideradapter.APICallStatusSuccess,
+			HTTPStatus:   &httpStatus,
+			ErrorMessage: "call included " + apiKey,
+			RequestMetadata: map[string]any{
+				"message": "request included " + apiKey,
+			},
+			ResponseMetadata: map[string]any{
+				"message": "response included " + apiKey,
+			},
+		},
+	}, provideradapter.NewRedactor(apiKey))
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal execution result: %v", err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, apiKey) {
+		t.Fatalf("execution result leaked API key: %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("execution result did not contain redacted marker: %s", text)
+	}
+}
+
 func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
@@ -623,6 +731,29 @@ func (q *recordingReliableQueue) RecoverStale(context.Context, time.Time, int) (
 func (q *recordingReliableQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	q.promoted = true
 	return nil, nil
+}
+
+type fakeProviderRuntime func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error)
+
+func (f fakeProviderRuntime) Execute(ctx context.Context, request provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+	return f(ctx, request)
+}
+
+type staticAPIKeyDecrypter string
+
+func (d staticAPIKeyDecrypter) Decrypt(string) (string, error) {
+	return string(d), nil
+}
+
+type staticIPResolver struct {
+	ip net.IP
+}
+
+func (r staticIPResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	if r.ip == nil {
+		return nil, errors.New("missing static test IP")
+	}
+	return []net.IPAddr{{IP: r.ip}}, nil
 }
 
 type memoryObjectStore struct {
@@ -1060,6 +1191,39 @@ func assertWorkerRuntimeMetadataSanitized(t *testing.T, db *gorm.DB) {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("runtime metadata leaked %q: %s", forbidden, combined)
 		}
+	}
+}
+
+func assertNoWorkerPersistedText(t *testing.T, db *gorm.DB, value string) {
+	t.Helper()
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return
+	}
+	var apiLogs []database.APICallLog
+	if err := db.Find(&apiLogs).Error; err != nil {
+		t.Fatalf("load api logs: %v", err)
+	}
+	var taskEvents []database.TaskEvent
+	if err := db.Find(&taskEvents).Error; err != nil {
+		t.Fatalf("load task events: %v", err)
+	}
+	var tasks []database.GenerationTask
+	if err := db.Find(&tasks).Error; err != nil {
+		t.Fatalf("load tasks: %v", err)
+	}
+	combined := ""
+	for _, record := range apiLogs {
+		combined += record.ErrorMessage + record.RedactedRequestJSON + record.RedactedResponseJSON
+	}
+	for _, event := range taskEvents {
+		combined += event.EventPayloadJSON
+	}
+	for _, taskRecord := range tasks {
+		combined += taskRecord.ErrorMessage
+	}
+	if strings.Contains(strings.ToLower(combined), value) {
+		t.Fatalf("persisted worker data leaked %q: %s", value, combined)
 	}
 }
 

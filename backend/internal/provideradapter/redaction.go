@@ -8,8 +8,37 @@ import (
 )
 
 const redactedValue = "[REDACTED]"
+const minSecretRunes = 8
+
+type Redactor struct {
+	secrets []string
+}
+
+func NewRedactor(secrets ...string) *Redactor {
+	seen := map[string]struct{}{}
+	redactor := &Redactor{}
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if utf8.RuneCountInString(secret) < minSecretRunes {
+			continue
+		}
+		if _, ok := seen[secret]; ok {
+			continue
+		}
+		seen[secret] = struct{}{}
+		redactor.secrets = append(redactor.secrets, secret)
+	}
+	return redactor
+}
 
 func RedactValue(value any) any {
+	return NewRedactor().RedactValue(value)
+}
+
+func (r *Redactor) RedactValue(value any) any {
+	if r == nil {
+		r = NewRedactor()
+	}
 	switch typed := value.(type) {
 	case map[string]any:
 		clean := make(map[string]any, len(typed))
@@ -17,33 +46,41 @@ func RedactValue(value any) any {
 			if sensitiveKey(key) {
 				continue
 			}
-			clean[key] = RedactValue(item)
+			clean[key] = r.RedactValue(item)
 		}
 		return clean
 	case []any:
 		clean := make([]any, 0, len(typed))
 		for _, item := range typed {
-			clean = append(clean, RedactValue(item))
+			clean = append(clean, r.RedactValue(item))
 		}
 		return clean
 	case []string:
 		clean := make([]any, 0, len(typed))
 		for _, item := range typed {
-			clean = append(clean, RedactValue(item))
+			clean = append(clean, r.RedactValue(item))
 		}
 		return clean
 	case string:
-		return RedactString(typed)
+		return r.RedactString(typed)
 	default:
 		return value
 	}
 }
 
 func RedactString(value string) string {
+	return NewRedactor().RedactString(value)
+}
+
+func (r *Redactor) RedactString(value string) string {
+	if r == nil {
+		r = NewRedactor()
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
+	value = r.redactKnownSecrets(value)
 	lower := strings.ToLower(value)
 	if looksSensitiveString(lower) {
 		return redactedValue
@@ -55,10 +92,18 @@ func RedactString(value string) string {
 }
 
 func SanitizeErrorMessage(value string) string {
+	return NewRedactor().SanitizeErrorMessage(value)
+}
+
+func (r *Redactor) SanitizeErrorMessage(value string) string {
+	if r == nil {
+		r = NewRedactor()
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "Provider request failed."
 	}
+	value = r.redactKnownSecrets(value)
 	if looksSensitiveString(strings.ToLower(value)) {
 		return "Provider error message redacted."
 	}
@@ -69,10 +114,17 @@ func SanitizeErrorMessage(value string) string {
 }
 
 func SanitizeMetadata(value map[string]any) map[string]any {
+	return NewRedactor().SanitizeMetadata(value)
+}
+
+func (r *Redactor) SanitizeMetadata(value map[string]any) map[string]any {
 	if value == nil {
 		return map[string]any{}
 	}
-	redacted, ok := RedactValue(value).(map[string]any)
+	if r == nil {
+		r = NewRedactor()
+	}
+	redacted, ok := r.RedactValue(value).(map[string]any)
 	if !ok || redacted == nil {
 		return map[string]any{}
 	}
@@ -80,14 +132,43 @@ func SanitizeMetadata(value map[string]any) map[string]any {
 }
 
 func JSONString(value map[string]any) string {
+	return NewRedactor().JSONString(value)
+}
+
+func (r *Redactor) JSONString(value map[string]any) string {
 	if value == nil {
 		value = map[string]any{}
 	}
-	encoded, err := json.Marshal(SanitizeMetadata(value))
+	if r == nil {
+		r = NewRedactor()
+	}
+	encoded, err := json.Marshal(r.SanitizeMetadata(value))
 	if err != nil {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+func (r *Redactor) SanitizeAPICall(call APICall) APICall {
+	if r == nil {
+		r = NewRedactor()
+	}
+	if strings.TrimSpace(call.ErrorMessage) != "" {
+		call.ErrorMessage = r.SanitizeErrorMessage(call.ErrorMessage)
+	}
+	call.RequestMetadata = r.SanitizeMetadata(call.RequestMetadata)
+	call.ResponseMetadata = r.SanitizeMetadata(call.ResponseMetadata)
+	return call
+}
+
+func (r *Redactor) redactKnownSecrets(value string) string {
+	if r == nil {
+		return value
+	}
+	for _, secret := range r.secrets {
+		value = strings.ReplaceAll(value, secret, redactedValue)
+	}
+	return value
 }
 
 func ErrorCode(value string, fallback string) string {
@@ -172,19 +253,22 @@ func statusCodePointer(status int) *int {
 	return &copied
 }
 
-func providerHTTPError(status int, body []byte) ProviderError {
+func providerHTTPError(status int, body []byte, redactor *Redactor) ProviderError {
+	if redactor == nil {
+		redactor = NewRedactor()
+	}
 	message := fmt.Sprintf("Provider returned HTTP %d.", status)
 	if len(body) > 0 {
 		var parsed map[string]any
 		if err := json.Unmarshal(body, &parsed); err == nil {
 			if errorValue, ok := parsed["error"]; ok {
-				message = fmt.Sprint(RedactValue(errorValue))
+				message = fmt.Sprint(redactor.RedactValue(errorValue))
 			} else if messageValue, ok := parsed["message"]; ok {
-				message = fmt.Sprint(RedactValue(messageValue))
+				message = fmt.Sprint(redactor.RedactValue(messageValue))
 			}
 		}
 	}
-	message = SanitizeErrorMessage(message)
+	message = redactor.SanitizeErrorMessage(message)
 	return ProviderError{
 		Code:       "PROVIDER_HTTP_ERROR",
 		Message:    message,

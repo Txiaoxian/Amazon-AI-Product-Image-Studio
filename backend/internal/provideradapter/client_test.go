@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -152,6 +153,102 @@ func TestProviderErrorIsSanitized(t *testing.T) {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("sanitized error leaked %q: %#v", forbidden, result.APICall)
 		}
+	}
+}
+
+func TestGeminiHTTPErrorRedactsCurrentAPIKeyValue(t *testing.T) {
+	apiKey := "AIzaSyDUMMYVALUE1234567890"
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"error":{"message":"provider echoed ` + apiKey + `"}}`
+		return jsonResponse(http.StatusForbidden, body, ""), nil
+	})
+	client := NewClient(ClientOptions{HTTPClient: &http.Client{Transport: transport}})
+
+	result, err := client.Execute(context.Background(), ImageRequest{
+		Operation: OperationGenerate,
+		Prompt:    "prompt",
+		Provider:  ProviderConfig{Type: provider.TypeGemini, BaseURL: "https://generativelanguage.googleapis.com/v1beta", APIKey: apiKey},
+		Model:     ModelConfig{ModelName: "gemini-image"},
+	})
+	if err == nil {
+		t.Fatal("Execute succeeded, want provider error")
+	}
+	combined := result.APICall.ErrorMessage + " " + err.Error()
+	if strings.Contains(combined, apiKey) {
+		t.Fatalf("Gemini provider error leaked API key: %q", combined)
+	}
+	if !strings.Contains(combined, redactedValue) {
+		t.Fatalf("Gemini provider error did not contain redacted marker: %q", combined)
+	}
+}
+
+func TestOpenAIHTTPErrorRedactsCurrentAPIKeyValue(t *testing.T) {
+	apiKey := "openai_live_1234567890abcdef"
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"error":{"message":"provider echoed ` + apiKey + `"}}`
+		return jsonResponse(http.StatusUnauthorized, body, ""), nil
+	})
+	client := NewClient(ClientOptions{HTTPClient: &http.Client{Transport: transport}})
+
+	result, err := client.Execute(context.Background(), ImageRequest{
+		Operation: OperationGenerate,
+		Prompt:    "prompt",
+		Provider:  ProviderConfig{Type: provider.TypeOpenAI, BaseURL: "https://api.openai.com/v1", APIKey: apiKey},
+		Model:     ModelConfig{ModelName: "gpt-image-1"},
+	})
+	if err == nil {
+		t.Fatal("Execute succeeded, want provider error")
+	}
+	combined := result.APICall.ErrorMessage + " " + err.Error()
+	if strings.Contains(combined, apiKey) {
+		t.Fatalf("OpenAI provider error leaked API key: %q", combined)
+	}
+	if !strings.Contains(combined, redactedValue) {
+		t.Fatalf("OpenAI provider error did not contain redacted marker: %q", combined)
+	}
+}
+
+func TestOpenAICompatibleErrorsRedactCurrentAPIKeyValue(t *testing.T) {
+	apiKey := "relay_live_1234567890abcdef"
+	tests := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{
+			name: "transport error",
+			transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("relay rejected API key " + apiKey)
+			}),
+		},
+		{
+			name: "http error body",
+			transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				body := `{"error":{"message":"relay rejected ` + apiKey + `"}}`
+				return jsonResponse(http.StatusBadGateway, body, ""), nil
+			}),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(ClientOptions{HTTPClient: &http.Client{Transport: tc.transport}})
+			result, err := client.Execute(context.Background(), ImageRequest{
+				Operation: OperationGenerate,
+				Prompt:    "prompt",
+				Provider:  ProviderConfig{Type: provider.TypeOpenAICompatible, BaseURL: "https://relay.example.com/v1", APIKey: apiKey},
+				Model:     ModelConfig{ModelName: "custom-image"},
+			})
+			if err == nil {
+				t.Fatal("Execute succeeded, want provider error")
+			}
+			combined := result.APICall.ErrorMessage + " " + err.Error()
+			if strings.Contains(combined, apiKey) {
+				t.Fatalf("compatible provider error leaked API key: %q", combined)
+			}
+			if !strings.Contains(combined, redactedValue) {
+				t.Fatalf("compatible provider error did not contain redacted marker: %q", combined)
+			}
+		})
 	}
 }
 

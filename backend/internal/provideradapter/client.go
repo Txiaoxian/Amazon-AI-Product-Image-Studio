@@ -68,11 +68,11 @@ func (c *Client) Execute(ctx context.Context, req ImageRequest) (ImageResult, er
 
 	switch req.Provider.Type {
 	case provider.TypeOpenAI:
-		return c.executeOpenAI(ctx, req, false)
+		return c.executeOpenAI(ctx, req, false, NewRedactor(req.Provider.APIKey))
 	case provider.TypeOpenAICompatible:
-		return c.executeOpenAI(ctx, req, true)
+		return c.executeOpenAI(ctx, req, true, NewRedactor(req.Provider.APIKey))
 	case provider.TypeGemini:
-		return c.executeGemini(ctx, req)
+		return c.executeGemini(ctx, req, NewRedactor(req.Provider.APIKey))
 	default:
 		result := ImageResult{APICall: baseAPICall(req)}
 		result.APICall.Status = APICallStatusFailure
@@ -82,7 +82,7 @@ func (c *Client) Execute(ctx context.Context, req ImageRequest) (ImageResult, er
 	}
 }
 
-func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible bool) (ImageResult, error) {
+func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible bool, redactor *Redactor) (ImageResult, error) {
 	if err := validateRequest(req); err != nil {
 		result := ImageResult{APICall: baseAPICall(req)}
 		result.APICall.Status = APICallStatusFailure
@@ -156,7 +156,8 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 	if err != nil {
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_TRANSPORT_ERROR"
-		call.ErrorMessage = SanitizeErrorMessage(err.Error())
+		call.ErrorMessage = redactor.SanitizeErrorMessage(err.Error())
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, Retryable: true}
 	}
 	defer response.Body.Close()
@@ -168,13 +169,15 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_RESPONSE_TOO_LARGE"
 		call.ErrorMessage = "Provider response could not be read safely."
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: true}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		providerErr := providerHTTPError(response.StatusCode, data)
+		providerErr := providerHTTPError(response.StatusCode, data, redactor)
 		call.Status = APICallStatusFailure
 		call.ErrorCode = providerErr.Code
 		call.ErrorMessage = providerErr.Message
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, providerErr
 	}
 
@@ -183,16 +186,18 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_RESPONSE_INVALID"
 		call.ErrorMessage = "Provider response could not be normalized."
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus}
 	}
 	images, err := c.normalizeOpenAIImages(ctx, parsed)
 	if err != nil {
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_IMAGE_FETCH_FAILED"
-		call.ErrorMessage = SanitizeErrorMessage(err.Error())
+		call.ErrorMessage = redactor.SanitizeErrorMessage(err.Error())
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: true}
 	}
-	usage := normalizeOpenAIUsage(parsed.Usage)
+	usage := normalizeOpenAIUsage(parsed.Usage, redactor)
 	if usage.ImageCount == 0 {
 		usage.ImageCount = len(images)
 	}
@@ -201,10 +206,11 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 		"outputCount": len(images),
 		"usage":       usage.Raw,
 	}
+	call = redactor.SanitizeAPICall(call)
 	return ImageResult{Images: images, Usage: usage, APICall: call}, nil
 }
 
-func (c *Client) executeGemini(ctx context.Context, req ImageRequest) (ImageResult, error) {
+func (c *Client) executeGemini(ctx context.Context, req ImageRequest, redactor *Redactor) (ImageResult, error) {
 	if err := validateRequest(req); err != nil {
 		result := ImageResult{APICall: baseAPICall(req)}
 		result.APICall.Status = APICallStatusFailure
@@ -243,7 +249,8 @@ func (c *Client) executeGemini(ctx context.Context, req ImageRequest) (ImageResu
 	if err != nil {
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_TRANSPORT_ERROR"
-		call.ErrorMessage = SanitizeErrorMessage(err.Error())
+		call.ErrorMessage = redactor.SanitizeErrorMessage(err.Error())
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, Retryable: true}
 	}
 	defer response.Body.Close()
@@ -255,21 +262,24 @@ func (c *Client) executeGemini(ctx context.Context, req ImageRequest) (ImageResu
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_RESPONSE_TOO_LARGE"
 		call.ErrorMessage = "Provider response could not be read safely."
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: true}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		providerErr := providerHTTPError(response.StatusCode, data)
+		providerErr := providerHTTPError(response.StatusCode, data, redactor)
 		call.Status = APICallStatusFailure
 		call.ErrorCode = providerErr.Code
 		call.ErrorMessage = providerErr.Message
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, providerErr
 	}
 
-	images, usage, err := parseGeminiResponse(data)
+	images, usage, err := parseGeminiResponse(data, redactor)
 	if err != nil {
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_RESPONSE_INVALID"
 		call.ErrorMessage = "Provider response could not be normalized."
+		call = redactor.SanitizeAPICall(call)
 		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus}
 	}
 	if usage.ImageCount == 0 {
@@ -280,6 +290,7 @@ func (c *Client) executeGemini(ctx context.Context, req ImageRequest) (ImageResu
 		"outputCount": len(images),
 		"usage":       usage.Raw,
 	}
+	call = redactor.SanitizeAPICall(call)
 	return ImageResult{Images: images, Usage: usage, APICall: call}, nil
 }
 

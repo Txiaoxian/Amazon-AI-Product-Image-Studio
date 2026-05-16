@@ -93,6 +93,7 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 	if err != nil {
 		return ExecutionResult{ErrorCode: "PROVIDER_CREDENTIAL_UNAVAILABLE", ErrorMessage: "Provider credentials are unavailable."}
 	}
+	redactor := provideradapter.NewRedactor(apiKey)
 	parameters, err := taskParameters(execution.Task)
 	if err != nil {
 		return ExecutionResult{ErrorCode: "TASK_PARAMETERS_INVALID", ErrorMessage: "Task parameters are invalid."}
@@ -118,12 +119,12 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 		Parameters:  parameters,
 		InputImages: inputImages,
 	})
-	executionResult := executionResultFromProvider(result)
+	executionResult := executionResultFromProvider(result, redactor)
 	if err != nil {
 		var providerErr provideradapter.ProviderError
 		if errors.As(err, &providerErr) {
 			executionResult.ErrorCode = provideradapter.ErrorCode(providerErr.Code, "PROVIDER_CALL_FAILED")
-			executionResult.ErrorMessage = provideradapter.SanitizeErrorMessage(providerErr.Message)
+			executionResult.ErrorMessage = redactor.SanitizeErrorMessage(providerErr.Message)
 			executionResult.Retryable = providerErr.Retryable
 		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			executionResult.TimedOut = true
@@ -131,7 +132,7 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 			executionResult.ErrorMessage = "Task execution timed out."
 		} else {
 			executionResult.ErrorCode = "PROVIDER_CALL_FAILED"
-			executionResult.ErrorMessage = provideradapter.SanitizeErrorMessage(err.Error())
+			executionResult.ErrorMessage = redactor.SanitizeErrorMessage(err.Error())
 			executionResult.Retryable = true
 		}
 	}
@@ -190,32 +191,36 @@ func (e *ProviderRuntimeExecutor) loadInputImages(ctx context.Context, taskRecor
 	return images, nil
 }
 
-func executionResultFromProvider(result provideradapter.ImageResult) ExecutionResult {
+func executionResultFromProvider(result provideradapter.ImageResult, redactor *provideradapter.Redactor) ExecutionResult {
+	if redactor == nil {
+		redactor = provideradapter.NewRedactor()
+	}
 	outputs := make([]GeneratedImageOutput, 0, len(result.Images))
 	for _, image := range result.Images {
 		outputs = append(outputs, GeneratedImageOutput{
 			Data:     image.Data,
 			MIMEType: image.MIMEType,
-			Metadata: provideradapter.SanitizeMetadata(image.Metadata),
+			Metadata: redactor.SanitizeMetadata(image.Metadata),
 		})
 	}
+	call := redactor.SanitizeAPICall(result.APICall)
 	return ExecutionResult{
 		Outputs: outputs,
 		Usage: UsageResult{
 			InputTokens:  result.Usage.InputTokens,
 			OutputTokens: result.Usage.OutputTokens,
 			ImageCount:   result.Usage.ImageCount,
-			Raw:          provideradapter.SanitizeMetadata(result.Usage.Raw),
+			Raw:          redactor.SanitizeMetadata(result.Usage.Raw),
 		},
 		APICall: APICallResult{
-			Status:           result.APICall.Status,
-			DurationMs:       result.APICall.DurationMs,
-			RequestID:        result.APICall.RequestID,
-			HTTPStatus:       result.APICall.HTTPStatus,
-			ErrorCode:        result.APICall.ErrorCode,
-			ErrorMessage:     result.APICall.ErrorMessage,
-			RequestMetadata:  provideradapter.SanitizeMetadata(result.APICall.RequestMetadata),
-			ResponseMetadata: provideradapter.SanitizeMetadata(result.APICall.ResponseMetadata),
+			Status:           call.Status,
+			DurationMs:       call.DurationMs,
+			RequestID:        call.RequestID,
+			HTTPStatus:       call.HTTPStatus,
+			ErrorCode:        call.ErrorCode,
+			ErrorMessage:     call.ErrorMessage,
+			RequestMetadata:  call.RequestMetadata,
+			ResponseMetadata: call.ResponseMetadata,
 		},
 	}
 }
