@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	assetpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/gin-gonic/gin"
 )
@@ -116,7 +117,7 @@ func normalizeCreateRequest(request createRequest, model database.AIModel, asset
 	if err := validateModelCapability(taskType, model, inputAssetIDs); err != nil {
 		return CreateInput{}, err
 	}
-	if err := validateInputAssets(inputAssetIDs, assets); err != nil {
+	if err := validateInputAssets(taskType, request.ReferenceAssetIDs, request.EditSourceAssetID, assets); err != nil {
 		return CreateInput{}, err
 	}
 
@@ -177,7 +178,7 @@ func normalizeInputAssetIDs(taskType string, referenceAssetIDs []string, editSou
 	ids := make([]string, 0, len(referenceAssetIDs)+1)
 	if taskType == TypeImageEdit {
 		editSourceAssetID = strings.TrimSpace(editSourceAssetID)
-		if editSourceAssetID == "" {
+		if editSourceAssetID == "" || utf8.RuneCountInString(editSourceAssetID) > 128 {
 			return nil, ErrValidation
 		}
 		ids = append(ids, editSourceAssetID)
@@ -211,17 +212,38 @@ func validateModelCapability(taskType string, model database.AIModel, inputAsset
 	return nil
 }
 
-func validateInputAssets(inputAssetIDs []string, assets map[string]database.ImageAsset) error {
-	for _, assetID := range inputAssetIDs {
+func validateInputAssets(taskType string, referenceAssetIDs []string, editSourceAssetID string, assets map[string]database.ImageAsset) error {
+	for _, assetID := range referenceAssetIDs {
+		assetID = strings.TrimSpace(assetID)
 		record, ok := assets[assetID]
 		if !ok || record.ID == "" {
 			return ErrValidation
 		}
-		if record.Kind != "REFERENCE" {
+		if record.Kind != assetpkg.KindReference {
 			return ErrValidation
 		}
 	}
+	if taskType != TypeImageEdit {
+		return nil
+	}
+	editSourceAssetID = strings.TrimSpace(editSourceAssetID)
+	record, ok := assets[editSourceAssetID]
+	if !ok || record.ID == "" {
+		return ErrValidation
+	}
+	if !validEditSourceKind(record.Kind) {
+		return ErrValidation
+	}
 	return nil
+}
+
+func validEditSourceKind(kind string) bool {
+	switch kind {
+	case assetpkg.KindReference, assetpkg.KindGenerated, assetpkg.KindEdited:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeParameters(raw map[string]any, model database.AIModel) (map[string]any, string, error) {
