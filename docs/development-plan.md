@@ -264,8 +264,8 @@ P6 backend model result:
 
 P6 model non-blocking backlog:
 
-- Before P7 task execution decides model selection semantics, decide whether `(tenant_id, provider_id, model_name)` should be unique. The current migration indexes this tuple but does not enforce uniqueness.
-- Before P7/P8 depends on Provider/model lifecycle behavior, decide how models should behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness was not required for P7 runtime. A later management/data-integrity decision may still tighten it.
+- Before broader P8/P9 lifecycle UX depends on Provider/model deletion behavior, decide how models should behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
 
 P6 frontend requirements:
 
@@ -322,16 +322,16 @@ Actual R6 result:
 
 P6 residual risks and carry-forward items:
 
-- P7 real Provider Adapter execution must add SSRF-safe outbound transport or `DialContext` connect-time IP validation. Save/test URL validation alone is not enough against DNS rebinding.
-- P7 must decide whether `(tenant_id, provider_id, model_name)` uniqueness is required before task execution depends on model lookup semantics.
-- P7/P8 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- P7 real Provider Adapter execution added SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
+- R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the current runtime path; a later management/data-integrity decision may still tighten it.
+- P8/P9 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
 - Production startup hardening must reject default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
 - Legacy frontend generation still uses browser Provider adapters, localStorage Provider API keys, and IndexedDB history as migration baseline. These remain P8 removal targets, not acceptable platform behavior.
 - `ProviderModelAdminPanel` is large and should be split during later frontend maintenance, but this is not a security or merge blocker.
 
 ## P7: Task queue, worker, Provider Adapter, and SSE
 
-Status: in progress. `P7-BE-TASK-FOUNDATION`, `P7-BE-SSE-STREAM`, `P7-BE-WORKER-QUEUE`, and `P7-BE-PROVIDER-ADAPTER-RUNTIME` have been reviewed, merged into `main`, and verified. P7 must continue in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
+Status: completed. `P7-BE-TASK-FOUNDATION`, `P7-BE-SSE-STREAM`, `P7-BE-WORKER-QUEUE`, `P7-BE-PROVIDER-ADAPTER-RUNTIME`, `P7-FE-TASK-CLIENT-SSE`, and `R7` have been reviewed, merged into `main`, and verified. P7 intentionally stops before replacing the main frontend workbench flow; P8 owns that migration.
 
 P7 execution order:
 
@@ -339,14 +339,14 @@ P7 execution order:
 2. `P7-BE-SSE-STREAM`: completed and merged. Implemented SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay by `task_events.sequence`, tenant/project/task authorization filtering, in-process fanout wakeups, and tests.
 3. `P7-BE-WORKER-QUEUE`: completed and merged. Added Redis reliable queue, Worker claim loop, task state machine, idempotency, cancellation, retry, timeout, recovery, concurrency limits, Redis wakeups for cross-process SSE delivery, and fake/stub Provider execution.
 4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: completed and merged. Added real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
-5. `P7-FE-TASK-CLIENT-SSE`: next task. Add frontend task API wrappers, task/SSE types, SSE client integration tests, and task event reducer utilities. This must not replace the main workbench generation flow; P8 owns that migration.
-6. `R7`: main-agent review, integration regression, security review, and public contract cleanup before P8.
+5. `P7-FE-TASK-CLIENT-SSE`: completed and merged. Added frontend task API wrappers, task/SSE types, SSE client tests, and task event reducer utilities without replacing the main workbench generation flow.
+6. `R7`: completed. Main-agent review, integration regression, security review, and public contract cleanup passed before P8.
 
 P7 serial/parallel policy:
 
 - Start serially with `P7-BE-TASK-FOUNDATION`; do not parallelize until task schema, task event schema, status names, and API response contracts are merged.
-- `P7-BE-PROVIDER-ADAPTER-RUNTIME` has merged after review and security fixes. Start `P7-FE-TASK-CLIENT-SSE` from latest `main`; it is now safe to depend on stable task/SSE/runtime contracts.
-- `P7-FE-TASK-CLIENT-SSE` remains a contract-layer task only. It must not start P8 workbench replacement early.
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` merged after review and security fixes.
+- `P7-FE-TASK-CLIENT-SSE` merged as a contract-layer task only and did not start P8 workbench replacement early.
 
 P7 canonical status decision:
 
@@ -387,6 +387,30 @@ P7 Provider Adapter runtime result:
 - Successful execution uploads generated/edited images to MinIO, creates image assets and task outputs, records usage and API call logs, and emits `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal task events.
 - Provider errors and runtime metadata are recursively sanitized before persistence. Review fixes closed both “API Key appears as a value” and “API Key appears as a JSON map key” leakage paths for the currently decrypted Provider secret.
 - Residual runtime boundary: unknown secrets that are neither supplied to the redactor as known secrets nor matched by heuristics cannot be detected automatically. Current Provider API keys are passed as known secrets, so the active runtime path is covered.
+
+P7 frontend task client result:
+
+- `P7-FE-TASK-CLIENT-SSE` merged into `main` after review.
+- Frontend task API wrappers now cover create/list/detail/cancel/retry with the existing authenticated client and in-memory CSRF flow.
+- Frontend task/SSE types use canonical `SUCCEEDED` status, typed event payloads, EventSource with `lastEventId` fallback, heartbeat handling, and a pure task event reducer suitable for P8 integration.
+- The change did not replace the current workbench generation path, add task polling, add Provider direct calls, or add Provider key persistence.
+
+P7 R7 review result:
+
+- Full frontend validation passed: lint, type-check, 18 test files / 63 tests, and production build.
+- Full backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and API/worker builds.
+- Focused uncached integration tests passed for `internal/api`, `internal/task`, `internal/provider`, `internal/provideradapter`, and `internal/sse`.
+- Docker Compose config validation passed, and shared `dev-mysql8`, `dev-redis`, and `dev-minio` services were confirmed healthy/reachable for local verification.
+- Static scans found only the already-documented P8 migration leftovers: legacy browser Provider adapters and local settings persistence. P7 added no new direct Provider fetch, Provider key persistence, or polling path.
+
+P7 residual risks and carry-forward items:
+
+- P8 must remove or isolate the legacy browser Provider adapters, localStorage Provider API key persistence, and IndexedDB-backed local history from production generation paths.
+- Worker still runs a single processing loop instead of honoring `WORKER_CONCURRENCY` as a worker pool.
+- API Redis event subscription lifecycle still uses a background context and should later be tied to API server shutdown.
+- Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
+- Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
+- Provider soft-delete behavior for linked models remains unresolved and should be decided before broader P8/P9 lifecycle UX depends on it.
 
 ## P8: Frontend backendization
 

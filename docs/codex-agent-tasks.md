@@ -1410,7 +1410,7 @@ git diff --check
 - 允许合并，已合并。
 - 已实现 `ai_models` migration/model、tenant-scoped repository/service/routes、model CRUD、enable/disable、soft delete、capability validation、pricing metadata validation、Provider same-tenant checks、RBAC 和 operation logs。
 - 验证覆盖 tenant 隔离、RBAC、Provider 同租户约束、能力字段校验、启用/禁用状态、日志脱敏和模型响应不暴露 Provider 凭据。
-- 非阻塞遗留：P7 前需决定同一 Provider 下 `model_name` 是否唯一；P7/P8 前需决定 Provider soft delete 后关联模型是阻止删除、隐藏还是级联禁用。
+- 非阻塞遗留：R7 已确认当前任务执行按 `modelId` 工作，`model_name` 非唯一不阻塞现有 runtime；若后续需要更强管理约束，仍需决定同一 Provider 下是否强制唯一。Provider soft delete 后关联模型是阻止删除、隐藏还是级联禁用，仍需在 P8/P9 前确定。
 - 合并前验证通过：`cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`，`git diff --check`。
 
 ## 子任务 15：Provider/model 前端管理
@@ -1677,15 +1677,15 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 2. `P7-BE-SSE-STREAM` - completed and merged. It depends on the merged task event schema and replays by `task_events.sequence`.
 3. `P7-BE-WORKER-QUEUE` - completed and merged. It added reliable Redis queue consumption, Worker state handling, Redis wakeups, concurrency limits, and fake/stub execution.
 4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - completed and merged. It added real Provider execution, SSRF-safe outbound transport, MinIO outputs, usage, API call logs, and redacted Provider errors.
-5. `P7-FE-TASK-CLIENT-SSE` - next task. It now depends on stable task/SSE/runtime contracts and only adds API/SSE client types plus reducer utilities; it must not replace the main workbench.
-6. `R7` - 主 agent 串行 review、集成回归、安全审查和公共合同校准。
+5. `P7-FE-TASK-CLIENT-SSE` - completed and merged. It added API/SSE client types plus reducer utilities without replacing the main workbench.
+6. `R7` - completed. 主 agent 串行 review、集成回归、安全审查和公共合同校准已完成。
 
 并行策略：
 
 - 第一项 `P7-BE-TASK-FOUNDATION` 已串行完成。
 - `P7-BE-WORKER-QUEUE` 已串行完成并合并。
 - `P7-BE-PROVIDER-ADAPTER-RUNTIME` 已串行完成、修复安全问题并合并。
-- 下一任务串行启动 `P7-FE-TASK-CLIENT-SSE`。它只消费已稳定的 task/SSE/runtime 合同，不提前替换 P8 工作台。
+- `P7-FE-TASK-CLIENT-SSE` 已串行完成并合并，只消费稳定合同，没有提前替换 P8 工作台。
 
 P7 统一状态约定：
 
@@ -1700,7 +1700,7 @@ P7 foundation actual result:
 - `generation_tasks` and `task_events` are the MySQL source of truth.
 - `task_events.sequence` is the stable monotonic replay cursor; `task_events.id` is derived from sequence and emitted as SSE `id`.
 - Redis enqueue payload contains task ID only. Enqueue failure transitions the task to `FAILED` with sanitized `ENQUEUE_FAILED` metadata.
-- Real Provider calls, Worker execution, output asset creation, and SSE long connection are still pending.
+- Worker execution, SSE long connection, real Provider calls, and output asset creation are now implemented by later merged P7 tasks.
 
 P7 SSE stream actual result:
 
@@ -1728,6 +1728,13 @@ P7 Provider Adapter runtime actual result:
 - Worker runtime persists generated/edited MinIO objects, image assets, `task_outputs`, `usage_records`, `api_call_logs`, and output/usage/terminal task events.
 - Runtime logs and metadata use recursive redaction with the decrypted Provider API key as a known secret. Review fixes covered API-key leakage when the secret appeared as a value and when it appeared as a nested JSON map key.
 - Residual risk: secrets unknown to the redactor and not matched by heuristics cannot be recognized automatically. The active Provider runtime path passes the decrypted Provider API key into the redactor, so current configured Provider keys are covered.
+
+P7 frontend task client actual result:
+
+- `P7-FE-TASK-CLIENT-SSE` merged into `main` after review.
+- Frontend task API wrappers now cover create/list/detail/cancel/retry using the existing authenticated client and CSRF flow.
+- Frontend SSE types and reducer utilities use canonical `SUCCEEDED`, typed task event payloads, EventSource, heartbeat handling, and `lastEventId` fallback.
+- The task did not replace the main workbench, add frontend Provider direct calls, persist Provider keys, or introduce polling.
 
 ## 子任务 17：P7 后端任务基础
 
@@ -2044,7 +2051,7 @@ P7-FE-TASK-CLIENT-SSE - Task API wrappers、SSE client 类型和事件 reducer
 
 ### 状态
 
-Next task after merged Provider Adapter runtime. Start from latest `main`.
+Completed and merged into `main`. Review confirmed it stayed at the contract layer and did not start P8 workbench backendization early.
 
 ### 允许修改文件
 
@@ -2124,7 +2131,7 @@ R7 - P7 task/Worker/Provider/SSE review、集成和合同校准
 
 ### 前置依赖
 
-- `P7-BE-TASK-FOUNDATION`、`P7-BE-SSE-STREAM`、`P7-BE-WORKER-QUEUE`、`P7-BE-PROVIDER-ADAPTER-RUNTIME`、`P7-FE-TASK-CLIENT-SSE` 均已提交。
+- `P7-BE-TASK-FOUNDATION`、`P7-BE-SSE-STREAM`、`P7-BE-WORKER-QUEUE`、`P7-BE-PROVIDER-ADAPTER-RUNTIME`、`P7-FE-TASK-CLIENT-SSE` 均已合并。
 
 ### 具体开发内容
 
@@ -2165,6 +2172,25 @@ cd ..
 docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
+
+### R7 结果
+
+- P7 五个开发任务均已合并到 `main`，P7 可以结束并进入 P8。
+- 前端验证通过：`cd frontend && npm run lint && npm run type-check && npm run test && npm run build`，18 个 test files / 63 个 tests 全部通过。
+- 后端验证通过：`cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`。
+- 关键包不走缓存验证通过：`go test ./internal/api ./internal/task ./internal/provider ./internal/provideradapter ./internal/sse -count=1`。
+- Compose 验证通过：`docker compose -f deploy/docker-compose.yml config`。
+- 已确认共享本地 `dev-mysql8`、`dev-redis`、`dev-minio` 服务健康可达；未创建项目专属开发环境。
+- 静态扫描只命中既有 P8 迁移遗留：浏览器 Provider adapter 与本地设置存储。P7 未新增 Provider direct fetch、API Key persistence 或任务轮询路径。
+
+### R7 非阻塞遗留
+
+- P8 必须移除或隔离旧前端 Provider 直连、localStorage API Key 和 IndexedDB 本地历史主路径。
+- Worker 仍是单 processing loop，尚未把 `WORKER_CONCURRENCY` 实现为 worker pool。
+- API Redis event subscription 仍使用 background context，后续应绑定 server shutdown 生命周期。
+- 当前 runtime 对已知 Provider API Key 已覆盖 value/key 两类脱敏；未知且不命中启发式规则的 secret 仍无法自动识别。
+- 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
+- Provider soft delete 后的 linked-model 行为仍需在 P8/P9 前确定。
 
 ## 子任务 22：前端工作台后端化
 

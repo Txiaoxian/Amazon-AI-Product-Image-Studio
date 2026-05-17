@@ -18,7 +18,7 @@ P7 implementation scope:
 
 - `P7-BE-SSE-STREAM` implements this endpoint after `task_events` exists. It is merged with MySQL replay and API-process in-process wakeups.
 - `P7-BE-WORKER-QUEUE` has added Redis-based cross-process Worker-to-API wakeups after Worker persists task events. Redis carries only a minimal wakeup; MySQL remains the replay source.
-- `P7-FE-TASK-CLIENT-SSE` may update the frontend SSE client and event types, but it must not replace the main generation workbench flow. P8 owns workbench backendization.
+- `P7-FE-TASK-CLIENT-SSE` is merged with frontend SSE client types, `lastEventId` fallback handling, heartbeat handling, and reducer utilities. It does not replace the main generation workbench flow; P8 owns workbench backendization.
 
 ## Browser rules
 

@@ -204,7 +204,7 @@ Current P7 implementation status:
 - Backend implements task create/list/detail/cancel/retry APIs, MySQL task/event/output/log/usage schema, operation logs, and Redis enqueue abstraction.
 - Task event replay cursor is `task_events.sequence`; `task_events.id` is derived from that sequence and is safe to use as the SSE `id`.
 - Backend now implements SSE long connections, Worker execution, real Provider runtime execution, generated/edited output asset creation, usage records, and API call logs.
-- Frontend workbench backendization is still deferred to P8; P7 frontend work only adds task API/SSE client contracts.
+- Frontend now has task API wrappers and SSE client/reducer contract utilities. Workbench backendization is still deferred to P8.
 
 ## Provider APIs
 
@@ -279,8 +279,8 @@ Current P6 model backend implementation status:
 - Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
-- P7 must decide whether `(tenant_id, provider_id, model_name)` uniqueness is required before task execution depends on model lookup semantics.
-- P7/P8 must decide how linked models behave when their Provider is soft-deleted.
+- Current P7 task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the runtime path. A later admin/data-integrity decision may still tighten that invariant.
+- P8/P9 must decide how linked models behave when their Provider is soft-deleted.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 

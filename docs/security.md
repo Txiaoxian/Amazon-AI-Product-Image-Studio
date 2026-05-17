@@ -21,6 +21,7 @@ Resolved transition item:
 - P6 backend Provider/model management now stores Provider API keys encrypted at rest, returns only masked key metadata, validates Provider URLs for save/update/test, records redacted operation logs, and exposes tenant-scoped Provider/model APIs.
 - P6 frontend Provider/model management now submits Provider API keys only to backend APIs, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
 - P7 Provider runtime now uses connect-time SSRF-safe outbound transport before real Provider calls and recursively redacts runtime metadata before persistence. Review fixes explicitly covered API keys appearing as values and as nested JSON map keys.
+- P7 frontend task client work now uses EventSource/SSE contracts and did not introduce polling, new Provider direct calls, or new Provider API key persistence.
 
 P5 review hardening backlog:
 

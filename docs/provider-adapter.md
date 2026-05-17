@@ -56,7 +56,7 @@ Current P6 model capability result:
 - Model records are tenant-scoped, reference a Provider in the same tenant, and expose generation/edit capabilities, multi-reference support, `n` support, max output count, supported sizes, supported qualities, supported output formats, pricing metadata, and enabled/disabled state.
 - Capability and pricing JSON are validated before persistence.
 - P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
-- P7/P8 must decide whether same-Provider `model_name` uniqueness and Provider soft-delete linked-model behavior need stricter enforcement.
+- Current P7 runtime uses stable `modelId` references, so same-Provider `model_name` uniqueness was not required for execution. P8/P9 must still decide whether management should enforce stricter name uniqueness and how Provider soft-delete should affect linked models.
 
 Current P6 frontend management result:
 
