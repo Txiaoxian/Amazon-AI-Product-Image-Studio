@@ -25,7 +25,7 @@ import { IMAGE_MODELS } from './providers/registry'
 import type { GenerationRequest } from './providers/types'
 import type { AuthSession } from './types/auth'
 import type { Asset } from './types/platform'
-import type { WorkbenchReferenceInput } from './types/workbench'
+import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from './types/workbench'
 
 function App() {
   return (
@@ -75,10 +75,14 @@ interface StudioWorkbenchProps {
 
 function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: StudioWorkbenchProps) {
   const { settings, setSettings } = useSettings()
-  const generation = useGeneration(settings)
   const history = useHistory()
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
   const workbenchModels = useWorkbenchModels()
+  const generation = useGeneration(settings, {
+    csrfToken: session.csrfToken,
+    onModelInvalidated: workbenchModels.refreshModels,
+    projectId: projectAssets.selectedProjectId,
+  })
   const storageUsage = useStorageUsage()
   const [isSettingsOpen, setSettingsOpen] = useState(false)
   const [isAdminOpen, setAdminOpen] = useState(false)
@@ -87,6 +91,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [notice, setNotice] = useState('')
   const [draft, setDraft] = useState<ControlPanelDraft | null>(null)
   const [referenceToAdd, setReferenceToAdd] = useState<WorkbenchReferenceInput | null>(null)
+  const [workbenchMode, setWorkbenchMode] = useState<'backend' | 'legacy-history'>('backend')
 
   useEffect(() => {
     if (generation.error) {
@@ -114,18 +119,28 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canManageModels = hasPermission(session, 'model:manage')
   const canOpenAdmin = canManageProviders || canManageModels
 
-  const handleGenerate = async (request: GenerationRequest) => {
-    const results = await generation.generate(request)
+  const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
+    const task = await generation.generateTask(request, workbenchInput)
 
-    if (results) {
-      if (results.length < request.imageCount) {
-        setNotice(`请求生成 ${request.imageCount} 张，图片服务实际返回 ${results.length} 张；已将返回的图片保存到本地历史记录。`)
-      } else {
-        setNotice(`已生成 ${results.length} 张图片，并保存到本地历史记录。`)
-      }
-      await history.refresh()
-      await storageUsage.refresh()
+    if (task) {
+      setNotice('任务已创建，结果会通过实时事件流更新。')
     }
+  }
+
+  const handleGenerateLegacy = async (request: GenerationRequest) => {
+    const results = await generation.generateLegacy(request)
+
+    if (!results) {
+      return
+    }
+
+    if (results.length < request.imageCount) {
+      setNotice(`兼容模式请求生成 ${request.imageCount} 张，图片服务实际返回 ${results.length} 张；结果仍保存到旧本地历史。`)
+    } else {
+      setNotice(`兼容模式已生成 ${results.length} 张图片，并保存到旧本地历史。`)
+    }
+    await history.refresh()
+    await storageUsage.refresh()
   }
 
   const handleView = (item: HistoryWithImage) => {
@@ -133,9 +148,19 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     setDetailOpen(true)
   }
 
-  const handleDownloadCurrent = () => {
-    if (generation.current) {
+  const handleDownloadCurrent = async () => {
+    if (!generation.current) {
+      return
+    }
+
+    if (generation.current.kind === 'legacy') {
       downloadBlob(generation.current.result.blob)
+      return
+    }
+
+    const download = await generation.downloadCurrentBackendAsset()
+    if (download) {
+      downloadBlob(download.blob, download.filename)
     }
   }
 
@@ -171,7 +196,8 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       imageCount: 1,
       references: [reference],
     })
-    setNotice('已将历史图片加载为参考图，可调整提示词后再次生成。')
+    setWorkbenchMode('legacy-history')
+    setNotice('已进入旧本地历史兼容模式，可调整提示词后再次生成。')
   }
 
   const handleDelete = async (item: HistoryWithImage) => {
@@ -268,26 +294,69 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       onOpenSettings={() => setSettingsOpen(true)}
     >
       <div className="grid grid-cols-1 gap-3 sm:gap-4 xl:min-h-[calc(100dvh-112px)] xl:grid-cols-[360px_minmax(0,1fr)_380px]">
-        <ControlPanel
-          defaultModelId={settings.defaultModelId}
-          defaultResolution={settings.defaultResolution}
-          draft={draft}
-          isGenerating={generation.status === 'loading'}
-          onError={showNotice}
-          onGenerate={handleGenerate}
-          onReferenceAdded={() => setReferenceToAdd(null)}
-          referenceToAdd={referenceToAdd}
-        />
+        <div className="flex min-h-0 flex-col gap-3">
+          {workbenchMode === 'legacy-history' ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+              <div className="font-semibold">旧本地历史兼容模式</div>
+              <div className="mt-1 text-xs">当前再次编辑仍沿用旧本地数据源；默认新任务已切换到后端 task API。</div>
+              <button
+                className="mt-2 text-xs font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2"
+                onClick={() => {
+                  setWorkbenchMode('backend')
+                  setDraft(null)
+                }}
+                type="button"
+              >
+                返回后端工作台
+              </button>
+            </div>
+          ) : null}
+
+          {workbenchMode === 'backend' ? (
+            <ControlPanel
+              defaultModelId={settings.defaultModelId}
+              defaultResolution={settings.defaultResolution}
+              draft={draft}
+              isGenerating={generation.status === 'loading'}
+              modelStatus={workbenchModels.status}
+              models={workbenchModels.models}
+              onError={showNotice}
+              onGenerate={handleGenerateTask}
+              onReferenceAdded={() => setReferenceToAdd(null)}
+              onRefreshModels={() => void workbenchModels.refreshModels()}
+              referenceToAdd={referenceToAdd}
+              submissionMode="backend"
+            />
+          ) : (
+            <ControlPanel
+              defaultModelId={settings.defaultModelId}
+              defaultResolution={settings.defaultResolution}
+              draft={draft}
+              isGenerating={generation.status === 'loading'}
+              onError={showNotice}
+              onGenerate={handleGenerateLegacy}
+              onReferenceAdded={() => setReferenceToAdd(null)}
+              referenceToAdd={referenceToAdd}
+              submissionMode="legacy"
+            />
+          )}
+        </div>
 
         <ResultCanvas
+          canCancelTask={generation.canCancelCurrentTask}
+          canRetryTask={generation.canRetryCurrentTask}
           current={generation.current}
           currentItems={generation.currentItems}
           error={generation.error}
-          onDownload={handleDownloadCurrent}
+          onCancelTask={() => void generation.cancelCurrentTask()}
+          onDownload={() => void handleDownloadCurrent()}
           onOpenDetail={() => setDetailOpen(true)}
+          onRetryTask={() => void generation.retryCurrentTask()}
           onSelect={generation.selectCurrent}
+          pendingTaskAction={generation.pendingTaskAction}
           selectedIndex={generation.selectedIndex}
           status={generation.status}
+          taskStatus={generation.taskState?.status}
         />
 
         <div className="flex min-h-0 flex-col gap-3">
@@ -313,17 +382,20 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             selectedProjectId={projectAssets.selectedProjectId}
           />
 
-          <HistoryPanel
-            isLoading={history.isLoading}
-            items={history.items}
-            limitBytes={settings.storageLimitBytes}
-            onClear={handleClear}
-            onDelete={handleDelete}
-            onDownload={handleDownloadHistory}
-            onEdit={handleEdit}
-            onView={handleView}
-            usedBytes={storageUsage.usedBytes}
-          />
+          <div className="space-y-2">
+            <div className="px-1 text-xs font-semibold text-ink-500">旧本地历史（兼容）</div>
+            <HistoryPanel
+              isLoading={history.isLoading}
+              items={history.items}
+              limitBytes={settings.storageLimitBytes}
+              onClear={handleClear}
+              onDelete={handleDelete}
+              onDownload={handleDownloadHistory}
+              onEdit={handleEdit}
+              onView={handleView}
+              usedBytes={storageUsage.usedBytes}
+            />
+          </div>
         </div>
       </div>
 
@@ -345,10 +417,10 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       ) : null}
 
       <ImageDetailModal
-        current={generation.current}
+        current={generation.current?.kind === 'legacy' ? generation.current : null}
         isOpen={isDetailOpen}
         onClose={() => setDetailOpen(false)}
-        onDownload={handleDownloadCurrent}
+        onDownload={() => void handleDownloadCurrent()}
       />
 
       <AssetDetailModal

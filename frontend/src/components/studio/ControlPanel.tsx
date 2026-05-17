@@ -14,7 +14,7 @@ import {
 import { IMAGE_MODELS, getModelById } from '../../providers/registry'
 import type { AspectRatio, GenerationRequest, ImageCount, ImageResolution } from '../../providers/types'
 import type { Model } from '../../types/platform'
-import type { WorkbenchReferenceInput, WorkbenchTaskInput } from '../../types/workbench'
+import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from '../../types/workbench'
 import { Button } from '../ui/Button'
 import { ImageDropzone } from './ImageDropzone'
 import { PromptEditor } from './PromptEditor'
@@ -48,7 +48,7 @@ interface BackendControlPanelProps extends SharedControlPanelProps {
   submissionMode: 'backend'
   modelStatus: WorkbenchModelStatus
   models: Model[]
-  onGenerate: (request: GenerationRequest, workbenchInput: WorkbenchTaskInput) => Promise<void>
+  onGenerate: (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => Promise<void>
   onRefreshModels: () => void
 }
 
@@ -281,8 +281,6 @@ function LegacyControlPanel({
 }
 
 function BackendControlPanel({
-  defaultModelId,
-  defaultResolution,
   isGenerating,
   modelStatus,
   models,
@@ -302,7 +300,6 @@ function BackendControlPanel({
   const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
   const selectedModel = useMemo(() => models.find((model) => model.id === modelId) ?? null, [modelId, models])
   const isSelectedModelUnavailable = modelId.length > 0 && selectedModel === null
-  const legacyFallbackModel = getLegacyFallbackModel(modelId, defaultModelId)
 
   useEffect(() => {
     if (modelId || models.length === 0) {
@@ -408,12 +405,6 @@ function BackendControlPanel({
         void onGenerate(
           {
             prompt,
-            model: legacyFallbackModel,
-            quality: defaultResolution,
-            aspectRatio: '1:1',
-            imageCount,
-            references: getLegacyReferenceFiles(references),
-            referenceImageUrls: [],
           },
           workbenchInput,
         )
@@ -421,6 +412,7 @@ function BackendControlPanel({
     >
       {selectedModel?.supportsEdit ? (
         <ImageDropzone
+          allowUpload={false}
           disabled={isGenerating}
           maxReferences={selectedModel.supportsMultiReference ? undefined : 1}
           onChange={setReferences}
@@ -580,10 +572,6 @@ function PanelShell({ children, onSubmit }: PanelShellProps) {
       </form>
     </aside>
   )
-}
-
-function getLegacyFallbackModel(modelId: string, defaultModelId: string) {
-  return IMAGE_MODELS.find((model) => model.id === modelId) ?? getModelById(defaultModelId)
 }
 
 function getLegacyReferenceFiles(references: WorkbenchReferenceInput[]): File[] {

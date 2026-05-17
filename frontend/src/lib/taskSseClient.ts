@@ -232,6 +232,10 @@ export function reduceTaskEventState(state: TaskEventState, event: TaskSseEvent)
     return state
   }
 
+  if (state.projectId && event.data.projectId && event.data.projectId !== state.projectId) {
+    return state
+  }
+
   const nextState: TaskEventState = {
     ...state,
     attempt: event.data.attempt,
