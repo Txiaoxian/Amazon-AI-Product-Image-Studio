@@ -149,7 +149,7 @@ describe('project asset workbench', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('loads project assets and selects an asset reference without downloading a blob', async () => {
+  it('loads project assets and downloads the legacy payload when selecting an asset reference', async () => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
@@ -166,6 +166,14 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
         return successResponse(page([asset]))
       }
+      if (url === '/api/v1/assets/asset_1/download') {
+        return new Response(new Blob(['reference-bytes'], { type: 'image/png' }), {
+          headers: {
+            'Content-Disposition': 'attachment; filename="reference.png"',
+            'Content-Type': 'image/png',
+          },
+        })
+      }
 
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
@@ -180,7 +188,7 @@ describe('project asset workbench', () => {
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
 
     expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
-    expect(fetchImpl).not.toHaveBeenCalledWith(
+    expect(fetchImpl).toHaveBeenCalledWith(
       '/api/v1/assets/asset_1/download',
       expect.objectContaining({
         credentials: 'include',

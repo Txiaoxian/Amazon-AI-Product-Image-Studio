@@ -5,6 +5,7 @@ export interface AssetReferenceInput {
   assetId: AssetId
   filename: string
   previewUrl: string
+  legacyFile: File
 }
 
 export interface PendingReferenceInput {

@@ -255,15 +255,25 @@ export function useProjectAssets({
   )
 
   const createReferenceFromAsset = useCallback(
-    (asset: Asset): AssetReferenceInput => {
+    async (asset: Asset): Promise<AssetReferenceInput | null> => {
+      const download = await downloadAsset(asset)
+      if (!download) {
+        return null
+      }
+
+      const legacyFile = new File([download.blob], download.filename ?? asset.filename, {
+        type: download.blob.type || asset.mimeType,
+      })
+
       return {
         kind: 'asset',
         assetId: asset.id,
         filename: asset.filename,
-        previewUrl: asset.previewUrl ?? asset.thumbnailUrl ?? `/api/v1/assets/${encodeURIComponent(asset.id)}/download`,
+        previewUrl: URL.createObjectURL(legacyFile),
+        legacyFile,
       }
     },
-    [],
+    [downloadAsset],
   )
 
   return {

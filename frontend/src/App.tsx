@@ -25,7 +25,7 @@ import { IMAGE_MODELS } from './providers/registry'
 import type { GenerationRequest } from './providers/types'
 import type { AuthSession } from './types/auth'
 import type { Asset } from './types/platform'
-import type { WorkbenchReferenceInput, WorkbenchTaskInput } from './types/workbench'
+import type { WorkbenchReferenceInput } from './types/workbench'
 
 function App() {
   return (
@@ -114,8 +114,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canManageModels = hasPermission(session, 'model:manage')
   const canOpenAdmin = canManageProviders || canManageModels
 
-  const handleGenerate = async (request: GenerationRequest, workbenchInput: WorkbenchTaskInput) => {
-    void workbenchInput
+  const handleGenerate = async (request: GenerationRequest) => {
     const results = await generation.generate(request)
 
     if (results) {
@@ -223,8 +222,12 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleUseAssetAsReference = async (asset: Asset) => {
-    setReferenceToAdd(projectAssets.createReferenceFromAsset(asset))
-    setNotice('已将项目资产加入参考图。')
+    const reference = await projectAssets.createReferenceFromAsset(asset)
+
+    if (reference) {
+      setReferenceToAdd(reference)
+      setNotice('已将项目资产加入参考图。')
+    }
   }
 
   const handleDeleteAsset = async (asset: Asset) => {
@@ -270,11 +273,8 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           defaultResolution={settings.defaultResolution}
           draft={draft}
           isGenerating={generation.status === 'loading'}
-          modelStatus={workbenchModels.status}
-          models={workbenchModels.models}
           onError={showNotice}
           onGenerate={handleGenerate}
-          onRefreshModels={() => void workbenchModels.refreshModels()}
           onReferenceAdded={() => setReferenceToAdd(null)}
           referenceToAdd={referenceToAdd}
         />
