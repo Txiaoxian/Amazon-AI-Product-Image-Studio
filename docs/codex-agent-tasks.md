@@ -2198,7 +2198,7 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 
 ### P8 调度顺序
 
-1. `P8-FE-WORKBENCH-FOUNDATION` - 先切换模型与引用资产的来源。
+1. `P8-FE-WORKBENCH-FOUNDATION` - completed and merged. 先切换模型与引用资产的来源。
 2. `P8-FE-TASK-WORKBENCH` - 再切换提交、状态和结果输出。
 3. `P8-FE-HISTORY-ASSET-SOURCE` - 再切换历史与再次编辑来源。
 4. `P8-FE-LEGACY-RETIREMENT` - 最后退役旧直连和旧本地持久化生产路径。
@@ -2217,6 +2217,17 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 ### 任务名称
 
 P8-FE-WORKBENCH-FOUNDATION - 切换工作台模型能力和引用资产来源
+
+### 当前状态
+
+Completed and merged into `main`.
+
+Review result:
+
+- 已建立 backend capability 加载、backend-ready task input、asset ID reference state。
+- 首轮 review 发现默认工作台曾出现“新 UI / 旧请求脱节”、项目资产参考图静默失效、本地历史再次编辑死路；修复后再 review 通过。
+- 最终实现保留默认 legacy 提交路径，只把 backend mode 作为显式准备态，保证迁移中间态仍可用且语义一致。
+- 合并前验证通过：`npm run lint`、`npm run type-check`、`npm run test`、`npm run build`，18 个 test files / 67 个 tests 全部通过。
 
 ### 目标
 

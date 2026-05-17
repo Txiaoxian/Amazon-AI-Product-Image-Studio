@@ -21,8 +21,8 @@ Important transition facts:
 
 - The frontend still has legacy local Provider adapters, localStorage Provider settings for the old workbench, and IndexedDB image/history storage.
 - The backend currently has configuration, logging, router, health, response helpers, middleware, MySQL/GORM migrations, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, SSRF-validated Provider testing, task APIs, SSE replay, reliable Redis queueing, Worker state transitions, backend Provider Adapter runtime, MinIO output assets, usage records, and API call logs.
-- The frontend has an API client, task/SSE client contracts, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection, and admin Provider/model management UI.
-- The workbench still uses the legacy local generation flow even though backend replacements now exist. P8 must switch the production workbench path to backend models, task creation, SSE, backend assets, and backend task history.
+- The frontend has an API client, task/SSE client contracts, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection, admin Provider/model management UI, and a backend-ready workbench input foundation for model capabilities and asset IDs.
+- The workbench still uses the legacy local generation flow by default even though backend replacements and backend-ready input structures now exist. P8 must continue switching the production workbench path to backend task creation, SSE, backend assets, and backend task history without breaking the legacy path before replacement is complete.
 - Docker Compose has buildable runtime foundations from P3. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
 This transition state is allowed only as an incremental migration baseline. It is not the target architecture and must not be copied into new platform features.

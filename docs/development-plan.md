@@ -420,7 +420,7 @@ P7 residual risks and carry-forward items:
 
 ## P8: Frontend backendization
 
-Status: planned after completed R7. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
+Status: in progress after completed R7. `P8-FE-WORKBENCH-FOUNDATION` has been reviewed and merged. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
 
 P8 goals:
 
@@ -443,11 +443,17 @@ P8 workbench decisions:
 
 P8 execution order:
 
-1. `P8-FE-WORKBENCH-FOUNDATION`: switch model/reference selection state to backend models, backend capability fields, and project asset IDs without yet replacing the submit path.
+1. `P8-FE-WORKBENCH-FOUNDATION`: completed and merged. It added backend model capability loading, backend-ready workbench input types, and project asset ID reference state while keeping the default production submit path legacy-safe until the next task.
 2. `P8-FE-TASK-WORKBENCH`: replace `useGeneration` with task creation + SSE lifecycle and drive the result canvas from authorized backend output assets.
 3. `P8-FE-HISTORY-ASSET-SOURCE`: replace the local history panel/details/download/edit source with backend task history and generated/edited project assets.
 4. `P8-FE-LEGACY-RETIREMENT`: remove or isolate browser Provider adapters, Provider key settings, and IndexedDB image/history production paths after the backend flow is proven.
 5. `R8`: main-agent review, regression, migration verification, and public contract cleanup before P9.
+
+P8 current result:
+
+- Backend-ready workbench structures now exist for model capabilities, backend task input, and project asset references.
+- Review confirmed the production workbench still defaults to the legacy submit path so current generation, project asset references, and local-history re-editing remain truthful and functional during the migration.
+- The explicit backend workbench mode is a preparation layer only until `P8-FE-TASK-WORKBENCH` takes over task creation and SSE-driven execution.
 
 P8 serial policy:
 
