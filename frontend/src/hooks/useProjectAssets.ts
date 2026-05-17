@@ -3,8 +3,8 @@ import { assetApi as defaultAssetApi, type AssetApi } from '../api/assets'
 import { isApiClientError } from '../api/client'
 import { projectApi as defaultProjectApi, type CreateProjectRequest, type ProjectApi } from '../api/projects'
 import { validateImageFile } from '../lib/file'
-import type { ReferenceImageInput } from '../providers/types'
 import type { Asset, AssetId, Project, ProjectId } from '../types/platform'
+import type { AssetReferenceInput } from '../types/workbench'
 
 type RemoteStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -255,19 +255,22 @@ export function useProjectAssets({
   )
 
   const createReferenceFromAsset = useCallback(
-    async (asset: Asset): Promise<ReferenceImageInput | null> => {
+    async (asset: Asset): Promise<AssetReferenceInput | null> => {
       const download = await downloadAsset(asset)
       if (!download) {
         return null
       }
 
-      const file = new File([download.blob], download.filename ?? asset.filename, {
+      const legacyFile = new File([download.blob], download.filename ?? asset.filename, {
         type: download.blob.type || asset.mimeType,
       })
 
       return {
-        file,
-        previewUrl: URL.createObjectURL(file),
+        kind: 'asset',
+        assetId: asset.id,
+        filename: asset.filename,
+        previewUrl: URL.createObjectURL(legacyFile),
+        legacyFile,
       }
     },
     [downloadAsset],

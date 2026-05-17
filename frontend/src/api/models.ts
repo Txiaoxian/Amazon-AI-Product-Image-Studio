@@ -33,6 +33,7 @@ export type UpdateModelRequest = Partial<CreateModelRequest>
 
 export interface ModelApi {
   list(params?: ListModelsParams): Promise<ApiPage<Model>>
+  listEnabledCapabilities(capability?: ModelCapabilityFilter): Promise<Model[]>
   create(request: CreateModelRequest, csrfToken: string): Promise<Model>
   get(modelId: ModelId | string): Promise<Model>
   update(modelId: ModelId | string, request: UpdateModelRequest, csrfToken: string): Promise<Model>
@@ -44,6 +45,12 @@ export interface ModelApi {
 export function createModelApi(client: ApiClient = apiClient): ModelApi {
   return {
     list: (params = {}) => client.get<ApiPage<Model>>('/models', { query: modelListQuery(params) }),
+    listEnabledCapabilities: async (capability = 'generate') => {
+      const page = await client.get<ApiPage<Model>>('/models', {
+        query: modelListQuery({ enabled: true, capability, pageNum: 1, pageSize: 100 }),
+      })
+      return page.records
+    },
     create: (request, csrfToken) =>
       client.post<Model>('/models', request, {
         headers: csrfHeaders(csrfToken),

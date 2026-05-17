@@ -12,6 +12,7 @@ import { ProjectAssetsPanel } from './components/projects/ProjectAssetsPanel'
 import { SettingsModal } from './components/modals/SettingsModal'
 import { ControlPanel, type ControlPanelDraft } from './components/studio/ControlPanel'
 import { ResultCanvas } from './components/studio/ResultCanvas'
+import { useWorkbenchModels } from './components/studio/useWorkbenchModels'
 import { AuthProvider } from './hooks/AuthProvider'
 import { useAuth } from './hooks/useAuth'
 import { useGeneration } from './hooks/useGeneration'
@@ -21,9 +22,10 @@ import { useSettings } from './hooks/useSettings'
 import { useStorageUsage } from './hooks/useStorageUsage'
 import { downloadBlob } from './lib/download'
 import { IMAGE_MODELS } from './providers/registry'
-import type { GenerationRequest, ReferenceImageInput } from './providers/types'
+import type { GenerationRequest } from './providers/types'
 import type { AuthSession } from './types/auth'
 import type { Asset } from './types/platform'
+import type { WorkbenchReferenceInput } from './types/workbench'
 
 function App() {
   return (
@@ -76,6 +78,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const generation = useGeneration(settings)
   const history = useHistory()
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
+  const workbenchModels = useWorkbenchModels()
   const storageUsage = useStorageUsage()
   const [isSettingsOpen, setSettingsOpen] = useState(false)
   const [isAdminOpen, setAdminOpen] = useState(false)
@@ -83,7 +86,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [assetDetail, setAssetDetail] = useState<Asset | null>(null)
   const [notice, setNotice] = useState('')
   const [draft, setDraft] = useState<ControlPanelDraft | null>(null)
-  const [referenceToAdd, setReferenceToAdd] = useState<ReferenceImageInput | null>(null)
+  const [referenceToAdd, setReferenceToAdd] = useState<WorkbenchReferenceInput | null>(null)
 
   useEffect(() => {
     if (generation.error) {
@@ -96,6 +99,12 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       setNotice(projectAssets.error)
     }
   }, [projectAssets.error])
+
+  useEffect(() => {
+    if (workbenchModels.error) {
+      setNotice(workbenchModels.error)
+    }
+  }, [workbenchModels.error])
 
   const showNotice = (message: string) => {
     setNotice(message)
@@ -147,7 +156,8 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
     const model = IMAGE_MODELS.find((candidate) => candidate.provider === item.item.provider && candidate.model === item.item.model) ?? IMAGE_MODELS[0]
     const file = new File([item.image.blob], `reference-${item.item.id}.png`, { type: item.image.mimeType })
-    const reference: ReferenceImageInput = {
+    const reference: WorkbenchReferenceInput = {
+      kind: 'pending',
       file,
       previewUrl: URL.createObjectURL(file),
     }
