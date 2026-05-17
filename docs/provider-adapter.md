@@ -71,6 +71,14 @@ P7 runtime boundary:
 - Runtime execution starts after `P7-BE-WORKER-QUEUE` merged reliable queue consumption, Worker state handling, Redis SSE wakeups, and fake/stub execution.
 - Browser Provider adapters under `frontend/src/providers/**` remain migration references until P8 removes or isolates them from production generation paths.
 
+Current P7 runtime result:
+
+- Real backend Provider Adapter execution is implemented and merged for OpenAI, Gemini, and OpenAI-compatible Providers.
+- Runtime execution validates the final outbound dial target with SSRF-safe transport before connecting, in addition to save/use-time URL validation.
+- Successful runtime execution writes generated/edited images to MinIO, creates assets and task outputs, records usage/API call logs, and emits output/usage/terminal task events.
+- Provider errors and runtime metadata are recursively redacted. Review fixes explicitly cover the decrypted Provider API key when it appears both as a value and as a nested JSON map key.
+- Unknown secrets that are not supplied to the redactor and do not match heuristic rules remain outside automatic detection; configured Provider API keys are supplied as known secrets in the active runtime path.
+
 ## Adapter interface
 
 The backend should define an internal interface equivalent to:

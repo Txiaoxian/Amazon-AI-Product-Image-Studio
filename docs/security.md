@@ -20,6 +20,7 @@ Resolved transition item:
 - P5 frontend project/asset UI now uses authenticated backend project and asset APIs for reference uploads, metadata, favorite/delete, and downloads. It does not talk to MinIO directly and did not add new AI Provider direct calls, Provider API key persistence, auth token persistence, or task polling.
 - P6 backend Provider/model management now stores Provider API keys encrypted at rest, returns only masked key metadata, validates Provider URLs for save/update/test, records redacted operation logs, and exposes tenant-scoped Provider/model APIs.
 - P6 frontend Provider/model management now submits Provider API keys only to backend APIs, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
+- P7 Provider runtime now uses connect-time SSRF-safe outbound transport before real Provider calls and recursively redacts runtime metadata before persistence. Review fixes explicitly covered API keys appearing as values and as nested JSON map keys.
 
 P5 review hardening backlog:
 
@@ -130,6 +131,12 @@ P7 Provider runtime requirement:
 - Real Provider generation/edit calls must not start until the outbound HTTP transport validates the final dial target at connection time.
 - Provider runtime logs and api_call_logs must recursively redact Authorization, Cookie, API keys, bearer tokens, image base64, and raw image bytes.
 - Provider runtime must treat model capability rows as the trusted parameter allowlist.
+
+Current P7 Provider runtime status:
+
+- The runtime requirement above is implemented and merged.
+- Configured Provider API keys are decrypted only in backend memory, passed into the redactor as known secrets, and removed from persisted metadata whether they appear as values or nested JSON map keys.
+- Residual boundary: unknown secrets that are neither supplied as known secrets nor matched by heuristic rules cannot be identified automatically. This is a generic limit of redaction, not an uncovered path for the currently configured Provider API key.
 
 ## Upload defense
 

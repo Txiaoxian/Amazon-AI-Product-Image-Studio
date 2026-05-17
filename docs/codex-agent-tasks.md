@@ -1676,16 +1676,16 @@ P7 的目标是落地任务创建、Redis 队列、Worker 状态机、Provider A
 1. `P7-BE-TASK-FOUNDATION` - completed and merged. It freezes task schema, status names, event writer, task API, Redis enqueue abstraction, and `task_events.sequence` replay cursor.
 2. `P7-BE-SSE-STREAM` - completed and merged. It depends on the merged task event schema and replays by `task_events.sequence`.
 3. `P7-BE-WORKER-QUEUE` - completed and merged. It added reliable Redis queue consumption, Worker state handling, Redis wakeups, concurrency limits, and fake/stub execution.
-4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - next task. It depends on the merged Worker state machine and must add SSRF-safe outbound transport before real Provider calls.
-5. `P7-FE-TASK-CLIENT-SSE` - 依赖 task/SSE 合同稳定，只做 API/SSE client 与 reducer，不替换主工作台。
+4. `P7-BE-PROVIDER-ADAPTER-RUNTIME` - completed and merged. It added real Provider execution, SSRF-safe outbound transport, MinIO outputs, usage, API call logs, and redacted Provider errors.
+5. `P7-FE-TASK-CLIENT-SSE` - next task. It now depends on stable task/SSE/runtime contracts and only adds API/SSE client types plus reducer utilities; it must not replace the main workbench.
 6. `R7` - 主 agent 串行 review、集成回归、安全审查和公共合同校准。
 
 并行策略：
 
 - 第一项 `P7-BE-TASK-FOUNDATION` 已串行完成。
 - `P7-BE-WORKER-QUEUE` 已串行完成并合并。
-- 下一任务串行启动 `P7-BE-PROVIDER-ADAPTER-RUNTIME`。不要与前端 task client 并行，避免前端合同建立在未落地的真实输出/usage/API call log 行为上。
-- 前端 task client 只在后端合同稳定后启动，不提前替换 P8 工作台。
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` 已串行完成、修复安全问题并合并。
+- 下一任务串行启动 `P7-FE-TASK-CLIENT-SSE`。它只消费已稳定的 task/SSE/runtime 合同，不提前替换 P8 工作台。
 
 P7 统一状态约定：
 
@@ -1718,7 +1718,16 @@ P7 Worker queue actual result:
 - Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events without Redis becoming the event source of truth.
 - Global, tenant, user, Provider, and model concurrency limits are implemented with stale lock cleanup.
 - Non-blocking carry-forward risks: Worker currently runs a single processing loop and does not yet use `WORKER_CONCURRENCY` as a pool; API Redis event subscription uses a background context that should later be tied to server lifecycle.
-- Real Provider calls, MinIO output assets, `task_outputs`, `usage_records`, and `api_call_logs` remain pending for `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
+- Real Provider calls, MinIO output assets, `task_outputs`, `usage_records`, and `api_call_logs` are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
+
+P7 Provider Adapter runtime actual result:
+
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` merged into `main` after review and follow-up security fixes.
+- Backend Provider Adapter runtime now executes OpenAI, Gemini, and OpenAI-compatible image generation/edit requests through normalized request/result types.
+- Connect-time SSRF-safe outbound transport validates the final dial target; save/use-time URL validation is still enforced.
+- Worker runtime persists generated/edited MinIO objects, image assets, `task_outputs`, `usage_records`, `api_call_logs`, and output/usage/terminal task events.
+- Runtime logs and metadata use recursive redaction with the decrypted Provider API key as a known secret. Review fixes covered API-key leakage when the secret appeared as a value and when it appeared as a nested JSON map key.
+- Residual risk: secrets unknown to the redactor and not matched by heuristics cannot be recognized automatically. The active Provider runtime path passes the decrypted Provider API key into the redactor, so current configured Provider keys are covered.
 
 ## 子任务 17：P7 后端任务基础
 
@@ -1958,6 +1967,10 @@ P7-BE-PROVIDER-ADAPTER-RUNTIME - 真实 Provider 调用、SSRF-safe transport、
 
 把 Worker fake execution 替换为后端 Provider Adapter 真实执行路径，支持 OpenAI、Gemini 和 OpenAI-compatible Provider，输出图片进入 MinIO 和资产库，并记录 api_call_logs 与 usage_records。
 
+### 状态
+
+Completed and merged into `main`. Review required follow-up fixes so Provider runtime redaction covers both current API key values and current API keys used as nested JSON map keys before logs are persisted.
+
 ### 允许修改文件
 
 - `backend/internal/provider/**`
@@ -2029,6 +2042,10 @@ P7-FE-TASK-CLIENT-SSE - Task API wrappers、SSE client 类型和事件 reducer
 
 为 P8 工作台后端化准备前端 task API wrappers、SSE client 类型和事件 reducer。P7 前端只做合同层和测试，不替换现有生成工作台主流程。
 
+### 状态
+
+Next task after merged Provider Adapter runtime. Start from latest `main`.
+
 ### 允许修改文件
 
 - `frontend/src/api/**`
@@ -2052,6 +2069,7 @@ P7-FE-TASK-CLIENT-SSE - Task API wrappers、SSE client 类型和事件 reducer
 
 - `P7-BE-TASK-FOUNDATION` 已合并。
 - `P7-BE-SSE-STREAM` 合同稳定。
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` 已合并，task 输出、usage 和 API call log 行为已稳定到可供前端合同层消费。
 
 ### 具体开发内容
 

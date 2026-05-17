@@ -94,6 +94,13 @@ P7 Worker queue result:
 - Concurrency limits exist for global, tenant, user, Provider, and model dimensions, with stale lock cleanup.
 - Non-blocking carry-forward risks: Worker uses a single processing loop despite `WORKER_CONCURRENCY`; API Redis subscription lifecycle should later be tied to server shutdown.
 
+P7 Provider runtime result:
+
+- Real Provider execution is now merged behind the Worker state machine.
+- Successful runs create MinIO objects, generated/edited assets, `task_outputs`, `usage_records`, and `api_call_logs`, then emit `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal events through the existing persisted-event flow.
+- Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
+- The remaining Worker carry-forward items are still separate concerns: `WORKER_CONCURRENCY` is not yet a pool, and API Redis subscription lifecycle should later be tied to server shutdown.
+
 ## Cancellation
 
 Cancellation request:

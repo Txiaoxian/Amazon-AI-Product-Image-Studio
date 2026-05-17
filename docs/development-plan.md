@@ -331,23 +331,22 @@ P6 residual risks and carry-forward items:
 
 ## P7: Task queue, worker, Provider Adapter, and SSE
 
-Status: in progress. `P7-BE-TASK-FOUNDATION`, `P7-BE-SSE-STREAM`, and `P7-BE-WORKER-QUEUE` have been reviewed, merged into `main`, and verified. P7 must continue in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
+Status: in progress. `P7-BE-TASK-FOUNDATION`, `P7-BE-SSE-STREAM`, `P7-BE-WORKER-QUEUE`, and `P7-BE-PROVIDER-ADAPTER-RUNTIME` have been reviewed, merged into `main`, and verified. P7 must continue in ordered slices because task schema, events, queue semantics, Provider execution, and SSE replay depend on shared contracts.
 
 P7 execution order:
 
 1. `P7-BE-TASK-FOUNDATION`: completed and merged. Added MySQL task/event/output/log/usage models and migrations, task repository/service, task create/list/detail/cancel/retry APIs, task event writer, Redis enqueue abstraction, and stable `task_events.sequence` replay cursor. No real Provider call yet.
 2. `P7-BE-SSE-STREAM`: completed and merged. Implemented SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay by `task_events.sequence`, tenant/project/task authorization filtering, in-process fanout wakeups, and tests.
 3. `P7-BE-WORKER-QUEUE`: completed and merged. Added Redis reliable queue, Worker claim loop, task state machine, idempotency, cancellation, retry, timeout, recovery, concurrency limits, Redis wakeups for cross-process SSE delivery, and fake/stub Provider execution.
-4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: next task. Add real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
-5. `P7-FE-TASK-CLIENT-SSE`: frontend task API wrappers, task/SSE types, SSE client integration tests, and task event reducer utilities. This must not replace the main workbench generation flow; P8 owns that migration.
+4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: completed and merged. Added real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
+5. `P7-FE-TASK-CLIENT-SSE`: next task. Add frontend task API wrappers, task/SSE types, SSE client integration tests, and task event reducer utilities. This must not replace the main workbench generation flow; P8 owns that migration.
 6. `R7`: main-agent review, integration regression, security review, and public contract cleanup before P8.
 
 P7 serial/parallel policy:
 
 - Start serially with `P7-BE-TASK-FOUNDATION`; do not parallelize until task schema, task event schema, status names, and API response contracts are merged.
-- `P7-BE-WORKER-QUEUE` has merged. Start `P7-BE-PROVIDER-ADAPTER-RUNTIME` from latest `main`; do not parallelize it with frontend task client work.
-- `P7-BE-PROVIDER-ADAPTER-RUNTIME` must use Worker state handling as merged and must add connect-time SSRF protection before real outbound Provider calls.
-- `P7-FE-TASK-CLIENT-SSE` starts only after task and SSE contracts are stable enough for frontend types and API wrappers.
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` has merged after review and security fixes. Start `P7-FE-TASK-CLIENT-SSE` from latest `main`; it is now safe to depend on stable task/SSE/runtime contracts.
+- `P7-FE-TASK-CLIENT-SSE` remains a contract-layer task only. It must not start P8 workbench replacement early.
 
 P7 canonical status decision:
 
@@ -378,7 +377,16 @@ P7 Worker queue result:
 - Redis wakeups now notify API SSE streams after persisted task events. Wakeups carry only minimal sequence/task metadata; SSE still reloads visible events from MySQL.
 - Concurrency limits are implemented for global, tenant, user, Provider, and model dimensions with stale lock cleanup.
 - Non-blocking carry-forward risks: Worker currently runs a single processing loop and does not yet apply `WORKER_CONCURRENCY` as a worker pool; the API Redis event subscriber uses a background context that should be tied to server lifecycle later.
-- Real Provider execution, output asset creation, usage records, and API call logs remain owned by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
+- Real Provider execution, output asset creation, usage records, and API call logs are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
+
+P7 Provider Adapter runtime result:
+
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` merged into `main` after review and two security fixes.
+- Real backend generation/edit execution now goes through Provider Adapter implementations for OpenAI, Gemini, and OpenAI-compatible Providers.
+- Runtime execution uses model capability rows as the trusted allowlist, validates Provider URLs before use, and uses connect-time SSRF-safe outbound transport before dialing.
+- Successful execution uploads generated/edited images to MinIO, creates image assets and task outputs, records usage and API call logs, and emits `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal task events.
+- Provider errors and runtime metadata are recursively sanitized before persistence. Review fixes closed both “API Key appears as a value” and “API Key appears as a JSON map key” leakage paths for the currently decrypted Provider secret.
+- Residual runtime boundary: unknown secrets that are neither supplied to the redactor as known secrets nor matched by heuristics cannot be detected automatically. Current Provider API keys are passed as known secrets, so the active runtime path is covered.
 
 ## P8: Frontend backendization
 
