@@ -1,26 +1,28 @@
 import { ImagePlus, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { validateImageFile } from '../../lib/file'
-import type { ReferenceImageInput } from '../../providers/types'
+import type { WorkbenchReferenceInput } from '../../types/workbench'
 
 interface ImageDropzoneProps {
-  references: ReferenceImageInput[]
-  onChange: (references: ReferenceImageInput[]) => void
+  references: WorkbenchReferenceInput[]
+  maxReferences?: number
+  onChange: (references: WorkbenchReferenceInput[]) => void
   onError: (message: string) => void
   disabled?: boolean
 }
 
-export function ImageDropzone({ references, onChange, onError, disabled }: ImageDropzoneProps) {
+export function ImageDropzone({ references, maxReferences, onChange, onError, disabled }: ImageDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
 
   const addFiles = (files: FileList | File[]) => {
-    const nextReferences: ReferenceImageInput[] = []
+    const nextReferences: WorkbenchReferenceInput[] = []
 
     for (const file of Array.from(files)) {
       try {
         validateImageFile(file)
         nextReferences.push({
+          kind: 'pending',
           file,
           previewUrl: URL.createObjectURL(file),
         })
@@ -29,9 +31,23 @@ export function ImageDropzone({ references, onChange, onError, disabled }: Image
       }
     }
 
-    if (nextReferences.length > 0) {
-      onChange([...references, ...nextReferences])
+    if (nextReferences.length === 0) {
+      return
     }
+
+    const availableSlots = maxReferences === undefined ? nextReferences.length : Math.max(maxReferences - references.length, 0)
+    if (availableSlots === 0) {
+      nextReferences.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+      onError(maxReferences === 1 ? '当前模型仅支持 1 张参考图。' : `当前模型最多支持 ${maxReferences} 张参考图。`)
+      return
+    }
+
+    if (nextReferences.length > availableSlots) {
+      nextReferences.slice(availableSlots).forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+      onError(maxReferences === 1 ? '当前模型仅支持 1 张参考图。' : `当前模型最多支持 ${maxReferences} 张参考图。`)
+    }
+
+    onChange([...references, ...nextReferences.slice(0, availableSlots)])
   }
 
   const removeReference = (previewUrl: string) => {
@@ -90,10 +106,13 @@ export function ImageDropzone({ references, onChange, onError, disabled }: Image
       {references.length > 0 ? (
         <div className="grid grid-cols-3 gap-2">
           {references.map((reference) => (
-            <div className="group relative aspect-square overflow-hidden rounded-md border border-ink-200 bg-ink-100" key={reference.previewUrl}>
-              <img alt={reference.file.name} className="h-full w-full object-cover" src={reference.previewUrl} />
+            <div
+              className="group relative aspect-square overflow-hidden rounded-md border border-ink-200 bg-ink-100"
+              key={reference.kind === 'asset' ? reference.assetId : reference.previewUrl}
+            >
+              <img alt={getReferenceFilename(reference)} className="h-full w-full object-cover" src={reference.previewUrl} />
               <button
-                aria-label={`删除 ${reference.file.name}`}
+                aria-label={`删除 ${getReferenceFilename(reference)}`}
                 className="absolute right-1 top-1 hidden h-7 w-7 items-center justify-center rounded-md bg-white/90 text-ink-700 shadow group-hover:flex"
                 disabled={disabled}
                 onClick={() => removeReference(reference.previewUrl)}
@@ -107,4 +126,8 @@ export function ImageDropzone({ references, onChange, onError, disabled }: Image
       ) : null}
     </section>
   )
+}
+
+function getReferenceFilename(reference: WorkbenchReferenceInput): string {
+  return reference.kind === 'asset' ? reference.filename : reference.file.name
 }

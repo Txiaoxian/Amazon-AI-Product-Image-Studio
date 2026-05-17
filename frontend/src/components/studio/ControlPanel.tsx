@@ -1,21 +1,14 @@
-import { Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import {
-  IMAGE_COUNT_OPTIONS,
-  RESOLUTION_LABELS,
-  TUTUJIN_SIZE_LABELS,
-  getCanvasOptionsForProvider,
-  getDefaultCanvasForProvider,
-  getDefaultResolutionForProvider,
-  getResolutionOptionsForProvider,
-  isCanvasOption,
-  isResolutionOption,
-} from '../../lib/constants'
+import { RefreshCw, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { IMAGE_COUNT_OPTIONS } from '../../lib/constants'
 import { IMAGE_MODELS, getModelById } from '../../providers/registry'
-import type { AspectRatio, GenerationRequest, ImageCount, ImageResolution, ReferenceImageInput } from '../../providers/types'
+import type { AspectRatio, GenerationRequest, ImageCount, ImageResolution } from '../../providers/types'
+import type { Model } from '../../types/platform'
+import type { WorkbenchReferenceInput, WorkbenchTaskInput } from '../../types/workbench'
 import { Button } from '../ui/Button'
 import { ImageDropzone } from './ImageDropzone'
 import { PromptEditor } from './PromptEditor'
+import type { WorkbenchModelStatus } from './useWorkbenchModels'
 
 export interface ControlPanelDraft {
   prompt: string
@@ -23,17 +16,20 @@ export interface ControlPanelDraft {
   quality: ImageResolution
   aspectRatio: AspectRatio
   imageCount?: ImageCount
-  references?: ReferenceImageInput[]
+  references?: WorkbenchReferenceInput[]
 }
 
 interface ControlPanelProps {
   defaultModelId: string
   defaultResolution: ImageResolution
   isGenerating: boolean
+  modelStatus: WorkbenchModelStatus
+  models: Model[]
   draft?: ControlPanelDraft | null
-  referenceToAdd?: ReferenceImageInput | null
-  onGenerate: (request: GenerationRequest) => Promise<void>
+  referenceToAdd?: WorkbenchReferenceInput | null
+  onGenerate: (request: GenerationRequest, workbenchInput: WorkbenchTaskInput) => Promise<void>
   onError: (message: string) => void
+  onRefreshModels: () => void
   onReferenceAdded?: () => void
 }
 
@@ -41,28 +37,33 @@ export function ControlPanel({
   defaultModelId,
   defaultResolution,
   isGenerating,
+  modelStatus,
+  models,
   draft,
   referenceToAdd,
   onGenerate,
   onError,
+  onRefreshModels,
   onReferenceAdded,
 }: ControlPanelProps) {
   const [prompt, setPrompt] = useState('')
-  const [modelId, setModelId] = useState(defaultModelId)
-  const [quality, setQuality] = useState<ImageResolution>(defaultResolution)
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
+  const [modelId, setModelId] = useState('')
+  const [size, setSize] = useState('')
+  const [quality, setQuality] = useState('')
+  const [outputFormat, setOutputFormat] = useState('')
   const [imageCount, setImageCount] = useState<ImageCount>(1)
-  const [references, setReferences] = useState<ReferenceImageInput[]>([])
-  const [referenceImageUrlsText, setReferenceImageUrlsText] = useState('')
-  const selectedModel = getModelById(modelId)
-  const usesReferenceImageUrls = selectedModel.provider === 'gemini'
-  const supportsLocalReferences = selectedModel.provider !== 'gemini'
-  const resolutionOptions = getResolutionOptionsForProvider(selectedModel.provider)
-  const canvasOptions = getCanvasOptionsForProvider(selectedModel.provider)
-  const normalizedQuality = isResolutionOption(quality, resolutionOptions) ? quality : getDefaultResolutionForProvider(selectedModel.provider)
-  const normalizedAspectRatio = isCanvasOption(aspectRatio, canvasOptions) ? aspectRatio : getDefaultCanvasForProvider(selectedModel.provider)
-  const qualityLabel = usesReferenceImageUrls ? '质量' : '分辨率'
-  const canvasLabel = usesReferenceImageUrls ? '尺寸' : '图片比例'
+  const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
+  const selectedModel = useMemo(() => models.find((model) => model.id === modelId) ?? null, [modelId, models])
+  const isSelectedModelUnavailable = modelId.length > 0 && selectedModel === null
+  const legacyFallbackModel = getLegacyFallbackModel(modelId, defaultModelId)
+
+  useEffect(() => {
+    if (modelId || models.length === 0) {
+      return
+    }
+
+    setModelId(models[0].id)
+  }, [modelId, models])
 
   useEffect(() => {
     if (!draft) {
@@ -71,54 +72,75 @@ export function ControlPanel({
 
     setPrompt(draft.prompt)
     setModelId(draft.modelId)
-    setQuality(draft.quality)
-    setAspectRatio(draft.aspectRatio)
     setImageCount(draft.imageCount ?? 1)
     setReferences((currentReferences) => {
-      currentReferences.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+      revokePendingReferences(currentReferences)
       return draft.references ?? []
     })
-    setReferenceImageUrlsText('')
   }, [draft])
 
   useEffect(() => {
-    if (!isResolutionOption(quality, resolutionOptions)) {
-      setQuality(getDefaultResolutionForProvider(selectedModel.provider))
+    if (!selectedModel) {
+      return
     }
-  }, [quality, resolutionOptions, selectedModel.provider])
+
+    setSize((current) => normalizeOption(current, selectedModel.supportedSizes))
+    setQuality((current) => normalizeOption(current, selectedModel.supportedQualities))
+    setOutputFormat((current) => normalizeOption(current, selectedModel.supportedOutputFormats))
+    setImageCount((current) => normalizeImageCount(current, selectedModel))
+  }, [selectedModel])
 
   useEffect(() => {
-    if (!isCanvasOption(aspectRatio, canvasOptions)) {
-      setAspectRatio(getDefaultCanvasForProvider(selectedModel.provider))
-    }
-  }, [aspectRatio, canvasOptions, selectedModel.provider])
-
-  useEffect(() => {
-    if (supportsLocalReferences || references.length === 0) {
+    if (!selectedModel || selectedModel.supportsEdit) {
       return
     }
 
     setReferences((currentReferences) => {
-      currentReferences.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+      revokePendingReferences(currentReferences)
       return []
     })
-  }, [references.length, supportsLocalReferences])
+  }, [selectedModel])
 
   useEffect(() => {
     if (!referenceToAdd) {
       return
     }
 
-    if (!supportsLocalReferences) {
-      URL.revokeObjectURL(referenceToAdd.previewUrl)
-      onError('当前模型不支持本地参考图，请切换模型后重试。')
+    if (!selectedModel?.supportsEdit) {
+      revokePendingReferences([referenceToAdd])
+      onError('当前模型不支持参考图，请切换模型后重试。')
+      onReferenceAdded?.()
+      return
+    }
+
+    if (!selectedModel.supportsMultiReference && references.length > 0) {
+      revokePendingReferences([referenceToAdd])
+      onError('当前模型仅支持 1 张参考图。')
+      onReferenceAdded?.()
+      return
+    }
+
+    if (referenceToAdd.kind === 'asset' && references.some((reference) => reference.kind === 'asset' && reference.assetId === referenceToAdd.assetId)) {
+      onError('该项目资产已在参考图中。')
       onReferenceAdded?.()
       return
     }
 
     setReferences((currentReferences) => [...currentReferences, referenceToAdd])
     onReferenceAdded?.()
-  }, [onError, onReferenceAdded, referenceToAdd, supportsLocalReferences])
+  }, [onError, onReferenceAdded, referenceToAdd, references, selectedModel])
+
+  const workbenchInput = selectedModel
+    ? buildWorkbenchTaskInput(selectedModel, {
+        size,
+        quality,
+        outputFormat,
+        imageCount,
+        references,
+      })
+    : null
+
+  const canSubmit = Boolean(workbenchInput) && !isSelectedModelUnavailable && !isGenerating
 
   return (
     <aside className="panel flex min-h-0 flex-col">
@@ -129,121 +151,170 @@ export function ControlPanel({
         className="flex flex-1 flex-col gap-5 p-4 xl:overflow-y-auto"
         onSubmit={(event) => {
           event.preventDefault()
-          const referenceImageUrls = usesReferenceImageUrls ? parseReferenceImageUrls(referenceImageUrlsText, onError) : []
 
-          if (referenceImageUrls === null) {
+          if (!workbenchInput) {
+            onError('请先选择可用模型。')
             return
           }
 
-          void onGenerate({
-            prompt,
-            model: selectedModel,
-            quality: normalizedQuality,
-            aspectRatio: normalizedAspectRatio,
-            imageCount,
-            references: supportsLocalReferences ? references.map((reference) => reference.file) : [],
-            referenceImageUrls,
-          })
+          void onGenerate(
+            {
+              prompt,
+              model: legacyFallbackModel,
+              quality: defaultResolution,
+              aspectRatio: '1:1',
+              imageCount,
+              references: references.flatMap((reference) => (reference.kind === 'pending' ? [reference.file] : [])),
+              referenceImageUrls: [],
+            },
+            workbenchInput,
+          )
         }}
       >
-        {usesReferenceImageUrls ? (
-          <section className="space-y-2">
-            <label className="field-label" htmlFor="reference-image-urls">
-              参考图 URL
-            </label>
-            <textarea
-              className="field-input min-h-24 resize-y"
-              disabled={isGenerating}
-              id="reference-image-urls"
-              onChange={(event) => setReferenceImageUrlsText(event.target.value)}
-              placeholder="https://example.com/reference.png"
-              value={referenceImageUrlsText}
-            />
-            <span className="block text-xs text-ink-400">Nano Banana 2 中转站图生图使用公开 HTTPS URL，每行 1 张，最多 4 张。</span>
-          </section>
-        ) : supportsLocalReferences ? (
-          <ImageDropzone disabled={isGenerating} onChange={setReferences} onError={onError} references={references} />
+        {selectedModel?.supportsEdit ? (
+          <ImageDropzone
+            disabled={isGenerating}
+            maxReferences={selectedModel.supportsMultiReference ? undefined : 1}
+            onChange={setReferences}
+            onError={onError}
+            references={references}
+          />
         ) : null}
 
         <PromptEditor disabled={isGenerating} onChange={setPrompt} onError={onError} value={prompt} />
 
         <section className="grid gap-4">
           <div className="space-y-2">
-            <label className="field-label" htmlFor="model-id">
-              模型
-            </label>
-            <select className="field-input" disabled={isGenerating} id="model-id" onChange={(event) => setModelId(event.target.value)} value={modelId}>
-              {IMAGE_MODELS.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label}
-                </option>
-              ))}
-            </select>
-            <span className="block text-xs text-ink-400">{selectedModel.description}</span>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <label className="field-label" htmlFor="image-resolution">
-                {qualityLabel}
+            <div className="flex items-center justify-between gap-2">
+              <label className="field-label" htmlFor="model-id">
+                模型
               </label>
-              <select
-                className="field-input"
-                disabled={isGenerating}
-                id="image-resolution"
-                onChange={(event) => setQuality(event.target.value as ImageResolution)}
-                value={normalizedQuality}
+              <button
+                aria-label="刷新模型"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-ink-500 hover:text-ink-900 disabled:text-ink-300"
+                disabled={modelStatus === 'loading'}
+                onClick={onRefreshModels}
+                type="button"
               >
-                {resolutionOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {RESOLUTION_LABELS[option]}
-                  </option>
-                ))}
-              </select>
+                <RefreshCw className={`h-3.5 w-3.5 ${modelStatus === 'loading' ? 'animate-spin' : ''}`} />
+                刷新模型
+              </button>
             </div>
-
-            <div className="space-y-2">
-              <label className="field-label" htmlFor="image-aspect-ratio">
-                {canvasLabel}
-              </label>
-              <select
-                className="field-input"
-                disabled={isGenerating}
-                id="image-aspect-ratio"
-                onChange={(event) => setAspectRatio(event.target.value as AspectRatio)}
-                value={normalizedAspectRatio}
-              >
-                {canvasOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {usesReferenceImageUrls ? TUTUJIN_SIZE_LABELS[option as keyof typeof TUTUJIN_SIZE_LABELS] : option}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="field-label" htmlFor="image-count">
-              生成张数
-            </label>
             <select
               className="field-input"
-              disabled={isGenerating}
-              id="image-count"
-              onChange={(event) => setImageCount(Number(event.target.value) as ImageCount)}
-              value={imageCount}
+              disabled={isGenerating || modelStatus === 'loading' || models.length === 0}
+              id="model-id"
+              onChange={(event) => setModelId(event.target.value)}
+              value={selectedModel?.id ?? ''}
             >
-              {IMAGE_COUNT_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option} 张
+              {!selectedModel ? <option value="">请选择模型</option> : null}
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.displayName} · {model.providerName}
                 </option>
               ))}
             </select>
-            <span className="block text-xs text-ink-400">前端产品层限制为 1-4 张，接口会保留 imageCount 参数。</span>
+            {selectedModel ? (
+              <span className="block text-xs text-ink-400">
+                {selectedModel.modelName}
+                {selectedModel.supportsMultiReference ? ' · 支持多张参考图' : ''}
+              </span>
+            ) : null}
+            {isSelectedModelUnavailable ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900" role="alert">
+                所选模型当前不可用，请刷新模型后重新选择。
+              </div>
+            ) : null}
           </div>
+
+          {selectedModel ? (
+            <div className="grid gap-3">
+              {selectedModel.supportedSizes.length > 0 ? (
+                <div className="space-y-2">
+                  <label className="field-label" htmlFor="image-size">
+                    尺寸
+                  </label>
+                  <select
+                    className="field-input"
+                    disabled={isGenerating}
+                    id="image-size"
+                    onChange={(event) => setSize(event.target.value)}
+                    value={size}
+                  >
+                    {selectedModel.supportedSizes.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {selectedModel.supportedQualities.length > 0 ? (
+                <div className="space-y-2">
+                  <label className="field-label" htmlFor="image-quality">
+                    质量
+                  </label>
+                  <select
+                    className="field-input"
+                    disabled={isGenerating}
+                    id="image-quality"
+                    onChange={(event) => setQuality(event.target.value)}
+                    value={quality}
+                  >
+                    {selectedModel.supportedQualities.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {selectedModel.supportedOutputFormats.length > 0 ? (
+                <div className="space-y-2">
+                  <label className="field-label" htmlFor="image-output-format">
+                    输出格式
+                  </label>
+                  <select
+                    className="field-input"
+                    disabled={isGenerating}
+                    id="image-output-format"
+                    onChange={(event) => setOutputFormat(event.target.value)}
+                    value={outputFormat}
+                  >
+                    {selectedModel.supportedOutputFormats.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <label className="field-label" htmlFor="image-count">
+                  生成张数
+                </label>
+                <select
+                  className="field-input"
+                  disabled={isGenerating || !selectedModel.supportsN || selectedModel.maxOutputCount <= 1}
+                  id="image-count"
+                  onChange={(event) => setImageCount(Number(event.target.value) as ImageCount)}
+                  value={imageCount}
+                >
+                  {getImageCountOptions(selectedModel).map((option) => (
+                    <option key={option} value={option}>
+                      {option} 张
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </section>
 
-        <Button className="mt-auto w-full" disabled={isGenerating} icon={<Sparkles className="h-4 w-4" />} type="submit" variant="primary">
+        <Button className="mt-auto w-full" disabled={!canSubmit} icon={<Sparkles className="h-4 w-4" />} type="submit" variant="primary">
           {isGenerating ? '生成中...' : '生成图片'}
         </Button>
       </form>
@@ -251,23 +322,61 @@ export function ControlPanel({
   )
 }
 
-function parseReferenceImageUrls(input: string, onError: (message: string) => void): string[] | null {
-  const urls = input
-    .split(/\r?\n/)
-    .map((url) => url.trim())
-    .filter(Boolean)
+function getLegacyFallbackModel(modelId: string, defaultModelId: string) {
+  return IMAGE_MODELS.find((model) => model.id === modelId) ?? getModelById(defaultModelId)
+}
 
-  if (urls.length > 4) {
-    onError('Nano Banana 2 最多支持 4 张参考图 URL。')
-    return null
+function normalizeOption(current: string, options: string[]): string {
+  if (options.length === 0) {
+    return ''
   }
 
-  const invalidUrl = urls.find((url) => !/^https:\/\/\S+$/i.test(url))
+  return options.includes(current) ? current : options[0]
+}
 
-  if (invalidUrl) {
-    onError(`参考图 URL 必须是公开 HTTPS 链接：${invalidUrl}`)
-    return null
+function normalizeImageCount(current: ImageCount, model: Model): ImageCount {
+  if (!model.supportsN || model.maxOutputCount <= 1) {
+    return 1
   }
 
-  return urls
+  return getImageCountOptions(model).includes(current) ? current : 1
+}
+
+function getImageCountOptions(model: Model): ImageCount[] {
+  if (!model.supportsN || model.maxOutputCount <= 1) {
+    return [1]
+  }
+
+  return IMAGE_COUNT_OPTIONS.filter((option) => option <= model.maxOutputCount)
+}
+
+function buildWorkbenchTaskInput(
+  model: Model,
+  state: {
+    size: string
+    quality: string
+    outputFormat: string
+    imageCount: ImageCount
+    references: WorkbenchReferenceInput[]
+  },
+): WorkbenchTaskInput {
+  return {
+    providerId: model.providerId,
+    modelId: model.id,
+    referenceAssetIds: state.references.flatMap((reference) => (reference.kind === 'asset' ? [reference.assetId] : [])),
+    parameters: {
+      ...(state.size ? { size: state.size } : {}),
+      ...(state.quality ? { quality: state.quality } : {}),
+      ...(state.outputFormat ? { outputFormat: state.outputFormat } : {}),
+      outputCount: state.imageCount,
+    },
+  }
+}
+
+function revokePendingReferences(references: WorkbenchReferenceInput[]) {
+  references.forEach((reference) => {
+    if (reference.kind === 'pending') {
+      URL.revokeObjectURL(reference.previewUrl)
+    }
+  })
 }

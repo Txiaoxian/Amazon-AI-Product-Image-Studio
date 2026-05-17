@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -57,6 +57,32 @@ const asset = {
   previewUrl: '/api/v1/assets/asset_1/download',
   isFavorite: false,
   createdBy: 'user_1',
+  createdAt: '2026-05-12T00:00:00Z',
+  updatedAt: '2026-05-12T00:00:00Z',
+}
+
+const model = {
+  id: 'model_1',
+  tenantId: 'tenant_1',
+  providerId: 'provider_1',
+  providerName: 'Studio Provider',
+  modelName: 'image-model',
+  displayName: 'Image Model',
+  supportsGenerate: true,
+  supportsEdit: true,
+  supportsMultiReference: true,
+  supportsN: true,
+  maxOutputCount: 4,
+  supportedSizes: ['1024x1024'],
+  supportedQualities: ['standard'],
+  supportedOutputFormats: ['png'],
+  pricing: {
+    currency: 'USD',
+    unitPrices: {
+      image: 0.04,
+    },
+  },
+  status: 'ENABLED',
   createdAt: '2026-05-12T00:00:00Z',
   updatedAt: '2026-05-12T00:00:00Z',
 }
@@ -123,28 +149,22 @@ describe('project asset workbench', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('loads project assets for authenticated users and can select an asset as a local reference image', async () => {
+  it('loads project assets and selects an asset reference without downloading a blob', async () => {
     const user = userEvent.setup()
-    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
 
       if (url === '/api/v1/me') {
         return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
       }
       if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
         return successResponse(page([project]))
       }
       if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
         return successResponse(page([asset]))
-      }
-      if (url === '/api/v1/assets/asset_1/download' && init?.method === 'GET') {
-        return new Response(new Blob(['image-bytes'], { type: 'image/png' }), {
-          headers: {
-            'Content-Disposition': 'attachment; filename="reference.png"',
-            'Content-Type': 'image/png',
-          },
-          status: 200,
-        })
       }
 
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
@@ -160,15 +180,13 @@ describe('project asset workbench', () => {
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
 
     expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(fetchImpl).toHaveBeenCalledWith(
-        '/api/v1/assets/asset_1/download',
-        expect.objectContaining({
-          credentials: 'include',
-          method: 'GET',
-        }),
-      )
-    })
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      '/api/v1/assets/asset_1/download',
+      expect.objectContaining({
+        credentials: 'include',
+        method: 'GET',
+      }),
+    )
   })
 
   it('creates a project and uploads a reference image with the in-memory CSRF token', async () => {
@@ -185,6 +203,9 @@ describe('project asset workbench', () => {
 
       if (url === '/api/v1/me') {
         return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
       }
       if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
         return successResponse(page([]))
