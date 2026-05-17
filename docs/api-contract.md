@@ -141,7 +141,7 @@ Current P5 implementation status:
 - `POST /assets/{assetId}/favorite`
 - `DELETE /assets/{assetId}/favorite`
 - `GET /assets/{assetId}/download`
-- `POST /assets/{assetId}/edit-source`: prepare asset as edit reference. Deferred until task/workbench backendization; P5 frontend must not depend on this endpoint unless it is implemented in the active branch.
+- `POST /assets/{assetId}/edit-source`: optional future convenience endpoint for preparing an asset as an edit reference. P8 does not require it; the backendized workbench should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
 
 Downloads must stream through backend authorization or use short-lived signed URLs created after authorization.
 
@@ -156,10 +156,11 @@ Asset payload rules for P5:
 - `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; it must not change `tenantId`, `projectId`, `objectKey`, or image dimensions.
 - `DELETE /assets/{assetId}` is soft delete.
 - `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
-- Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. Edit-source remains a later workbench/backendization concern.
+- Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. P8 can backendize edit flows through task creation without adding `edit-source`.
 - Current P5 frontend implementation consumes project-scoped asset list/upload and asset detail/update/delete/favorite/download through the authenticated API client with `credentials: include`.
 - P5 frontend downloads use the backend download endpoint as a blob response; the browser must not talk to MinIO directly.
 - P5 frontend must not depend on `POST /assets/{assetId}/edit-source`; selecting an asset as a local reference is transition UI only until P8 backendization.
+- P8 workbench tasks should use project asset IDs directly in `referenceAssetIds` / `editSourceAssetId`; uploaded files must enter the backend asset library before they become durable task inputs.
 
 ## Task APIs
 
@@ -205,6 +206,12 @@ Current P7 implementation status:
 - Task event replay cursor is `task_events.sequence`; `task_events.id` is derived from that sequence and is safe to use as the SSE `id`.
 - Backend now implements SSE long connections, Worker execution, real Provider runtime execution, generated/edited output asset creation, usage records, and API call logs.
 - Frontend now has task API wrappers and SSE client/reducer contract utilities. Workbench backendization is still deferred to P8.
+
+P8 workbench contract:
+
+- The workbench lists enabled backend models and uses capability responses to render allowed task parameters.
+- Task creation remains the final validator when a selected Provider/model is disabled, deleted, or otherwise becomes unavailable after the UI loaded it.
+- Browser code must not construct Provider-facing request payloads beyond the platform task contract.
 
 ## Provider APIs
 

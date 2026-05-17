@@ -2192,19 +2192,48 @@ git diff --check
 - 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
 - Provider soft delete 后的 linked-model 行为仍需在 P8/P9 前确定。
 
-## 子任务 22：前端工作台后端化
+## 第八批串行开发
+
+P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后端平台路径。由于四个任务都会碰到工作台状态、组件和历史展示边界，P8 必须串行推进，不做并行 worktree。
+
+### P8 调度顺序
+
+1. `P8-FE-WORKBENCH-FOUNDATION` - 先切换模型与引用资产的来源。
+2. `P8-FE-TASK-WORKBENCH` - 再切换提交、状态和结果输出。
+3. `P8-FE-HISTORY-ASSET-SOURCE` - 再切换历史与再次编辑来源。
+4. `P8-FE-LEGACY-RETIREMENT` - 最后退役旧直连和旧本地持久化生产路径。
+5. `R8` - 主 agent 串行 review、回归、静态扫描和合同校准。
+
+### P8 总体约束
+
+- P8 不新建后端业务合同；它消费 P5-P7 已冻结的项目、资产、模型、任务和 SSE 合同。
+- P8 不提前处理 `WORKER_CONCURRENCY` worker pool、API Redis subscription shutdown、未知 secret 自动识别、Provider soft-delete linked-model 策略。这些属于 P9 或后续硬化。
+- P8 不做 silent migration：旧 IndexedDB Blob 不得被悄悄上传到租户资产库。
+- P8 允许保留非敏感本地 UI 偏好，但不得继续持久化 Provider API Key 或 Provider API URL。
+- P8 结束后，主工作台生产路径不得再导入 `frontend/src/providers/**`，不得再把 IndexedDB 当成生成图或历史主数据源。
+
+## 子任务 22：工作台模型与引用基础
 
 ### 任务名称
 
-P8-FE-BACKENDIZATION - 替换前端生成链路并移除本地密钥路径
+P8-FE-WORKBENCH-FOUNDATION - 切换工作台模型能力和引用资产来源
 
 ### 目标
 
-把现有工作台从浏览器直连 AI 迁移为后端 task API + SSE + 项目资产库，并移除本地 API Key 持久化。
+在不替换提交链路的前提下，先把工作台的模型选择、参数展示和引用图选择切换到后端模型能力与项目资产 ID，为后续 task API 接入建立稳定状态模型。
 
 ### 允许修改文件
 
-- `frontend/**`
+- `frontend/src/App.tsx`
+- `frontend/src/api/models.ts`
+- `frontend/src/components/studio/**`
+- `frontend/src/components/projects/**`
+- `frontend/src/hooks/useProjectAssets.ts`
+- `frontend/src/hooks/useSettings.ts`
+- `frontend/src/types/**`
+- `frontend/src/test/controlPanel.test.tsx`
+- `frontend/src/test/projectAssetsWorkbench.test.tsx`
+- 与本任务新增代码直接对应的前端测试文件
 
 ### 禁止修改文件
 
@@ -2213,32 +2242,37 @@ P8-FE-BACKENDIZATION - 替换前端生成链路并移除本地密钥路径
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/hooks/useHistory.ts`
+- `frontend/src/components/history/**`
+- `frontend/src/providers/**`
+- `frontend/src/db/**`
 
 ### 前置依赖
 
-- R7 P7 task/Worker/Provider/SSE 集成完成。
+- R7 已完成。
+- P5 asset API、P6 model capability API、P7 task API 合同已冻结。
 
 ### 具体开发内容
 
-- `useGeneration` 改为创建后端任务并消费 SSE。
-- 结果区由 task events 和 asset 输出驱动。
-- 历史区改为项目任务/资产 API，IndexedDB 不再是主数据源。
-- 设置弹窗删除或替换本地 API Key 输入。
-- 浏览器 Provider adapters 从生产路径移除或隔离为明确的 legacy/import 代码。
-- 保留原有上传、提示词、参数、结果、多图、历史和再次编辑 UI 概念。
+- 让工作台从 enabled backend model capability list 加载可选模型，而不是从 `providers/registry.ts` 读取生产可选项。
+- 由后端能力字段驱动尺寸、质量、输出格式、输出数量和编辑/多参考图相关参数控件。
+- 让参考图选择以 `assetId` 为稳定输入；本地 `File`/Blob 只能作为上传前临时状态，不能成为任务输入真值。
+- 明确模型失效后的 UI 行为：刷新能力、提示重新选择，不在浏览器端伪造 Provider 能力。
+- 保持现有上传、提示词、控制面板和视觉结构，不提前替换 `useGeneration`。
 
 ### 安全要求
 
-- 浏览器不再创建 Provider Authorization header。
-- 不再把 Provider API Key 写入 localStorage、sessionStorage、IndexedDB、URL 或 client-visible config。
-- 不用轮询任务状态。
-- 不记录图片 base64。
+- 不新增 Provider 直连请求、Authorization header 或 Provider credential 字段。
+- 不新增 localStorage、sessionStorage、IndexedDB 中的敏感字段。
+- 上传前端预检只能作为 UX，不能代替后端资产校验。
 
 ### 验收标准
 
-- `rg` 检查生产路径中无前端 AI direct fetch、无 API Key 持久化、无任务轮询。
-- 生成任务通过后端 API 创建，状态通过 SSE 更新。
-- 项目资产成为生成图和参考图的主数据源。
+- 工作台模型选择来自后端 capability API，生产选择逻辑不再依赖前端 Provider registry。
+- 参数控件会根据 backend capability 禁用或隐藏不支持的组合。
+- 参考图提交准备态持有项目资产 ID，而不是持久化 Blob。
+- 现有生成提交行为尚未被改动，后续任务可以在这个状态模型上接入 task API。
 
 ### 测试命令
 
@@ -2250,7 +2284,287 @@ npm run test
 npm run build
 ```
 
-## 子任务 23：审计、用量、系统设置和发布硬化
+## 子任务 23：任务执行工作台
+
+### 任务名称
+
+P8-FE-TASK-WORKBENCH - 用 task API 与 SSE 替换工作台执行链路
+
+### 目标
+
+把工作台生成/编辑提交从浏览器 Provider 执行切到后端任务创建，并用 SSE 驱动排队、执行、输出、失败、取消和完成状态。
+
+### 允许修改文件
+
+- `frontend/src/App.tsx`
+- `frontend/src/api/tasks.ts`
+- `frontend/src/components/studio/**`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/lib/taskSseClient.ts`
+- `frontend/src/types/**`
+- `frontend/src/test/taskApi.test.ts`
+- `frontend/src/test/taskSseClient.test.ts`
+- `frontend/src/test/taskEventReducer.test.ts`
+- 与本任务新增代码直接对应的前端测试文件
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/components/history/**`
+- `frontend/src/hooks/useHistory.ts`
+- `frontend/src/db/**`
+- `frontend/src/providers/**`
+
+### 前置依赖
+
+- `P8-FE-WORKBENCH-FOUNDATION` 已合并。
+- P7 task API、SSE event、cancel/retry 合同已可消费。
+
+### 具体开发内容
+
+- 把 `useGeneration` 改为创建后端 task，提交 `projectId`、`providerId`、`modelId`、`referenceAssetIds`、`editSourceAssetId` 和被 capability 允许的参数。
+- 复用现有 task SSE client / reducer，以 SSE 事件驱动 `QUEUED`、`RUNNING`、`IMAGE_OUTPUT`、`USAGE`、`FAILED`、`CANCELLED`、`RETRYING`、`TIMED_OUT`、`SUCCEEDED` 状态。
+- 结果区由后端 task output assets 和授权下载/预览信息驱动，不从 Provider 原始响应或本地 base64 直接渲染。
+- 接入取消与重试操作，并处理 EventSource 重连、heartbeat、历史事件补发和 duplicate-submit 防护。
+- 保留原有工作台布局、提示词体验和结果区概念。
+
+### 安全要求
+
+- 任务状态只能来自 SSE，禁止 `setInterval`、循环 `fetch`、轮询 fallback。
+- 浏览器不得拼装 Provider-facing payload，不得创建 Provider Authorization header。
+- 不渲染或记录图片 base64、Provider 原始 payload、API Key 或 Cookie。
+
+### 验收标准
+
+- 生成/编辑任务通过后端 API 创建，主工作台不再调用浏览器 Provider Adapter。
+- 状态变化只由 SSE 推进，断线重连后可继续恢复事件。
+- 结果区显示后端输出资产，失败/取消/重试/超时状态与后端合同一致。
+- task create 的服务器校验失败会被清晰展示，并触发能力刷新或重新选择路径。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+```
+
+## 子任务 24：历史与资产主数据切换
+
+### 任务名称
+
+P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
+
+### 目标
+
+把历史面板、图片详情、下载和再次编辑的主数据源切换到后端项目任务与生成/编辑资产，不再以 IndexedDB 历史记录作为平台真值。
+
+### 允许修改文件
+
+- `frontend/src/App.tsx`
+- `frontend/src/api/assets.ts`
+- `frontend/src/api/tasks.ts`
+- `frontend/src/components/history/**`
+- `frontend/src/components/modals/ImageDetailModal.tsx`
+- `frontend/src/components/studio/ResultCanvas.tsx`
+- `frontend/src/hooks/useHistory.ts`
+- `frontend/src/hooks/useProjectAssets.ts`
+- `frontend/src/types/**`
+- 与本任务新增代码直接对应的前端测试文件
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/providers/**`
+- `frontend/src/hooks/useSettings.ts`
+- `frontend/src/db/**`
+
+### 前置依赖
+
+- `P8-FE-TASK-WORKBENCH` 已合并。
+- 后端 task list/detail、asset download/detail 合同已稳定。
+
+### 具体开发内容
+
+- 历史面板改读项目 task history 与 generated/edited assets。
+- 图片详情、下载和再次编辑入口都基于后端 asset/task 信息工作。
+- 再次编辑使用已有 `assetId` 作为 `editSourceAssetId`，不再依赖 IndexedDB Blob 回灌。
+- 明确旧本地历史的展示策略：若保留，只能是单独、显式、非默认的兼容入口；不得混成平台主历史。
+- 保持用户能查看过去结果、下载、再次编辑的工作流完整。
+
+### 安全要求
+
+- 下载必须继续经过后端鉴权接口，前端不能构造 MinIO 公网 URL。
+- 不把旧 IndexedDB Blob 自动上传到租户存储。
+- 不暴露跨项目或跨租户资产；前端错误提示不得泄露对象是否存在。
+
+### 验收标准
+
+- 历史面板默认展示后端项目任务/资产数据。
+- 再次编辑从后端资产创建新任务，不依赖本地 Blob。
+- 下载和详情继续使用授权后端 API。
+- IndexedDB 已不再是平台历史或生成图主数据源。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+```
+
+## 子任务 25：旧链路退役
+
+### 任务名称
+
+P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路径
+
+### 目标
+
+在后端工作流已经替换完成后，清理旧浏览器 Provider 直连、Provider 凭据设置、IndexedDB 图片/历史生产引用和相关测试，完成 P8 的迁移收口。
+
+### 允许修改文件
+
+- `frontend/src/App.tsx`
+- `frontend/src/components/modals/SettingsModal.tsx`
+- `frontend/src/hooks/useSettings.ts`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/hooks/useHistory.ts`
+- `frontend/src/providers/**`
+- `frontend/src/db/**`
+- `frontend/src/lib/constants.ts`
+- `frontend/src/test/**`
+- 与本任务新增代码直接对应的前端文件
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- 未经主 agent 同意的大规模 UI 重写
+
+### 前置依赖
+
+- `P8-FE-HISTORY-ASSET-SOURCE` 已合并。
+- 后端任务、SSE、资产和历史路径已经能覆盖主工作流。
+
+### 具体开发内容
+
+- 删除或彻底隔离生产路径上的 `frontend/src/providers/**` 导入；如保留兼容代码，必须显式命名并从主工作台不可达。
+- 从普通设置流移除 Provider API Key 和 Provider API URL 持久化；只保留非敏感 UI 偏好。
+- 删除已经失去生产意义的 IndexedDB image/history 主路径引用和相关回归测试，或把它们降级为清晰隔离的兼容代码。
+- 用静态扫描和测试证明旧直连、旧密钥持久化、旧 history primary path 已退出生产路径。
+
+### 安全要求
+
+- 静态扫描必须确认生产路径不再存在 Provider API Key 持久化、Provider Authorization header 构造、AI Provider direct fetch 或任务状态轮询。
+- 不得把旧敏感配置迁移到其他浏览器存储位置。
+- 如果保留兼容入口，必须默认关闭、明确命名、且不触发网络调用或租户数据写入。
+
+### 验收标准
+
+- 主工作台生产 imports 中无 `frontend/src/providers/**`。
+- 普通设置界面不再接收或保存 Provider API Key / API URL。
+- IndexedDB 不再承担生成图或历史主数据职责。
+- 若仍保留 `localStorage`，只允许非敏感 UI 偏好；任何命中都必须在 review 中逐条确认。
+- P8 迁移后的主流程在刷新、重新登录、任务重连和再次编辑场景下仍可用。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+rg -n "localStorage|sessionStorage|indexedDB|Authorization|openai|gemini|setInterval|setTimeout" frontend/src
+```
+
+## 串行阶段 8：P8 review 和集成
+
+### 任务名称
+
+R8 - 前端后端化 review、回归和迁移验收
+
+### 目标
+
+由主 agent 串行 review P8 四个子任务，确认主工作台已完成从浏览器本地链路到后端平台链路的迁移，再进入 P9。
+
+### 允许修改文件
+
+- `docs/**`
+
+### 禁止修改文件
+
+- `frontend/**`
+- `backend/**`
+- `deploy/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+
+### 前置依赖
+
+- `P8-FE-WORKBENCH-FOUNDATION`
+- `P8-FE-TASK-WORKBENCH`
+- `P8-FE-HISTORY-ASSET-SOURCE`
+- `P8-FE-LEGACY-RETIREMENT`
+
+### 具体开发内容
+
+- Review P8 合并结果和残余兼容代码。
+- 跑前端完整回归、后端必要回归、Compose config 和关键静态扫描。
+- 确认项目资产、任务 API、SSE 和历史 UI 已成为主生产路径。
+- 更新公共合同中的 P8 实际完成状态、残余风险和 P9 前置条件。
+
+### 安全要求
+
+- 重点检查浏览器直连、密钥持久化、任务轮询、未经授权下载、静默上传旧 Blob、图片 base64 日志。
+- 不允许因兼容入口重新引入旧违规链路。
+
+### 验收标准
+
+- P8 四个子任务均已合并到 `main`。
+- 主工作台生产路径只使用 backend API + SSE + authorized assets。
+- 静态扫描和回归测试未发现旧直连、旧密钥持久化或 polling；允许保留的本地存储命中已逐条确认只承载非敏感 UI 偏好。
+- 文档已经反映 P8 实际完成情况和 P9 遗留。
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ../backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+rg -n "from ['\\\"]\\.\\.?/providers|localStorage|sessionStorage|indexedDB|Authorization|setInterval|setTimeout" frontend/src
+git diff --check
+```
+
+## 子任务 26：审计、用量、系统设置和发布硬化
 
 ### 任务名称
 
@@ -2277,7 +2591,7 @@ P9-AUDIT-HARDENING - 用量审计、系统设置、安全回归和发布验证
 
 ### 前置依赖
 
-- P8-FE-BACKENDIZATION 合并完成。
+- R8 前端后端化 review 完成。
 
 ### 具体开发内容
 

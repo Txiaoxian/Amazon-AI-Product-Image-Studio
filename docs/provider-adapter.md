@@ -79,6 +79,12 @@ Current P7 runtime result:
 - Provider errors and runtime metadata are recursively redacted. Review fixes explicitly cover the decrypted Provider API key when it appears both as a value and as a nested JSON map key.
 - Unknown secrets that are not supplied to the redactor and do not match heuristic rules remain outside automatic detection; configured Provider API keys are supplied as known secrets in the active runtime path.
 
+P8 frontend migration rule:
+
+- The production workbench must consume backend Provider/model/task APIs only.
+- `frontend/src/providers/**` may remain temporarily as explicit legacy/import reference code during migration, but it must not remain in production workbench imports after P8 completes.
+- Browser settings may retain non-sensitive UI preferences if still useful, but must not persist Provider API keys or Provider API URLs.
+
 ## Adapter interface
 
 The backend should define an internal interface equivalent to:

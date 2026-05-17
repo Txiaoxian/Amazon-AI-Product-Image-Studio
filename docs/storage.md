@@ -96,6 +96,11 @@ Current P5 backend behavior streams downloads through the backend after `asset -
 
 Current P5 frontend behavior downloads through `GET /assets/{assetId}/download` and handles the response as a browser blob. Frontend code must not construct MinIO URLs or expose object keys as downloadable URLs.
 
+P8 frontend migration rule:
+
+- Generated and edited workbench results must be read from backend task outputs / authorized asset downloads, not from IndexedDB image blobs.
+- Existing browser history blobs may remain only for an explicit compatibility/import flow if one is later approved. They are not platform assets and must not be silently promoted into MinIO-backed tenant storage.
+
 ## Generated and edited outputs
 
 P7 Worker output handling must:

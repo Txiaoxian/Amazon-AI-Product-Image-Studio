@@ -9,7 +9,7 @@ Development and feature verification must use the existing global local environm
 - If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
 - Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
 
-## Status after P4
+## Status after R7
 
 Completed:
 
@@ -30,12 +30,18 @@ Completed:
   - GORM/MySQL connection, explicit migrations, tenant-aware repository helper, and core auth/RBAC tables.
   - init-admin, login, logout, `/me`, password change, HttpOnly Cookie JWT, CSRF, auth middleware, tenant context, RBAC guard, and operation log recording.
   - frontend auth API wrappers, login screen, current-user loading, logout, 401 handling, and in-memory CSRF token usage.
+- P5 project and asset management:
+  - project/member APIs, MinIO-backed reference assets, upload validation, authorized downloads, and frontend project/asset integration.
+- P6 Provider and model management:
+  - encrypted Provider credentials, SSRF-safe Provider management/testing, model capability APIs, and frontend admin management UI.
+- P7 task, queue, runtime, and SSE foundation:
+  - task APIs, SSE replay, Redis queueing, Worker execution, backend Provider Adapter runtime, generated/edited assets, usage/API call logs, and frontend task/SSE contract layer.
 
 Current review result:
 
 - Frontend and backend local test/build commands pass.
 - `docker compose -f deploy/docker-compose.yml config` passes.
-- The P4 auth chain is good enough to continue into P5.
+- P4 through P7 have completed and passed their merge reviews. The next migration step is P8 frontend backendization.
 - The app is still in transition state. Old local frontend AI calls, localStorage Provider API keys, and IndexedDB image Blob storage remain as migration baselines only and must be removed in P8.
 - Non-blocking P4 hardening backlog:
   - Reject default JWT signing secret when `APP_ENV=production`.
@@ -414,14 +420,55 @@ P7 residual risks and carry-forward items:
 
 ## P8: Frontend backendization
 
-Tasks:
+Status: planned after completed R7. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
 
-- Replace frontend generation flow with task creation API plus SSE events.
-- Replace local history as primary data source with project assets and task history APIs.
-- Replace local API key settings with backend Provider/model management UI.
-- Remove or isolate browser Provider adapters from production call paths.
-- Remove localStorage API key persistence.
-- Keep IndexedDB only for drafts, temporary previews, or explicit compatibility/import flows.
+P8 goals:
+
+- Replace browser generation/edit submission with backend task creation plus SSE state updates.
+- Drive selectable models and parameter controls from enabled backend model capability rows instead of `frontend/src/providers/registry.ts`.
+- Use project asset IDs as task inputs and backend-generated assets as outputs; do not use image blobs in IndexedDB as platform truth.
+- Replace local history as the primary workbench history source with project task history plus generated/edited assets.
+- Remove Provider API key inputs and Provider API URL fields from the normal settings flow; Provider credentials remain admin-only backend-managed data.
+- Remove or strictly isolate browser Provider adapters from production imports and stop persisting Provider keys in localStorage.
+- Keep IndexedDB only for non-sensitive drafts, prompt templates, temporary previews, or an explicit future compatibility/import flow. Do not silently upload old local blobs into tenant storage.
+
+P8 workbench decisions:
+
+- The workbench loads enabled backend models by capability and treats the selected backend `modelId` plus its `providerId` as the submission source of truth.
+- A model is selectable only when it is enabled and has usable Provider metadata. If a model/provider becomes unavailable after selection, task creation remains the final server-side guard; the frontend must surface the validation failure, refresh capabilities, and require reselection.
+- P8 does not require `POST /assets/{assetId}/edit-source`. Generation/edit tasks should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
+- Task progress uses EventSource/SSE only. Project-level and task-level UIs may compose reducers by `taskId`, but polling remains forbidden.
+- Local UI preferences may remain local if they contain no credentials. Provider API keys and Provider API URLs must not remain in persisted browser settings.
+- R7 confirmed current runtime uses stable `modelId` references, so model-name uniqueness is not a P8 blocker. Provider soft-delete linked-model policy remains a P9/admin-hardening decision; P8 must handle stale model availability safely in the UI.
+
+P8 execution order:
+
+1. `P8-FE-WORKBENCH-FOUNDATION`: switch model/reference selection state to backend models, backend capability fields, and project asset IDs without yet replacing the submit path.
+2. `P8-FE-TASK-WORKBENCH`: replace `useGeneration` with task creation + SSE lifecycle and drive the result canvas from authorized backend output assets.
+3. `P8-FE-HISTORY-ASSET-SOURCE`: replace the local history panel/details/download/edit source with backend task history and generated/edited project assets.
+4. `P8-FE-LEGACY-RETIREMENT`: remove or isolate browser Provider adapters, Provider key settings, and IndexedDB image/history production paths after the backend flow is proven.
+5. `R8`: main-agent review, regression, migration verification, and public contract cleanup before P9.
+
+P8 serial policy:
+
+- Execute P8 serially. All four frontend tasks touch the same workbench boundary and would otherwise create avoidable merge and behavior conflicts.
+- Do not retire old local code until the backend submission, SSE result path, and backend history path have replaced it.
+- Do not start P9 admin hardening as a substitute for P8 migration work.
+
+P8 acceptance gates:
+
+- Browser generation creates backend tasks only; no production workbench import path calls OpenAI, Gemini, or relay URLs.
+- Workbench task status comes from SSE only; no `setInterval`, repeated `setTimeout`, or looped fetch status checks.
+- Browser storage contains no Provider API key or Provider API URL persistence used by production workbench behavior.
+- Generated/edited assets and task history come from backend APIs/authorized downloads; IndexedDB is not the primary history/image source.
+- Existing upload, prompt, parameter, result, history, download, and edit concepts remain available in backend-backed form.
+
+P8 intentionally does not resolve:
+
+- Worker pool implementation for `WORKER_CONCURRENCY`.
+- API Redis subscription lifecycle binding to server shutdown.
+- General redaction of unknown secrets outside known-secret and heuristic rules.
+- Provider soft-delete linked-model backend policy or optional model-name uniqueness hardening; these remain P9/admin lifecycle concerns.
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 

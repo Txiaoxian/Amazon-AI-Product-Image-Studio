@@ -1,6 +1,6 @@
 # Security Plan
 
-## Current transition risks after R6
+## Current transition risks after R7
 
 The current `main` branch is still a migration baseline, not a compliant platform release. The following risks are known and must be removed in the documented phases:
 
@@ -138,6 +138,13 @@ Current P7 Provider runtime status:
 - The runtime requirement above is implemented and merged.
 - Configured Provider API keys are decrypted only in backend memory, passed into the redactor as known secrets, and removed from persisted metadata whether they appear as values or nested JSON map keys.
 - Residual boundary: unknown secrets that are neither supplied as known secrets nor matched by heuristic rules cannot be identified automatically. This is a generic limit of redaction, not an uncovered path for the currently configured Provider API key.
+
+P8 migration security requirements:
+
+- Browser generation/edit flows must create backend tasks only and never create Provider `Authorization` headers.
+- Any browser-persisted settings that survive P8 must be non-sensitive UI preferences only; Provider API keys and Provider API URLs are forbidden.
+- Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
+- Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
 
 ## Upload defense
 
