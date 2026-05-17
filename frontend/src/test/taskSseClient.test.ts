@@ -4,7 +4,7 @@ import {
   type EventSourceFactory,
   type EventSourceLike,
 } from '../lib/taskSseClient'
-import type { ProjectId, TaskEventId } from '../types/platform'
+import type { ProjectId, TaskEventId, TaskId } from '../types/platform'
 import type { TaskSseEvent } from '../types/sse'
 
 class FakeEventSource implements EventSourceLike {
@@ -70,6 +70,7 @@ describe('task SSE client', () => {
       lastEventId: 'evt_old' as TaskEventId,
       onEvent: (event) => received.push(event),
       projectId: 'project_1' as ProjectId,
+      taskId: 'task_1' as TaskId,
     })
     client.on('TASK_STARTED', startedHandler)
 
@@ -79,15 +80,32 @@ describe('task SSE client', () => {
     expect(sources[0].init).toEqual({ withCredentials: true })
     expect(new URL(sources[0].url, 'https://studio.test').searchParams.get('lastEventId')).toBe('evt_old')
     expect(new URL(sources[0].url, 'https://studio.test').searchParams.get('projectId')).toBe('project_1')
+    expect(new URL(sources[0].url, 'https://studio.test').searchParams.get('taskId')).toBe('task_1')
 
-    sources[0].emit('TASK_STARTED', { taskId: 'task_1', status: 'RUNNING' }, 'evt_1')
+    sources[0].emit(
+      'TASK_STARTED',
+      {
+        taskId: 'task_1',
+        projectId: 'project_1',
+        status: 'RUNNING',
+        attempt: 1,
+        startedAt: '2026-05-17T00:00:00Z',
+      },
+      'evt_1',
+    )
 
     expect(client.getLastEventId()).toBe('evt_1')
     expect(received).toHaveLength(1)
     expect(received[0]).toMatchObject({
       id: 'evt_1',
       type: 'TASK_STARTED',
-      data: { taskId: 'task_1', status: 'RUNNING' },
+      data: {
+        taskId: 'task_1',
+        projectId: 'project_1',
+        status: 'RUNNING',
+        attempt: 1,
+        startedAt: '2026-05-17T00:00:00Z',
+      },
     })
     expect(startedHandler).toHaveBeenCalledWith(expect.objectContaining({ type: 'TASK_STARTED' }))
   })
@@ -103,19 +121,18 @@ describe('task SSE client', () => {
     })
 
     client.connect()
-    sources[0].emit('HEARTBEAT', { timestamp: '2026-05-09T07:00:00Z' }, 'evt_heartbeat')
+    sources[0].emit('HEARTBEAT', {})
     sources[0].fail()
 
-    expect(client.getLastEventId()).toBe('evt_heartbeat')
+    expect(client.getLastEventId()).toBeUndefined()
     expect(client.getLastHeartbeatAt()).toEqual(expect.any(Number))
     expect(heartbeatHandler).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 'evt_heartbeat',
         type: 'HEARTBEAT',
       }),
     )
     expect(reconnectHandler).toHaveBeenCalledWith({
-      lastEventId: 'evt_heartbeat',
+      lastEventId: undefined,
       readyState: 0,
     })
   })
@@ -125,7 +142,17 @@ describe('task SSE client', () => {
     const client = createTaskSseClient({ eventSourceFactory: factory })
 
     client.connect()
-    sources[0].emit('TASK_COMPLETED', { taskId: 'task_1', status: 'COMPLETED' }, 'evt_done')
+    sources[0].emit(
+      'TASK_COMPLETED',
+      {
+        taskId: 'task_1',
+        projectId: 'project_1',
+        status: 'SUCCEEDED',
+        attempt: 1,
+        finishedAt: '2026-05-17T00:01:00Z',
+      },
+      'evt_done',
+    )
     client.reconnect()
 
     expect(sources).toHaveLength(2)
