@@ -12,6 +12,13 @@ The current React UI is the baseline. Keep the existing workbench, upload intera
 - Replace local generation status with SSE task events.
 - Keep local state only for drafts, transient previews, and compatibility helpers.
 
+## Frontend migration safety
+
+- A frontend migration task must preserve the current production path until the replacement path is actually active.
+- Do not show backend-driven controls as the default production UI if the live submit path still sends unrelated legacy parameters.
+- If a task only prepares a future backend path, keep that preparation explicit and do not silently break legacy references, history actions, downloads, or other still-live flows.
+- Task packages for migration work must describe the old path, allowed intermediate state, target path, and forbidden half-migrated states before implementation begins.
+
 ## Forbidden frontend patterns
 
 - Do not call OpenAI, Gemini, or relay URLs from the browser.

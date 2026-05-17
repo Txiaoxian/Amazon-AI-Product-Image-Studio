@@ -52,6 +52,55 @@
 - `deploy/docker-compose.yml` 只用于部署骨架或部署回归验证；如需启动项目 Compose 栈，验证后必须清理，除非用户明确要求保留。
 - 不得把全局本地环境中的真实密码复制到项目文档、源码、测试或日志中。
 
+## P8/P9 起强制执行的任务包标准
+
+从后续 P8/P9 任务开始，任务包必须是“实现合同”，不能只写功能清单。除原有字段外，每个新 worktree 任务包还必须包含：
+
+1. `必须保持的现有行为`
+2. `允许的中间态`
+3. `禁止的半迁移状态`
+4. `失败模式与边界场景`
+5. `必须新增或更新的回归测试`
+
+这些要求来自近期 P7/P8 review 的真实复盘：
+
+- `P7-BE-TASK-FOUNDATION` 首轮实现暴露出 replay cursor 没有被提前冻结成稳定单调合同。
+- `P7-BE-WORKER-QUEUE` 首轮实现遗漏 orphaned claim recovery。
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME` 首轮实现未覆盖 API Key 出现在 metadata value 和 map key 两种脱敏边界。
+- `P8-FE-WORKBENCH-FOUNDATION` 首轮实现把 backend-ready 输入准备过早暴露为默认生产 UI，导致“新 UI / 旧请求脱节”、项目资产参考图静默失效、本地历史再次编辑死路。
+
+后续任务包必须把这些“原本靠 review 才显形的隐含约束”提前写出来。
+
+### 任务包编写规则
+
+- 迁移类任务必须写清楚：
+  - 旧生产路径是什么。
+  - 本任务结束后允许停在哪个中间态。
+  - 最终目标路径由哪个后续任务接管。
+  - 在替代路径接管前，哪些旧行为必须继续可用。
+  - 哪些半迁移状态绝对禁止出现。
+- 前端迁移任务必须包含三列表：
+
+| Old path | Allowed intermediate state | Target path |
+| --- | --- | --- |
+
+- Worker、queue、auth、RBAC、Provider、security、state-machine 等高风险后端任务必须附 `失败模式 / 状态转移矩阵`，至少覆盖任务范围内的 happy path、duplicate delivery、cancel、timeout、retry、recovery、third-party failure、cross-tenant/unauthorized、sensitive-data redaction 等 relevant 分支。
+- 如果某个高风险分支明确不在本任务范围内，必须在任务包中显式写出“延后到哪个任务”，不能留成默认空白。
+- 子 agent 最终回复必须把“必须新增或更新的回归测试”逐条映射到真实测试文件和测试名。
+- 如果实现过程中发现“保持旧行为”与“任务目标”发生冲突，而任务包没有授权破坏旧行为，子 agent 必须停止并上报，不得自行选择一个会破坏生产路径的中间态。
+
+### 主 agent review 规则
+
+主 agent 对后续 P8/P9 任务 review 时，必须显式检查：
+
+- 任务包要求保留的旧行为是否仍在。
+- 实际落地的中间态是否等于任务包允许的中间态。
+- 是否出现任务包禁止的半迁移状态。
+- 失败模式矩阵中的每一项是否有测试或明确的延期说明。
+- 子 agent 的最终回复是否把回归场景映射到了真实测试。
+
+如果 review 连续暴露同一类遗漏，主 agent 需要优先更新后续任务包和本节规则，而不是只在单次 review 中重复口头提醒。
+
 ## 串行阶段 0：主 agent 冻结公共合同
 
 ### 任务名称
@@ -2335,6 +2384,48 @@ P8-FE-TASK-WORKBENCH - 用 task API 与 SSE 替换工作台执行链路
 - `P8-FE-WORKBENCH-FOUNDATION` 已合并。
 - P7 task API、SSE event、cancel/retry 合同已可消费。
 
+### 必须保持的现有行为
+
+- 项目选择、参考图上传/选择、提示词编辑、现有结果区布局和本地历史查看入口在切换提交链路时仍然可用。
+- 旧本地历史在 `P8-FE-HISTORY-ASSET-SOURCE` 接管前仍可查看和再次编辑；本任务不得把它提前打成死路。
+- 工作台当前展示的可提交参数必须与实际创建的 backend task payload 一致。
+
+### 允许的中间态
+
+| Old path | Allowed intermediate state | Target path |
+| --- | --- | --- |
+| 浏览器 Provider submit + 本地结果 | 默认提交改为 backend task API + SSE，结果区显示 backend 输出资产；旧历史面板仍暂时保留为显式 legacy 数据源 | backend task API + SSE + backend 资产 + backend 历史 |
+
+- 新生成任务可以已经走 backend，但历史面板尚未成为 backend 主数据源；这个差异必须在 UI 和代码语义上保持清楚，不能伪装成同一个数据源。
+
+### 禁止的半迁移状态
+
+- 不允许继续出现“backend UI 参数 / legacy 实际请求”脱节。
+- 不允许同时触发浏览器 Provider submit 和 backend task create。
+- 不允许用轮询补 SSE 的断线重连。
+- 不允许把 backend task 输出复制回 IndexedDB 作为新的主历史真值。
+- 不允许旧历史入口仍显示可用，点击后却无法继续当前允许的再次编辑路径。
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| task create 成功 | 只创建一个 backend task，并进入 SSE 驱动状态流 |
+| task create 因 stale Provider/model/capability 失败 | 明确展示后端错误，刷新能力并要求重选 |
+| duplicate submit | 不重复创建 task |
+| SSE 断线重连 / replay | 通过 EventSource 和历史补发恢复，不启用 polling |
+| `FAILED` / `CANCELLED` / `RETRYING` / `TIMED_OUT` / `SUCCEEDED` | UI 与后端 canonical status 一致 |
+| `IMAGE_OUTPUT` 先于 terminal event 到达 | 结果区可增量显示输出，最终状态仍由 terminal event 决定 |
+
+### 必须新增或更新的回归测试
+
+- backend task payload 与可见工作台参数一致。
+- duplicate submit 不会创建多个 task。
+- stale model create failure 会触发明确错误和重新选择路径。
+- SSE reconnect / replay、heartbeat、terminal states 均不依赖 polling。
+- backend 输出资产驱动结果区，不从 Provider 原始响应或本地 base64 渲染。
+- 旧本地历史入口在本任务结束时仍保持明确且可用的兼容行为。
+
 ### 具体开发内容
 
 - 把 `useGeneration` 改为创建后端 task，提交 `projectId`、`providerId`、`modelId`、`referenceAssetIds`、`editSourceAssetId` 和被 capability 允许的参数。
@@ -2405,6 +2496,45 @@ P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
 - `P8-FE-TASK-WORKBENCH` 已合并。
 - 后端 task list/detail、asset download/detail 合同已稳定。
 
+### 必须保持的现有行为
+
+- `P8-FE-TASK-WORKBENCH` 已接管的 backend task submit、SSE 状态流和 backend result asset 显示必须保持可用。
+- 授权下载、当前项目上下文和再次编辑概念必须继续存在。
+- 若保留 legacy history 兼容入口，它必须保持显式、可理解、非默认，不得偷偷与 backend 主历史混成一体。
+
+### 允许的中间态
+
+| Old path | Allowed intermediate state | Target path |
+| --- | --- | --- |
+| IndexedDB local history 为默认历史 | 默认历史切到 backend task/assets；legacy history 若保留，只能是显式兼容入口 | backend task history + generated/edited assets 为唯一生产主路径 |
+
+### 禁止的半迁移状态
+
+- 不允许把 local history 与 backend history 混成用户无法区分的同一列表。
+- 不允许把旧 IndexedDB Blob 静默上传进租户资产库。
+- 不允许再次编辑按钮还存在，但实际仍依赖已失效的本地 Blob 回灌。
+- 不允许下载绕过后端鉴权或前端构造 MinIO 公网 URL。
+- 不允许为了刷新历史而引入 polling。
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| 当前项目无历史 | 显示空态，不回退到别的项目数据 |
+| 后端 task 有输出资产 | 历史项、详情、下载、再次编辑都基于授权 asset |
+| 输出资产已删除或不可见 | 展示非泄露性错误，不暴露跨租户存在性 |
+| 下载失败 | 保持 UI 可恢复，不绕过后端鉴权 |
+| 再次编辑时 source asset 不可用 | 明确提示并阻止创建无效任务 |
+| 切换项目 | 历史、详情和编辑上下文随项目切换，不串数据 |
+
+### 必须新增或更新的回归测试
+
+- 默认历史来源已经是 backend task/assets，而非 IndexedDB。
+- 空态、项目切换、asset 不可见或已删除场景不串租户/项目数据。
+- 下载继续通过后端授权接口。
+- 再次编辑使用 backend `assetId` / `editSourceAssetId`，不依赖 Blob 回灌。
+- 若保留 legacy history 兼容入口，测试必须证明它是显式且非默认的。
+
 ### 具体开发内容
 
 - 历史面板改读项目 task history 与 generated/edited assets。
@@ -2472,6 +2602,44 @@ P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路
 
 - `P8-FE-HISTORY-ASSET-SOURCE` 已合并。
 - 后端任务、SSE、资产和历史路径已经能覆盖主工作流。
+
+### 必须保持的现有行为
+
+- backend task submit、SSE、backend history、authorized download、再次编辑和 admin Provider/model 管理必须继续可用。
+- 非敏感 UI 偏好如果仍有价值可以保留，但不得夹带 Provider credentials。
+- 如果保留 legacy import/compat 入口，它必须是明确、默认关闭、不会触发 Provider 请求或租户写入的独立路径。
+
+### 允许的中间态
+
+| Old path | Allowed intermediate state | Target path |
+| --- | --- | --- |
+| 旧 Provider adapters、Provider local settings、IndexedDB 主历史仍在代码中 | 旧代码被删除或严格隔离为非生产兼容引用；主工作台只走 backend API/SSE/assets | 生产前端完全 backendized，旧直连和旧敏感本地路径退出 |
+
+### 禁止的半迁移状态
+
+- 不允许主工作台 import 旧 Provider adapter。
+- 不允许旧 API Key / Provider URL 从 localStorage 挪到另一种浏览器存储“换皮继续存在”。
+- 不允许删除旧入口后留下仍被 UI 引用的死链接或失效设置项。
+- 不允许删除兼容代码时顺手静默上传、删除或改写旧用户本地 Blob。
+- 不允许为了兼容旧行为重新引入 direct fetch 或 polling。
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| 浏览器里仍残留旧 Provider key/settings | 启动后不再被生产路径读取或使用 |
+| 旧 IndexedDB 里仍有历史 Blob | 不会被静默上传，不会成为默认历史源 |
+| 用户打开普通设置页 | 不再看到 Provider API Key / Provider URL 输入 |
+| 兼容代码若保留 | 默认不可达，且不触发网络调用或租户写入 |
+| 静态扫描命中 `localStorage` / `providers` | 每个保留命中都有明确、非敏感、非生产理由 |
+
+### 必须新增或更新的回归测试
+
+- 普通设置流不再接受或保存 Provider API Key / Provider URL。
+- 主工作台生产 imports 不再触达 `frontend/src/providers/**`。
+- IndexedDB 不再承担生成图或历史主数据职责。
+- 浏览器旧设置残留不会被 production flow 读取使用。
+- 静态扫描和必要测试覆盖 direct fetch、Authorization、polling、sensitive storage 的移除。
 
 ### 具体开发内容
 
@@ -2603,6 +2771,43 @@ P9-AUDIT-HARDENING - 用量审计、系统设置、安全回归和发布验证
 ### 前置依赖
 
 - R8 前端后端化 review 完成。
+
+### 必须保持的现有行为
+
+- P8 完成后的 backendized workbench、task/SSE、asset download、Provider/model 管理、租户隔离和 RBAC 行为必须保持稳定。
+- 已有日志脱敏、SSRF、防跨租户、上传安全和对象级权限边界不得被运维功能破坏。
+
+### 允许的中间态
+
+- 可以先补齐查询、统计、设置和发布验证能力，再做最终发布收口。
+- 新增系统设置前端 UI 只能消费已经落地的后端字段；不能先显示一个实际没有约束力的“假设置”。
+
+### 禁止的半迁移状态
+
+- 不允许系统设置 UI 展示已生效，但后端实际不执行。
+- 不允许 usage / audit / api call logs 查询把完整 API Key、Authorization、Cookie、图片 base64 或跨租户数据暴露出来。
+- 不允许为了发布验证启动新的项目专属 MySQL/Redis/MinIO 开发环境并遗留。
+- 不允许生产 secret hardening 只做前端提示、不做后端强校验。
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| 非 admin 查询审计/系统设置 | 被 RBAC 拒绝 |
+| 跨租户查询 usage / logs | 不可见且不泄露存在性 |
+| metadata 含 secret / nested secret | 查询结果继续脱敏 |
+| 非法系统设置 | 后端拒绝并写 sanitized operation log |
+| 默认生产 secret | 启动被拒绝 |
+| retention / upload / concurrency 限制更新失败 | 不产生“UI 显示成功、后端未生效”的假状态 |
+| Compose 全链路验证 | 使用文档规定环境，验证后清理项目 Compose 栈 |
+
+### 必须新增或更新的回归测试
+
+- usage、operation logs、api call logs、system settings 的 RBAC 和 tenant 隔离。
+- sensitive metadata 查询结果仍然递归脱敏。
+- 默认生产 secret 被后端启动校验拒绝。
+- 设置校验失败与成功路径都有 operation log。
+- 发布回归继续覆盖 SSRF、上传安全、SSE replay 可见性、对象级权限。
 
 ### 具体开发内容
 

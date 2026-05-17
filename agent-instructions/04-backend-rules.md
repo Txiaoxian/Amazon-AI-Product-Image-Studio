@@ -48,6 +48,8 @@ backend/
 - Worker must be idempotent. Duplicate queue deliveries must not duplicate outputs, usage records, or terminal events.
 - Task state transitions must follow the documented state machine.
 - Cancellation, retry, timeout, and recovery must read MySQL state before acting.
+- Worker, queue, auth, Provider, and other stateful backend tasks must define a failure-mode or state-transition matrix before implementation and add tests for each in-scope branch.
+- If a high-risk branch is intentionally deferred, the task package and final handoff must say so explicitly.
 
 ## Redis
 

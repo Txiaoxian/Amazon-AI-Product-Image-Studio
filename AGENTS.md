@@ -8,6 +8,7 @@ This is the project-level main instruction file for Amazon AI Product Image Stud
 - If multiple topics apply, read all matching files.
 - Global Codex instructions still apply. More specific project rules in this directory take precedence for this repository.
 - Keep this structure when editing project instructions: main `AGENTS.md` plus focused files under `agent-instructions/`.
+- For worktree task planning, migration tasks, or review handoff, read `agent-instructions/07-task-package-and-review-rules.md` in addition to the domain-specific rules.
 
 ## Project decision
 
@@ -45,6 +46,7 @@ P0 documentation may describe this target structure before files are physically 
 | `agent-instructions/04-backend-rules.md` | Go backend, database, worker, queues | Gin/GORM structure, tenant filters, Redis queue, MySQL source of truth. |
 | `agent-instructions/05-security-rules.md` | Auth, RBAC, uploads, Provider config, logging | Security requirements for cookies, SSRF, API keys, uploads, audit, and logs. |
 | `agent-instructions/06-testing-and-delivery.md` | Verification, delivery notes, PR handoff | Required validation commands and delivery expectations by change type. |
+| `agent-instructions/07-task-package-and-review-rules.md` | Worktree task planning, migration tasks, review handoff | Required task-package sections, intermediate-state rules, failure matrices, and regression-test mapping. |
 
 ## Related planning docs
 
