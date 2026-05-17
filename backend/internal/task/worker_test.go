@@ -344,11 +344,15 @@ func TestProviderRuntimeExecutorRedactsCurrentAPIKeyBeforeWorkerPersistsAPICall(
 						RequestMetadata: map[string]any{
 							"message":       "request had " + apiKey,
 							"Authorization": "Bearer " + apiKey,
+							"nested": map[string]any{
+								apiKey: "request key leaked",
+							},
 						},
 						ResponseMetadata: map[string]any{
 							"nested": map[string]any{
-								"message": "response had " + apiKey,
-								"Cookie":  "session=" + apiKey,
+								"message":          "response had " + apiKey,
+								"Cookie":           "session=" + apiKey,
+								"prefix_" + apiKey: "response key leaked",
 							},
 						},
 					},

@@ -43,7 +43,7 @@ func (r *Redactor) RedactValue(value any) any {
 	case map[string]any:
 		clean := make(map[string]any, len(typed))
 		for key, item := range typed {
-			if sensitiveKey(key) {
+			if sensitiveKey(key) || r.RedactString(key) != key {
 				continue
 			}
 			clean[key] = r.RedactValue(item)

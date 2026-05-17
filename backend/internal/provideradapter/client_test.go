@@ -252,6 +252,29 @@ func TestOpenAICompatibleErrorsRedactCurrentAPIKeyValue(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleHTTPErrorRedactsCurrentAPIKeyMapKey(t *testing.T) {
+	apiKey := "relay_live_1234567890abcdef"
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"error":{"` + apiKey + `":"rejected"}}`
+		return jsonResponse(http.StatusBadGateway, body, ""), nil
+	})
+	client := NewClient(ClientOptions{HTTPClient: &http.Client{Transport: transport}})
+
+	result, err := client.Execute(context.Background(), ImageRequest{
+		Operation: OperationGenerate,
+		Prompt:    "prompt",
+		Provider:  ProviderConfig{Type: provider.TypeOpenAICompatible, BaseURL: "https://relay.example.com/v1", APIKey: apiKey},
+		Model:     ModelConfig{ModelName: "custom-image"},
+	})
+	if err == nil {
+		t.Fatal("Execute succeeded, want provider error")
+	}
+	combined := result.APICall.ErrorMessage + " " + err.Error() + " " + result.APICall.RedactedTextForTest()
+	if strings.Contains(combined, apiKey) {
+		t.Fatalf("compatible provider error map key leaked API key: %q", combined)
+	}
+}
+
 func (c APICall) RedactedTextForTest() string {
 	requestJSON, _ := json.Marshal(c.RequestMetadata)
 	responseJSON, _ := json.Marshal(c.ResponseMetadata)
