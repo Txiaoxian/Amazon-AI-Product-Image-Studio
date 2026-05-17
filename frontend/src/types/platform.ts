@@ -92,14 +92,16 @@ export interface Asset {
 }
 
 export type TaskType = 'IMAGE_GENERATION' | 'IMAGE_EDIT'
-export type TaskStatus =
-  | 'QUEUED'
-  | 'RUNNING'
-  | 'FAILED'
-  | 'COMPLETED'
-  | 'CANCELLED'
-  | 'RETRYING'
-  | 'TIMED_OUT'
+export const TASK_STATUSES = [
+  'QUEUED',
+  'RUNNING',
+  'SUCCEEDED',
+  'FAILED',
+  'CANCELLED',
+  'RETRYING',
+  'TIMED_OUT',
+] as const
+export type TaskStatus = (typeof TASK_STATUSES)[number]
 
 export interface Task {
   id: TaskId
@@ -110,16 +112,21 @@ export interface Task {
   prompt: string
   providerId: ProviderId
   modelId: ModelId
+  imageType: string
+  parameters: Record<string, unknown>
   inputAssetIds: AssetId[]
   outputAssetIds: AssetId[]
-  progress?: number
-  errorCode?: string
-  errorMessage?: string
+  attempt: number
+  maxAttempts: number
+  queuedAt: ISODateTimeString | null
+  startedAt: ISODateTimeString | null
+  finishedAt: ISODateTimeString | null
+  timeoutAt: ISODateTimeString | null
+  errorCode: string
+  errorMessage: string
   createdBy: UserId
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
-  startedAt?: ISODateTimeString
-  completedAt?: ISODateTimeString
 }
 
 export interface CreateTaskRequest {
@@ -127,6 +134,7 @@ export interface CreateTaskRequest {
   prompt: string
   providerId: ProviderId
   modelId: ModelId
+  imageType?: string
   referenceAssetIds?: AssetId[]
   editSourceAssetId?: AssetId
   parameters?: Record<string, unknown>
