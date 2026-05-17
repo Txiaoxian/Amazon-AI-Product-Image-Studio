@@ -15,6 +15,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"gorm.io/gorm"
 )
@@ -50,10 +51,30 @@ func main() {
 		}
 	}()
 
+	objectStore, err := storage.NewMinIOStore(cfg.Storage)
+	if err != nil {
+		log.Error("worker storage startup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	executor, err := task.NewProviderRuntimeExecutor(db, log, task.ProviderRuntimeExecutorOptions{
+		Provider: cfg.Provider,
+		Storage:  cfg.Storage,
+		Upload:   cfg.Upload,
+		Store:    objectStore,
+	})
+	if err != nil {
+		log.Error("worker provider runtime startup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
 	taskQueue := queue.NewRedisReliableTaskQueue(cfg.Queue)
 	processor := task.NewWorkerProcessor(db, log, task.WorkerProcessorOptions{
 		Limiter:             queue.NewRedisConcurrencyLimiter(cfg.Queue),
 		EventPublisher:      queue.NewRedisTaskEventPublisher(cfg.Queue),
+		Executor:            executor,
+		Store:               objectStore,
+		StorageConfig:       cfg.Storage,
+		UploadConfig:        cfg.Upload,
 		ConcurrencyLeaseTTL: cfg.Queue.ConcurrencyLeaseTTL,
 		GlobalConcurrency:   cfg.Queue.GlobalConcurrency,
 		TenantConcurrency:   cfg.Queue.TenantConcurrency,

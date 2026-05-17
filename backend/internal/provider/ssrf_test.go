@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 )
 
 type staticResolver map[string][]net.IPAddr
@@ -80,4 +81,66 @@ func TestHTTPProberRejectsRedirectToBlockedTarget(t *testing.T) {
 	if err := prober.checkRedirect(request, nil); err == nil {
 		t.Fatal("redirect check accepted blocked target")
 	}
+}
+
+func TestSafeRoundTripperBlocksResolvedPrivateIP(t *testing.T) {
+	validator := NewURLValidator(staticResolver{
+		"blocked.example.com": {{IP: net.ParseIP("127.0.0.1")}},
+	})
+	client := NewSafeHTTPClient(validator, time.Second)
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://blocked.example.com/v1/models", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if _, err := client.Do(request); err == nil {
+		t.Fatal("safe client accepted blocked resolved IP")
+	}
+}
+
+func TestSafeRoundTripperBlocksRedirectTarget(t *testing.T) {
+	validator := NewURLValidator(staticResolver{
+		"api.openai.com": {{IP: net.ParseIP("93.184.216.34")}},
+	})
+	roundTripper := NewSafeRoundTripper(validator)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://127.0.0.1/v1/models", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if err := roundTripper.CheckRedirect(request, nil); err == nil {
+		t.Fatal("safe client redirect check accepted blocked target")
+	}
+}
+
+func TestSafeRoundTripperRevalidatesDialTargetAgainstDNSRebinding(t *testing.T) {
+	resolver := &sequenceResolver{responses: [][]net.IPAddr{
+		{{IP: net.ParseIP("93.184.216.34")}},
+		{{IP: net.ParseIP("127.0.0.1")}},
+	}}
+	client := NewSafeHTTPClient(NewURLValidator(resolver), time.Second)
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://rebind.example.com/v1/models", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if _, err := client.Do(request); err == nil {
+		t.Fatal("safe client accepted rebinding dial target")
+	}
+	if resolver.calls < 2 {
+		t.Fatalf("resolver calls = %d, want at least 2 for preflight and dial-time validation", resolver.calls)
+	}
+}
+
+type sequenceResolver struct {
+	calls     int
+	responses [][]net.IPAddr
+}
+
+func (r *sequenceResolver) LookupIPAddr(_ context.Context, _ string) ([]net.IPAddr, error) {
+	index := r.calls
+	r.calls++
+	if index >= len(r.responses) {
+		index = len(r.responses) - 1
+	}
+	return r.responses[index], nil
 }

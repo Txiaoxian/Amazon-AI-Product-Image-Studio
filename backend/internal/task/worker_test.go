@@ -1,19 +1,27 @@
 package task
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	modelpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	providerpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provideradapter"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -203,6 +211,266 @@ func TestWorkerProcessorDuplicateClaimAfterCompletionDoesNotDuplicateTerminalEve
 	}
 
 	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskCompleted})
+}
+
+func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-provider-success", Status: StatusQueued})
+	store := newMemoryObjectStore()
+	pngBytes := workerTinyPNG(t)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			httpStatus := 200
+			return ExecutionResult{
+				Outputs: []GeneratedImageOutput{{
+					Data:     pngBytes,
+					MIMEType: "image/png",
+					Metadata: map[string]any{"providerOutputIndex": 0, "b64_json": "must-redact"},
+				}},
+				Usage: UsageResult{
+					InputTokens:  11,
+					OutputTokens: 4,
+					ImageCount:   1,
+					Raw:          map[string]any{"input_tokens": 11, "b64_json": "must-redact"},
+				},
+				APICall: APICallResult{
+					Status:     provideradapter.APICallStatusSuccess,
+					DurationMs: 123,
+					RequestID:  "req-success",
+					HTTPStatus: &httpStatus,
+					RequestMetadata: map[string]any{
+						"operation":     "generate",
+						"Authorization": "Bearer sk-secret",
+					},
+					ResponseMetadata: map[string]any{
+						"outputCount": 1,
+						"b64_json":    "must-redact",
+					},
+				},
+			}
+		}),
+	})
+
+	for i := 0; i < 2; i++ {
+		result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: int64(i + 1)})
+		if err != nil {
+			t.Fatalf("Process %d returned error: %v", i, err)
+		}
+		if result.Action != claimActionAck {
+			t.Fatalf("Process %d action = %v, want ack", i, result.Action)
+		}
+	}
+
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventImageOutput, EventUsageRecorded, EventTaskCompleted})
+	assertTableCount(t, db, &database.ImageAsset{}, 1)
+	assertTableCount(t, db, &database.TaskOutput{}, 1)
+	assertTableCount(t, db, &database.UsageRecord{}, 1)
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	if len(store.objects["generated-assets"]) != 1 {
+		t.Fatalf("generated objects = %#v, want one object in generated bucket", store.objects)
+	}
+	assertWorkerRuntimeMetadataSanitized(t, db)
+}
+
+func TestWorkerProcessorFailureRecordsSanitizedAPICallWithoutAssets(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-provider-failure", Status: StatusQueued})
+	httpStatus := 500
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store: newMemoryObjectStore(),
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{
+				APICall: APICallResult{
+					Status:       provideradapter.APICallStatusFailure,
+					DurationMs:   20,
+					HTTPStatus:   &httpStatus,
+					ErrorCode:    "provider_http_error",
+					ErrorMessage: "Authorization Bearer sk-secret base64 AAAA",
+					RequestMetadata: map[string]any{
+						"cookie": "session=secret",
+					},
+				},
+				ErrorCode:    "provider_http_error",
+				ErrorMessage: "Authorization Bearer sk-secret base64 AAAA",
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorMessage != "Task execution message redacted." {
+		t.Fatalf("failed task = %#v, want sanitized failure", record)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskFailed})
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	assertTableCount(t, db, &database.UsageRecord{}, 0)
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	assertWorkerRuntimeMetadataSanitized(t, db)
+}
+
+func TestProviderRuntimeExecutorRedactsCurrentAPIKeyBeforeWorkerPersistsAPICall(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-runtime-redacts-current-key", Status: StatusQueued})
+	apiKey := "relay_live_1234567890abcdef"
+	httpStatus := 502
+	runtimeExecutor, err := NewProviderRuntimeExecutor(db, nil, ProviderRuntimeExecutorOptions{
+		Runtime: fakeProviderRuntime(func(_ context.Context, req provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+			if req.Provider.APIKey != apiKey {
+				t.Fatalf("runtime API key = %q, want decrypted key", req.Provider.APIKey)
+			}
+			return provideradapter.ImageResult{
+					APICall: provideradapter.APICall{
+						Status:       provideradapter.APICallStatusFailure,
+						DurationMs:   17,
+						HTTPStatus:   &httpStatus,
+						ErrorCode:    "provider_http_error",
+						ErrorMessage: "provider echoed " + apiKey,
+						RequestMetadata: map[string]any{
+							"message":       "request had " + apiKey,
+							"Authorization": "Bearer " + apiKey,
+							"nested": map[string]any{
+								apiKey: "request key leaked",
+							},
+						},
+						ResponseMetadata: map[string]any{
+							"nested": map[string]any{
+								"message":          "response had " + apiKey,
+								"Cookie":           "session=" + apiKey,
+								"prefix_" + apiKey: "response key leaked",
+							},
+						},
+					},
+				}, provideradapter.ProviderError{
+					Code:       "PROVIDER_HTTP_ERROR",
+					Message:    "provider error included " + apiKey,
+					HTTPStatus: &httpStatus,
+				}
+		}),
+		Decrypter:    staticAPIKeyDecrypter(apiKey),
+		URLValidator: providerpkg.NewURLValidator(staticIPResolver{ip: net.ParseIP("8.8.8.8")}),
+	})
+	if err != nil {
+		t.Fatalf("create runtime executor: %v", err)
+	}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed {
+		t.Fatalf("task status = %q, want FAILED", record.Status)
+	}
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	assertNoWorkerPersistedText(t, db, apiKey)
+	for _, forbidden := range []string{"authorization", "cookie"} {
+		assertNoWorkerPersistedText(t, db, forbidden)
+	}
+}
+
+func TestExecutionResultFromProviderRedactsCurrentAPIKeyInOutputsAndUsage(t *testing.T) {
+	apiKey := "relay_live_abcdef1234567890"
+	httpStatus := 200
+
+	result := executionResultFromProvider(provideradapter.ImageResult{
+		Images: []provideradapter.Image{{
+			Data:     workerTinyPNG(t),
+			MIMEType: "image/png",
+			Metadata: map[string]any{
+				"message": "output included " + apiKey,
+			},
+		}},
+		Usage: provideradapter.Usage{
+			InputTokens: 1,
+			ImageCount:  1,
+			Raw: map[string]any{
+				"providerNote": "usage included " + apiKey,
+			},
+		},
+		APICall: provideradapter.APICall{
+			Status:       provideradapter.APICallStatusSuccess,
+			HTTPStatus:   &httpStatus,
+			ErrorMessage: "call included " + apiKey,
+			RequestMetadata: map[string]any{
+				"message": "request included " + apiKey,
+			},
+			ResponseMetadata: map[string]any{
+				"message": "response included " + apiKey,
+			},
+		},
+	}, provideradapter.NewRedactor(apiKey))
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal execution result: %v", err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, apiKey) {
+		t.Fatalf("execution result leaked API key: %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("execution result did not contain redacted marker: %s", text)
+	}
+}
+
+func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-cancel-after-upload", Status: StatusQueued})
+	store := newMemoryObjectStore()
+	store.onPut = func() {
+		now := time.Now().UTC()
+		finishedAt := now
+		if err := db.Model(&database.GenerationTask{}).
+			Where("tenant_id = ? AND id = ?", "tenant-worker", taskID).
+			Updates(map[string]any{
+				"status":      StatusCancelled,
+				"finished_at": &finishedAt,
+				"updated_at":  now,
+			}).Error; err != nil {
+			t.Fatalf("cancel task after upload: %v", err)
+		}
+	}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: workerTinyPNG(t), MIMEType: "image/png"}}}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	if len(store.objects["generated-assets"]) != 0 {
+		t.Fatalf("unpersisted generated object was not cleaned up: %#v", store.objects)
+	}
 }
 
 func TestWorkerProcessorHonorsCancellationBeforeCompletion(t *testing.T) {
@@ -469,6 +737,68 @@ func (q *recordingReliableQueue) PromoteDue(context.Context, time.Time, int) ([]
 	return nil, nil
 }
 
+type fakeProviderRuntime func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error)
+
+func (f fakeProviderRuntime) Execute(ctx context.Context, request provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+	return f(ctx, request)
+}
+
+type staticAPIKeyDecrypter string
+
+func (d staticAPIKeyDecrypter) Decrypt(string) (string, error) {
+	return string(d), nil
+}
+
+type staticIPResolver struct {
+	ip net.IP
+}
+
+func (r staticIPResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	if r.ip == nil {
+		return nil, errors.New("missing static test IP")
+	}
+	return []net.IPAddr{{IP: r.ip}}, nil
+}
+
+type memoryObjectStore struct {
+	objects map[string]map[string][]byte
+	onPut   func()
+}
+
+func newMemoryObjectStore() *memoryObjectStore {
+	return &memoryObjectStore{objects: map[string]map[string][]byte{}}
+}
+
+func (s *memoryObjectStore) PutObject(_ context.Context, bucket string, key string, body io.Reader, _ int64, _ string) error {
+	if s.objects[bucket] == nil {
+		s.objects[bucket] = map[string][]byte{}
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	s.objects[bucket][key] = data
+	if s.onPut != nil {
+		s.onPut()
+	}
+	return nil
+}
+
+func (s *memoryObjectStore) GetObject(_ context.Context, bucket string, key string) (storage.Object, error) {
+	data, ok := s.objects[bucket][key]
+	if !ok {
+		return storage.Object{}, storage.ErrNotFound
+	}
+	return storage.Object{Body: io.NopCloser(bytes.NewReader(data)), Size: int64(len(data)), ContentType: "image/png"}, nil
+}
+
+func (s *memoryObjectStore) RemoveObject(_ context.Context, bucket string, key string) error {
+	if s.objects[bucket] != nil {
+		delete(s.objects[bucket], key)
+	}
+	return nil
+}
+
 type workerTaskSeed struct {
 	ID            string
 	Status        string
@@ -529,6 +859,27 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 			site TEXT NOT NULL DEFAULT '',
 			notes TEXT NULL,
 			status TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP NULL
+		)`,
+		`CREATE TABLE image_assets (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			project_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			category TEXT NOT NULL,
+			filename TEXT NOT NULL,
+			object_key TEXT NOT NULL,
+			thumbnail_object_key TEXT NULL,
+			mime_type TEXT NOT NULL,
+			size_bytes INTEGER NOT NULL,
+			width INTEGER NOT NULL,
+			height INTEGER NOT NULL,
+			sha256 TEXT NOT NULL,
+			is_favorite BOOLEAN NOT NULL,
+			source_task_id TEXT NULL,
 			created_by TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
@@ -615,6 +966,22 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 		task_id TEXT NOT NULL,
 		asset_id TEXT NOT NULL,
 		output_index INTEGER NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	)`,
+		`CREATE TABLE api_call_logs (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		task_id TEXT NOT NULL,
+		provider_id TEXT NOT NULL,
+		model_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		request_id TEXT NOT NULL,
+		http_status INTEGER NULL,
+		error_code TEXT NOT NULL,
+		error_message TEXT NOT NULL,
+		redacted_request_json TEXT NULL,
+		redacted_response_json TEXT NULL,
 		created_at TIMESTAMP NOT NULL
 	)`,
 		`CREATE TABLE usage_records (
@@ -806,8 +1173,87 @@ func assertWorkerEventsSanitized(t *testing.T, db *gorm.DB) {
 	}
 }
 
+func assertWorkerRuntimeMetadataSanitized(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var apiLogs []database.APICallLog
+	if err := db.Find(&apiLogs).Error; err != nil {
+		t.Fatalf("load api logs: %v", err)
+	}
+	var usageRecords []database.UsageRecord
+	if err := db.Find(&usageRecords).Error; err != nil {
+		t.Fatalf("load usage records: %v", err)
+	}
+	combined := ""
+	for _, record := range apiLogs {
+		combined += record.ErrorMessage + record.RedactedRequestJSON + record.RedactedResponseJSON
+	}
+	for _, record := range usageRecords {
+		combined += record.RawUsageJSON
+	}
+	lower := strings.ToLower(combined)
+	for _, forbidden := range []string{"sk-secret", "authorization", "cookie", "bearer", "base64", "b64_json", "must-redact"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("runtime metadata leaked %q: %s", forbidden, combined)
+		}
+	}
+}
+
+func assertNoWorkerPersistedText(t *testing.T, db *gorm.DB, value string) {
+	t.Helper()
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return
+	}
+	var apiLogs []database.APICallLog
+	if err := db.Find(&apiLogs).Error; err != nil {
+		t.Fatalf("load api logs: %v", err)
+	}
+	var taskEvents []database.TaskEvent
+	if err := db.Find(&taskEvents).Error; err != nil {
+		t.Fatalf("load task events: %v", err)
+	}
+	var tasks []database.GenerationTask
+	if err := db.Find(&tasks).Error; err != nil {
+		t.Fatalf("load tasks: %v", err)
+	}
+	combined := ""
+	for _, record := range apiLogs {
+		combined += record.ErrorMessage + record.RedactedRequestJSON + record.RedactedResponseJSON
+	}
+	for _, event := range taskEvents {
+		combined += event.EventPayloadJSON
+	}
+	for _, taskRecord := range tasks {
+		combined += taskRecord.ErrorMessage
+	}
+	if strings.Contains(strings.ToLower(combined), value) {
+		t.Fatalf("persisted worker data leaked %q: %s", value, combined)
+	}
+}
+
+func assertTableCount(t *testing.T, db *gorm.DB, model any, expected int64) {
+	t.Helper()
+	var count int64
+	if err := db.Model(model).Count(&count).Error; err != nil {
+		t.Fatalf("count table: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("table count = %d, want %d", count, expected)
+	}
+}
+
+func workerTinyPNG(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
+	if err != nil {
+		t.Fatalf("decode tiny png: %v", err)
+	}
+	return data
+}
+
 var _ queue.ConcurrencyLimiter = (*recordingLimiter)(nil)
 var _ queue.ReliableTaskQueue = (*recordingReliableQueue)(nil)
+var _ storage.ObjectStore = (*memoryObjectStore)(nil)
 var _ Executor = executorFunc(nil)
 var _ EventPublisher = (*recordingPublisher)(nil)
 
