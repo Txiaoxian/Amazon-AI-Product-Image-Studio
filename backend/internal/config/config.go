@@ -249,6 +249,9 @@ func load(lookup lookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := validateProductionSecrets(appEnv, auth.JWTSigningSecret, provider.APIKeyEncryptionKey); err != nil {
+		return Config{}, err
+	}
 
 	queue, err := queueConfigFromEnv(lookup)
 	if err != nil {
@@ -310,6 +313,21 @@ func validateLogLevel(logLevel string) error {
 	default:
 		return fmt.Errorf("invalid LOG_LEVEL %q", logLevel)
 	}
+}
+
+func validateProductionSecrets(appEnv, jwtSigningSecret, apiKeyEncryptionKey string) error {
+	if !strings.EqualFold(appEnv, "production") {
+		return nil
+	}
+
+	if jwtSigningSecret == defaultJWTSigningSecret {
+		return fmt.Errorf("invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production")
+	}
+	if apiKeyEncryptionKey == defaultAPIKeyEncryptionKey {
+		return fmt.Errorf("invalid API_KEY_ENCRYPTION_KEY: placeholder secret is not allowed in production")
+	}
+
+	return nil
 }
 
 func apiBindFromEnv(lookup lookupFunc) (string, int, string, error) {

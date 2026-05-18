@@ -25,7 +25,7 @@ const defaultWorkerHealthcheckFile = "/tmp/worker-ready"
 func main() {
 	bootstrapLog := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	cfg, err := config.Load()
+	cfg, err := loadStartupConfig()
 	if err != nil {
 		bootstrapLog.Error("configuration error", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -122,6 +122,10 @@ func main() {
 	}
 
 	log.Info("worker stopped", slog.String("name", cfg.Worker.Name))
+}
+
+func loadStartupConfig() (config.Config, error) {
+	return config.Load()
 }
 
 func stopWorker(context.Context) error {

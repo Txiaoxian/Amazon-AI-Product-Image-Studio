@@ -48,3 +48,17 @@ func TestWorkerReadinessFileLifecycle(t *testing.T) {
 		t.Fatalf("second removeWorkerReady returned error: %v", err)
 	}
 }
+
+func TestLoadStartupConfigRejectsPlaceholderProductionSecrets(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SIGNING_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("API_KEY_ENCRYPTION_KEY", "")
+
+	_, err := loadStartupConfig()
+	if err == nil {
+		t.Fatal("loadStartupConfig returned nil error for placeholder API key encryption secret")
+	}
+	if got := err.Error(); got != "invalid API_KEY_ENCRYPTION_KEY: placeholder secret is not allowed in production" {
+		t.Fatalf("loadStartupConfig error = %q", got)
+	}
+}

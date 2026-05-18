@@ -25,3 +25,17 @@ func TestNewRouterServesHealthRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadStartupConfigRejectsPlaceholderProductionSecrets(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SIGNING_SECRET", "")
+	t.Setenv("API_KEY_ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+
+	_, err := loadStartupConfig()
+	if err == nil {
+		t.Fatal("loadStartupConfig returned nil error for placeholder JWT signing secret")
+	}
+	if got := err.Error(); got != "invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production" {
+		t.Fatalf("loadStartupConfig error = %q", got)
+	}
+}
