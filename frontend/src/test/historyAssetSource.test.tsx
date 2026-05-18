@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -426,6 +426,71 @@ describe('backend history asset source', () => {
       type: 'IMAGE_EDIT',
       editSourceAssetId: 'asset_generated_1',
     })
+  })
+
+  it('clears backend re-edit source state after entering legacy compatibility mode and returning to backend workbench', async () => {
+    const user = userEvent.setup()
+    const generatedImage = await saveImage({
+      blob: new Blob(['legacy-bridge-image'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      purpose: 'generated',
+      size: 19,
+      width: 1,
+      height: 1,
+    })
+    await createHistoryItem({
+      generatedImageId: generatedImage.id,
+      referenceImageIds: [],
+      request: {
+        prompt: 'Legacy bridge prompt',
+        model: providerRegistry.getModelById('openai-gpt-image-2'),
+        quality: '1K',
+        aspectRatio: '1:1',
+        imageCount: 1,
+        references: [],
+        referenceImageUrls: [],
+      },
+      result: {
+        blob: generatedImage.blob,
+        mimeType: generatedImage.mimeType,
+        width: 1,
+        height: 1,
+        fileSize: generatedImage.size,
+        durationMs: 42,
+      },
+    })
+    const fetchImpl = createHistoryFetch({
+      createTask: () => successResponse({ ...task, type: 'IMAGE_GENERATION' }, 201),
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
+    expect(await screen.findByText('已准备基于后端资产再次编辑。')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '查看旧本地历史' }))
+    const legacyHistoryItem = (await screen.findByAltText('Legacy bridge prompt')).closest('article')
+    expect(legacyHistoryItem).not.toBeNull()
+    await user.click(within(legacyHistoryItem as HTMLElement).getByRole('button', { name: '再次编辑' }))
+    await user.click(await screen.findByRole('button', { name: '返回后端工作台' }))
+
+    await user.type(screen.getByLabelText('提示词'), 'Fresh backend prompt')
+    await user.click(screen.getByRole('button', { name: '生成图片' }))
+
+    await waitFor(() => {
+      expect(
+        fetchImpl.mock.calls.some(([url, init]) => url === '/api/v1/projects/project_1/tasks' && init?.method === 'POST'),
+      ).toBe(true)
+    })
+
+    const createCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/projects/project_1/tasks' && init?.method === 'POST',
+    )
+    expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+      type: 'IMAGE_GENERATION',
+    })
+    expect(JSON.parse(createCall?.[1]?.body as string)).not.toHaveProperty('editSourceAssetId')
   })
 })
 

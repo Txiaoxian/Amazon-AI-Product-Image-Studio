@@ -181,7 +181,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     } else {
       setNotice(`兼容模式已生成 ${results.length} 张图片，并保存到旧本地历史。`)
     }
-    await history.refresh()
+    await history.refreshLegacy()
     await storageUsage.refresh()
   }
 
@@ -280,6 +280,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
 
     generation.setFromHistory(item)
+    setPendingEditSourceAssetId(null)
     setDraft({
       prompt: item.item.prompt,
       modelId: model.id,
@@ -462,6 +463,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
               <button
                 className="mt-2 text-xs font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2"
                 onClick={() => {
+                  setPendingEditSourceAssetId(null)
                   setWorkbenchMode('backend')
                   setDraft(null)
                 }}
