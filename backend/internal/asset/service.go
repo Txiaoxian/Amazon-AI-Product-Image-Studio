@@ -30,9 +30,14 @@ type Service struct {
 	projectAuthorizer project.Authorizer
 	store             storage.ObjectStore
 	storageConfig     config.StorageConfig
-	validator         uploadValidator
+	uploadConfig      config.UploadConfig
+	policyResolver    uploadPolicyResolver
 	log               *slog.Logger
 	now               func() time.Time
+}
+
+type uploadPolicyResolver interface {
+	EffectiveUploadConfig(ctx context.Context, tenantID string) (config.UploadConfig, error)
 }
 
 type updateRequest struct {
@@ -41,17 +46,19 @@ type updateRequest struct {
 	IsFavorite *bool   `json:"isFavorite"`
 }
 
-func NewService(db *gorm.DB, log *slog.Logger, storageConfig config.StorageConfig, uploadConfig config.UploadConfig, store storage.ObjectStore) *Service {
+func NewService(db *gorm.DB, log *slog.Logger, storageConfig config.StorageConfig, uploadConfig config.UploadConfig, store storage.ObjectStore, policyResolver uploadPolicyResolver) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
+	uploadConfig = config.NormalizeUploadConfig(uploadConfig)
 	return &Service{
 		db:                db,
 		repo:              NewRepository(db),
 		projectAuthorizer: project.NewAuthorizer(db),
 		store:             store,
 		storageConfig:     config.NormalizeStorageConfig(storageConfig),
-		validator:         newUploadValidator(uploadConfig),
+		uploadConfig:      uploadConfig,
+		policyResolver:    policyResolver,
 		log:               log,
 		now: func() time.Time {
 			return time.Now().UTC()
@@ -104,14 +111,20 @@ func (s *Service) UploadAsset(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.validator.maxRequestBytes())
+	uploadConfig, err := s.effectiveUploadConfig(c.Request.Context(), principal.TenantID)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	validator := newUploadValidator(uploadConfig)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, validator.maxRequestBytes())
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
 		return
 	}
 
-	validated, err := s.validator.validate(fileHeader)
+	validated, err := validator.validate(fileHeader)
 	if err != nil {
 		s.respondError(c, err)
 		return
@@ -542,6 +555,13 @@ func (s *Service) authorizeAsset(ctx context.Context, principal auth.Principal, 
 		return database.ImageAsset{}, database.Project{}, err
 	}
 	return record, projectRecord, nil
+}
+
+func (s *Service) effectiveUploadConfig(ctx context.Context, tenantID string) (config.UploadConfig, error) {
+	if s.policyResolver == nil {
+		return s.uploadConfig, nil
+	}
+	return s.policyResolver.EffectiveUploadConfig(ctx, tenantID)
 }
 
 func parseListQuery(c *gin.Context) (ListQuery, error) {

@@ -508,6 +508,26 @@ CREATE TABLE IF NOT EXISTS usage_records (
   CONSTRAINT fk_usage_records_provider FOREIGN KEY (tenant_id, provider_id) REFERENCES ai_providers(tenant_id, id),
   CONSTRAINT fk_usage_records_model FOREIGN KEY (tenant_id, model_id) REFERENCES ai_models(tenant_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Usage and estimated cost metadata; raw usage must be sanitized before insert'
+			`,
+		},
+	},
+	{
+		ID:   "202605180001_system_settings",
+		Name: "create tenant scoped system settings table",
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS system_settings (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  ` + "`key`" + ` VARCHAR(128) NOT NULL,
+  value_json JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_system_settings_tenant_id (tenant_id, id),
+  UNIQUE KEY uk_system_settings_tenant_key (tenant_id, ` + "`key`" + `),
+  KEY idx_system_settings_tenant_id (tenant_id),
+  CONSTRAINT fk_system_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tenant-scoped system settings; first active key is upload_policy only'
 `,
 		},
 	},

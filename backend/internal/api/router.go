@@ -16,6 +16,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/sse"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
@@ -64,32 +65,34 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		queue.StartTaskEventSubscriber(context.Background(), queue.NewRedisTaskEventSubscriber(options.Config.Queue), eventBroker, options.Logger)
 	}
 	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventPublisher))
+	settingsService := settings.NewService(options.Database, options.Logger, options.Config.Upload)
 
 	RegisterRoutes(
 		router,
 		auth.NewService(options.Database, options.Config, options.Logger),
 		project.NewService(options.Database, options.Logger),
-		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore),
+		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore, settingsService),
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
 		model.NewService(options.Database, options.Logger),
 		taskService,
 		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
 		newAdminAuditUsageService(options.Database, options.Logger, options.AuditReadRedactor),
+		settingsService,
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService, settingsService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -121,6 +124,9 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	}
 	if adminAuditUsageService != nil {
 		adminAuditUsageService.RegisterRoutes(protected)
+	}
+	if settingsService != nil {
+		settingsService.RegisterRoutes(protected)
 	}
 }
 
