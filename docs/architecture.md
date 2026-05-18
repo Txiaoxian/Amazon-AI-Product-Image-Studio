@@ -13,7 +13,7 @@ The repository started as a pure frontend local app:
 
 This baseline was preserved during the early platformization phases so existing UI concepts could be migrated instead of rewritten.
 
-## Current transition state after P8
+## Current transition state after R8
 
 The repository is now structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has backend/frontend infrastructure, authentication/RBAC, project management, reference asset management, Provider/model management, task APIs, SSE delivery, Worker queue processing, and backend Provider Adapter runtime foundations.
 
@@ -21,13 +21,13 @@ Important transition facts:
 
 - The production frontend workbench now uses backend model capabilities, backend task creation, SSE task state, authorized backend assets, and backend task/asset history.
 - Browser Provider adapters, frontend Provider registry/types, and normal local Provider API Key/API URL settings have been removed.
-- IndexedDB is no longer the production source for generated images or history. It may still support non-sensitive prompt templates and residual non-production helpers/tests until R8/P9 cleanup.
+- IndexedDB is no longer the production source for generated images or history. It may still support non-sensitive prompt templates and residual non-production helpers/tests until P9 cleanup.
 - The backend currently has configuration, logging, router, health, response helpers, middleware, MySQL/GORM migrations, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, SSRF-validated Provider testing, task APIs, SSE replay, reliable Redis queueing, Worker state transitions, backend Provider Adapter runtime, MinIO output assets, usage records, and API call logs.
 - The frontend has an API client, task/SSE client contracts, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection by backend `assetId`, admin Provider/model management UI, backend task-backed workbench submission, backend result rendering, and backend history/detail/download/re-edit flows.
-- R8 must verify the full P8 migration result before P9 hardening starts. Known cleanup candidates include unreachable legacy display components, old IndexedDB helper files, broad frontend `422` handling, and frontend-side joining of separately paged task/asset lists.
+- R8 verified the full P8 migration result. Known P9 cleanup candidates include unreachable legacy display components, old IndexedDB helper files, broad frontend `422` handling, and frontend-side joining of separately paged task/asset lists.
 - Docker Compose has buildable runtime foundations from P3. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-This transition state is closer to the target platform but still requires R8 verification and P9 hardening before release.
+This transition state is closer to the target platform and has passed R8 migration verification, but it still requires P9 hardening before release.
 
 ## Target platform architecture
 

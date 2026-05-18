@@ -2251,7 +2251,7 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 2. `P8-FE-TASK-WORKBENCH` - completed and merged. 再切换提交、状态和结果输出。
 3. `P8-FE-HISTORY-ASSET-SOURCE` - completed and merged. 再切换历史与再次编辑来源。
 4. `P8-FE-LEGACY-RETIREMENT` - completed and merged. 最后退役旧直连和旧本地持久化生产路径。
-5. `R8` - pending. 主 agent 串行 review、回归、静态扫描和合同校准。
+5. `R8` - completed. 主 agent 串行 review、回归、静态扫描和合同校准。
 
 ### P8 总体约束
 
@@ -2612,7 +2612,7 @@ Review result:
 - 项目切换会清空待提交参考图，避免把旧项目 assetId 带入新项目任务。
 - 静态扫描确认生产路径没有 Provider direct host、Provider Authorization header、Provider key storage、task polling 或 `frontend/src/providers/**` import。
 - 合并前验证通过：`npm run lint`、`npm run type-check`、`npm run test`、`npm run build`，18 个 test files / 59 个 tests 全部通过。
-- 非阻塞遗留：`ResultCanvas`、`ImageDetailModal`、`LegacyHistoryPanel`、旧 IndexedDB history/image helper 和 `useStorageUsage` 仍有不可达或非生产残留，R8/P9 应确认后删除或明确 quarantine；generic HTTP `422` handling、history frontend join 和 error/empty-state overlap 仍待 P9/hardening 收口。
+- 非阻塞遗留：`ResultCanvas`、`ImageDetailModal`、`LegacyHistoryPanel`、旧 IndexedDB history/image helper 和 `useStorageUsage` 仍有不可达或非生产残留，P9 应删除或明确 quarantine；generic HTTP `422` handling、history frontend join 和 error/empty-state overlap 仍待 P9/hardening 收口。
 
 ### 目标
 
@@ -2731,9 +2731,31 @@ R8 - 前端后端化 review、回归和迁移验收
 
 由主 agent 串行 review P8 四个子任务，确认主工作台已完成从浏览器本地链路到后端平台链路的迁移，再进入 P9。
 
-### 推荐分支
+### 当前状态
 
-- `codex/r8-p8-regression-review`
+Completed by the main agent on `main`. The temporary branch `codex/r8-p8-regression-review` was deleted before execution at user request.
+
+R8 verification result:
+
+- P8 four frontend tasks are merged into `main`.
+- Frontend regression passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`; 18 test files / 59 tests passed.
+- Backend regression passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
+- Docker Compose config validation passed with `docker compose -f deploy/docker-compose.yml config`.
+- Sensitive frontend static scan returned no production-code hits for `localStorage`, `sessionStorage`, `indexedDB`, Provider `Authorization`, direct Provider hosts, `setInterval`, or `setTimeout`.
+- Provider import static scan found only backend Provider management API paths: `frontend/src/api/providers.ts` and `frontend/src/components/admin/ProviderModelAdminPanel.tsx`. These are allowed admin API consumers.
+- `frontend/src/providers/` no longer exists.
+
+R8 residual scan classification:
+
+| Static scan class | Result | Disposition |
+| --- | --- | --- |
+| Browser Provider adapters / registry | No files under `frontend/src/providers/` | Resolved in P8 |
+| Provider key storage / Provider URL storage | No production hits | Resolved in P8 |
+| Direct Provider hosts / Provider Authorization header | No production hits | Resolved in P8 |
+| Task polling (`setInterval` / `setTimeout`) | No production hits | Resolved in P8 |
+| Backend Provider management API | `frontend/src/api/providers.ts`, `ProviderModelAdminPanel.tsx` | Allowed; talks only to `/api/v1/providers` backend endpoints |
+| Prompt template IndexedDB | `PromptEditor` -> `promptTemplateRepository` | Allowed non-sensitive local UX data |
+| Legacy display / old DB helpers | `LegacyHistoryPanel`, legacy branches in `ResultCanvas` / `ImageDetailModal`, old local history/image helpers, `useStorageUsage` | Non-blocking P9 cleanup candidate; must remain outside production workbench path |
 
 ### 允许修改文件
 
@@ -2797,102 +2819,195 @@ rg -n "from ['\\\"]\\.\\.?/providers|localStorage|sessionStorage|indexedDB|Autho
 git diff --check
 ```
 
-## 子任务 26：审计、用量、系统设置和发布硬化
+## P9：用量、审计、系统设置、硬化和发布准备
+
+P9 must not run as one broad worktree. Start serially with backend read APIs, then add backend settings, then frontend admin UI, then security/deploy hardening.
+
+### P9 调度顺序
+
+1. `P9-BE-AUDIT-USAGE-READS` - first, serial. Define safe backend read contracts for usage, operation logs, and API call logs.
+2. `P9-BE-SYSTEM-SETTINGS-HARDENING` - second, serial. Add system settings and production secret validation.
+3. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - after backend contracts. Add frontend admin views for usage/logs/settings.
+4. `P9-SECURITY-REGRESSION` - after core backend settings exist. Add targeted security regression tests and residual legacy cleanup.
+5. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
+
+First batch: open only `P9-BE-AUDIT-USAGE-READS`. Do not parallelize settings or frontend admin UI until the read contracts and redaction behavior are stable.
+
+## 子任务 26：审计与用量只读 API
 
 ### 任务名称
 
-P9-AUDIT-HARDENING - 用量审计、系统设置、安全回归和发布验证
+P9-BE-AUDIT-USAGE-READS - 后端用量、操作日志和 API 调用日志查询
 
 ### 目标
 
-补齐平台运维和发布所需能力，完成发布候选版安全与部署验收。
+为 admin 用户提供 tenant-scoped usage summary、usage records、operation logs、api call logs 的只读查询 API，带分页、过滤、RBAC、对象级边界和递归脱敏。
 
 ### 允许修改文件
 
-- `backend/**`
-- `frontend/**`
-- `deploy/**`
-- `.env.example`
-- `README.md`
+- `backend/internal/api/**`
+- `backend/internal/audit/**`
+- `backend/internal/task/**` 仅限复用或补充 usage/api-call/log 查询 DTO，不改 Worker 状态机
+- `backend/internal/rbac/**` 仅限新增权限码/测试
+- `backend/internal/database/**` 仅限必要索引或只读查询支持
+- `backend/internal/httpx/**` 仅限复用分页/响应 helper
+- `backend/cmd/**` 仅限路由注册需要
+- `backend/internal/**/**/*_test.go`
 
 ### 禁止修改文件
 
+- `frontend/**`
+- `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- 未经主 agent 批准的大规模重构
+- Provider runtime、Worker claim/complete/cancel 状态机，除非发现编译阻塞并先报告
 
 ### 前置依赖
 
-- R8 前端后端化 review 完成。
+- R8 completed.
+- Existing P7/P8 task, provider runtime, usage record, api call log, and operation log writes are merged.
 
 ### 必须保持的现有行为
 
-- P8 完成后的 backendized workbench、task/SSE、asset download、Provider/model 管理、租户隔离和 RBAC 行为必须保持稳定。
-- 已有日志脱敏、SSRF、防跨租户、上传安全和对象级权限边界不得被运维功能破坏。
+- P8 backendized workbench, task/SSE, authorized asset download, Provider/model management, tenant isolation, RBAC, and redaction behavior remain stable.
+- Existing logs and usage records keep their write semantics; this task only exposes safe read APIs.
 
 ### 允许的中间态
 
-- 可以先补齐查询、统计、设置和发布验证能力，再做最终发布收口。
-- 新增系统设置前端 UI 只能消费已经落地的后端字段；不能先显示一个实际没有约束力的“假设置”。
+- Backend read APIs may land before frontend admin UI.
+- API response shape may be minimal but must be stable, paginated, tenant-scoped, and documented in code/tests.
 
 ### 禁止的半迁移状态
 
-- 不允许系统设置 UI 展示已生效，但后端实际不执行。
-- 不允许 usage / audit / api call logs 查询把完整 API Key、Authorization、Cookie、图片 base64 或跨租户数据暴露出来。
-- 不允许为了发布验证启动新的项目专属 MySQL/Redis/MinIO 开发环境并遗留。
-- 不允许生产 secret hardening 只做前端提示、不做后端强校验。
+- No endpoint may return cross-tenant rows.
+- No endpoint may return full API keys, Authorization headers, Cookies, image base64, raw image bytes, or unredacted nested metadata.
+- No unpaginated list endpoint.
+- No UI stubs in this task.
 
 ### 失败模式与边界场景
 
 | 场景 | 预期 |
 | --- | --- |
-| 非 admin 查询审计/系统设置 | 被 RBAC 拒绝 |
-| 跨租户查询 usage / logs | 不可见且不泄露存在性 |
-| metadata 含 secret / nested secret | 查询结果继续脱敏 |
-| 非法系统设置 | 后端拒绝并写 sanitized operation log |
-| 默认生产 secret | 启动被拒绝 |
-| retention / upload / concurrency 限制更新失败 | 不产生“UI 显示成功、后端未生效”的假状态 |
-| Compose 全链路验证 | 使用文档规定环境，验证后清理项目 Compose 栈 |
+| non-admin user queries logs or usage | RBAC rejects with 403 |
+| tenant A asks for tenant B records by ID or filter | no rows or 404/403 without existence leak |
+| metadata contains known secret, nested secret, Authorization, Cookie, or base64-like image payload | response is recursively redacted |
+| empty result set | returns empty page with pagination metadata |
+| invalid page/filter params | returns validation error without SQL/log leakage |
+| large result set | requires pagination and deterministic ordering |
 
 ### 必须新增或更新的回归测试
 
-- usage、operation logs、api call logs、system settings 的 RBAC 和 tenant 隔离。
-- sensitive metadata 查询结果仍然递归脱敏。
-- 默认生产 secret 被后端启动校验拒绝。
-- 设置校验失败与成功路径都有 operation log。
-- 发布回归继续覆盖 SSRF、上传安全、SSE replay 可见性、对象级权限。
+- RBAC denial for each read API.
+- Tenant isolation for usage records, operation logs, and API call logs.
+- Recursive metadata redaction in list/detail responses.
+- Pagination and filter validation.
+- No direct exposure of raw Provider request/response payload secrets.
 
 ### 具体开发内容
 
-- 实现 usage summary、usage records、operation logs、api call logs 查询。
-- 实现 system settings API 和必要前端界面。
-- 增加日志保留、上传限制、默认 Provider/model、并发限制配置。
-- 执行安全回归并补齐缺口。
-- 完成 Docker Compose 全链路验证和部署说明更新。
+- Add admin-only read endpoints under `/api/v1/admin` or the existing admin route pattern for:
+  - usage summary by user/project/model/provider/date range.
+  - usage records list.
+  - operation logs list.
+  - API call logs list/detail.
+- Reuse existing response envelope and pagination conventions.
+- Reuse or centralize redaction helpers so nested metadata is sanitized before response serialization.
+- Add permissions such as `usage:read`, `operation_log:read`, and `api_call_log:read` only if not already present.
 
 ### 安全要求
 
-- 审计和 API 调用日志不得包含完整 API Key、Authorization、Cookie、图片 base64 或原始图片字节。
-- 系统设置修改必须有 RBAC 和 operation log。
-- 发布前必须通过租户隔离、对象权限、SSRF、上传安全、SSE replay 安全测试。
+- All queries must include tenant scope.
+- All endpoints require authentication and admin/RBAC permissions.
+- Log/API metadata must be recursively redacted at response time even if already redacted at write time.
+- Do not log request filters if they may contain secrets.
 
 ### 验收标准
 
-- 管理端可查看用量、审计、API 调用日志和系统设置。
-- 全量测试、Docker Compose build/up/healthcheck 通过。
-- 发布文档说明环境变量、初始化管理员、数据卷、备份和安全注意事项。
+- Backend exposes safe, paginated read APIs for usage, operation logs, and API call logs.
+- Tests prove RBAC, tenant isolation, pagination, and redaction.
+- No frontend or deployment files are changed.
 
 ### 测试命令
 
 ```bash
-cd backend && go test ./... && go test -race ./... && go vet ./...
-cd ../frontend && npm run lint && npm run type-check && npm run test && npm run build
-cd .. && docker compose -f deploy/docker-compose.yml config
-docker compose -f deploy/docker-compose.yml build
-docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml ps
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
 ```
+
+## 子任务 27：系统设置与生产启动硬化
+
+### 任务名称
+
+P9-BE-SYSTEM-SETTINGS-HARDENING - 后端系统设置 API 与生产 secret 校验
+
+### 目标
+
+实现系统设置后端 API、设置校验、设置修改 operation log、生产默认 secret 启动拒绝，并为上传限制、默认 Provider/model、并发限制、日志保留等设置建立可执行的后端约束。
+
+### 依赖
+
+- `P9-BE-AUDIT-USAGE-READS` completed or at least its permission/log redaction conventions are stable.
+
+### 关键约束
+
+- 不允许设置 UI 或 API 声称某项设置已生效但后端实际不执行。
+- `APP_ENV=production` 时必须拒绝默认 `JWT_SIGNING_SECRET`、默认 `API_KEY_ENCRYPTION_KEY` 和其他占位 secret。
+- 设置变更必须记录 sanitized operation log。
+
+## 子任务 28：管理端用量、日志和系统设置 UI
+
+### 任务名称
+
+P9-FE-ADMIN-OBSERVABILITY-SETTINGS - 前端管理端观测与设置页面
+
+### 目标
+
+在已有 admin Provider/model 管理基础上增加 usage summary、usage records、operation logs、api call logs 和 system settings UI，只消费 P9 后端真实合同，不展示未生效的假设置。
+
+### 依赖
+
+- `P9-BE-AUDIT-USAGE-READS`
+- `P9-BE-SYSTEM-SETTINGS-HARDENING`
+
+### 关键约束
+
+- 不得在前端保存 Provider API Key、日志敏感字段或 auth token。
+- 非 admin 用户不得看到管理入口。
+- 列表必须分页，不得一次性拉取无界日志。
+
+## 子任务 29：安全回归与残余 legacy 清理
+
+### 任务名称
+
+P9-SECURITY-REGRESSION - 安全回归、残余 legacy 清理和发布前硬化
+
+### 目标
+
+补齐 SSRF、租户隔离、对象级权限、上传安全、敏感日志、SSE replay 可见性、生产 secret、残余 legacy code 的回归测试和清理。
+
+### 关键约束
+
+- 删除或明确 quarantine R8 标记的不可达 legacy display/DB helper。
+- 不得重新引入 browser Provider direct call、Provider key persistence、polling 或 IndexedDB production history。
+
+## 子任务 30：部署和发布验证
+
+### 任务名称
+
+P9-DEPLOY-RELEASE-VALIDATION - Docker Compose 全链路和发布文档
+
+### 目标
+
+执行 Docker Compose build/up/healthcheck，验证 API、worker、frontend、MySQL、Redis、MinIO 组合可运行，更新部署文档、环境变量说明、初始化管理员、数据卷、备份/恢复和安全注意事项。
+
+### 关键约束
+
+- 功能开发验证继续优先使用 `docs/local-development.md` 的全局本地环境。
+- 如启动项目 Compose 栈做发布验证，验证后必须清理，除非用户明确要求保留。
 
 ## 子 agent 交付格式
 

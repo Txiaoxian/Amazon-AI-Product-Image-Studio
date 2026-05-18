@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current transition risks after P8
+## Current transition risks after R8
 
-The current `main` branch has completed the P8 frontend backendization code tasks. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the P8 transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed and passed R8 verification for the P8 frontend backendization work. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the P8 transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Status after P8 | Acceptance check |
 | --- | --- | --- | --- |
@@ -11,9 +11,9 @@ The current `main` branch has completed the P8 frontend backendization code task
 | Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
 | Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
-Remaining P8/R8 review risks:
+Remaining P9 review risks:
 
-- Unreachable legacy display components and old IndexedDB helper files may still exist. They must remain outside the production import graph and should be deleted or explicitly quarantined in R8/P9.
+- Unreachable legacy display components and old IndexedDB helper files may still exist. They must remain outside the production import graph and should be deleted or explicitly quarantined in P9.
 - Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 
@@ -27,6 +27,7 @@ Resolved transition item:
 - P7 Provider runtime now uses connect-time SSRF-safe outbound transport before real Provider calls and recursively redacts runtime metadata before persistence. Review fixes explicitly covered API keys appearing as values and as nested JSON map keys.
 - P7 frontend task client work now uses EventSource/SSE contracts and did not introduce polling, new Provider direct calls, or new Provider API key persistence.
 - P8 frontend backendization replaced the production workbench with backend task API + SSE + authorized backend assets, removed normal browser Provider settings, removed browser Provider adapters, removed `legacyFile` reference payloads, and moved history/detail/download/re-edit to backend assets and tasks.
+- R8 verified frontend, backend, and Compose config regression. Sensitive frontend static scan returned no production-code hits for browser Provider credentials, Provider Authorization headers, direct Provider hosts, task polling, or sensitive browser storage. Provider static-scan hits are limited to backend Provider management API consumers.
 
 P5 review hardening backlog:
 
@@ -151,12 +152,12 @@ P8 migration security requirements:
 - Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
 - Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
 
-Current P8 frontend security status:
+Current R8 frontend security status:
 
 - Production workbench generation/edit flows create backend tasks and use SSE for status.
 - Static scan after `P8-FE-LEGACY-RETIREMENT` found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
 - Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production residual helpers until R8/P9 cleanup.
+- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production residual helpers until P9 cleanup.
 
 ## Upload defense
 

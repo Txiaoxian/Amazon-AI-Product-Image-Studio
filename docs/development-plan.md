@@ -420,7 +420,7 @@ P7 residual risks and carry-forward items:
 
 ## P8: Frontend backendization
 
-Status: frontend code tasks completed and merged; R8 regression/review is the next required gate before P9. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
+Status: completed after R8 regression/review. P8 switched the existing frontend workbench from the local/browser execution path to the backend platform path while preserving the current workbench concepts and making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
 
 P8 goals:
 
@@ -447,7 +447,7 @@ P8 execution order:
 2. `P8-FE-TASK-WORKBENCH`: completed and merged. It switched the default workbench submission path to backend task creation + SSE lifecycle, added cancel/retry handling, and drives live result rendering from authorized backend output assets.
 3. `P8-FE-HISTORY-ASSET-SOURCE`: completed and merged. It moved the default history/detail/download/re-edit path to backend task history plus generated/edited assets, while keeping old IndexedDB history as an explicit collapsed compatibility entry.
 4. `P8-FE-LEGACY-RETIREMENT`: completed and merged. It removed browser Provider adapters, retired normal Provider key/API URL settings, removed `legacyFile` asset-reference payloads, and proved the production import graph no longer reaches old Provider or IndexedDB history/image modules.
-5. `R8`: pending. Main-agent review, regression, migration verification, and public contract cleanup before P9.
+5. `R8`: completed. Main-agent review, regression, migration verification, and public contract cleanup passed before P9.
 
 P8 current result:
 
@@ -457,7 +457,16 @@ P8 current result:
 - Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
 - Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
 - IndexedDB is no longer the production source for generated images or history. Prompt templates and old local DB helper files may still exist as residual non-production code or test scaffolding, but they must not be reintroduced into the main workbench path or silently uploaded into tenant storage.
-- Remaining P8 follow-ups for R8/P9: generic HTTP `422` handling is still broader than a future stale-model-specific error contract; frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; unreachable legacy display/DB helper code should be deleted or quarantined during hardening.
+- Remaining P9 follow-ups: generic HTTP `422` handling is still broader than a future stale-model-specific error contract; frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; unreachable legacy display/DB helper code should be deleted or quarantined during hardening.
+
+R8 verification result:
+
+- Frontend regression passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`; 18 test files / 59 tests passed.
+- Backend regression passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
+- Docker Compose config validation passed with `docker compose -f deploy/docker-compose.yml config`.
+- Sensitive frontend static scan for `localStorage`, `sessionStorage`, `indexedDB`, Provider `Authorization`, direct Provider hosts, `setInterval`, and `setTimeout` returned no production-code hits.
+- Provider import static scan found only backend Provider management API paths: `frontend/src/api/providers.ts` and `frontend/src/components/admin/ProviderModelAdminPanel.tsx`. These are allowed backend admin API consumers, not browser AI Provider calls.
+- `frontend/src/providers/` no longer exists. A separate residual scan still finds unreachable legacy display/DB helper code (`LegacyHistoryPanel`, legacy result rendering branches, old local history/image helpers, `useStorageUsage`), but these are outside the production workbench import graph and are P9 cleanup candidates, not P8 blockers.
 
 P8 serial policy:
 
@@ -482,12 +491,23 @@ P8 intentionally does not resolve:
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
-Tasks:
+Status: ready to start after completed R8.
 
-- Implement usage summaries, API call logs, operation audit views, and system settings.
-- Add security regression tests for SSRF, tenant isolation, object-level authorization, upload validation, sensitive logging, and SSE replay visibility.
-- Run full Docker Compose deployment verification.
-- Update release documentation and deployment instructions.
+P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
+
+1. `P9-BE-AUDIT-USAGE-READS`: backend usage, operation log, and API call log read APIs with RBAC, tenant isolation, pagination, and recursive redaction. This should run first and serially because it defines the data exposure boundary.
+2. `P9-BE-SYSTEM-SETTINGS-HARDENING`: backend system settings API, validation, operation logs, and production startup secret checks.
+3. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: admin UI for usage/logs/settings, only after backend contracts exist.
+4. `P9-SECURITY-REGRESSION`: targeted security tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, and residual legacy code cleanup.
+5. `P9-DEPLOY-RELEASE-VALIDATION`: Docker Compose build/up/healthcheck, release documentation, environment variable review, backup/restore notes, and final deployment runbook.
+
+P9 carry-forward risks:
+
+- Production startup still needs hard failure for placeholder `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`.
+- Unknown secrets cannot be redacted unless they are supplied as known secrets or match heuristic rules.
+- Provider soft-delete linked-model policy remains unresolved.
+- History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
+- Unreachable legacy display/DB helper code should be deleted or explicitly quarantined before release to reduce future agent confusion.
 
 ## Phase boundaries
 
