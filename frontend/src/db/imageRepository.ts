@@ -1,5 +1,4 @@
-import { createId, db, type StoredImage } from './dexie'
-import type { ImagePurpose } from '../providers/types'
+import { createId, db, type ImagePurpose, type StoredImage } from './dexie'
 
 export interface SaveImageInput {
   blob: Blob

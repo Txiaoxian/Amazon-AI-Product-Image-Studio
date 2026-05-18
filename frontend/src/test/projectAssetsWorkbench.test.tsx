@@ -42,6 +42,15 @@ const project = {
   updatedAt: '2026-05-12T00:00:00Z',
 }
 
+const secondProject = {
+  ...project,
+  id: 'project_2',
+  name: 'Winter Launch',
+  asin: 'B000NEXT',
+  createdAt: '2026-05-13T00:00:00Z',
+  updatedAt: '2026-05-13T00:00:00Z',
+}
+
 const asset = {
   id: 'asset_1',
   tenantId: 'tenant_1',
@@ -59,6 +68,37 @@ const asset = {
   createdBy: 'user_1',
   createdAt: '2026-05-12T00:00:00Z',
   updatedAt: '2026-05-12T00:00:00Z',
+}
+
+const task = {
+  id: 'task_1',
+  tenantId: 'tenant_1',
+  projectId: 'project_2',
+  type: 'IMAGE_GENERATION',
+  status: 'QUEUED',
+  prompt: 'Fresh project B prompt',
+  providerId: 'provider_1',
+  modelId: 'model_1',
+  imageType: '',
+  parameters: {
+    size: '1024x1024',
+    quality: 'standard',
+    outputFormat: 'png',
+    outputCount: 1,
+  },
+  inputAssetIds: [],
+  outputAssetIds: [],
+  attempt: 1,
+  maxAttempts: 3,
+  queuedAt: '2026-05-17T00:00:00Z',
+  startedAt: null,
+  finishedAt: null,
+  timeoutAt: '2026-05-17T00:30:00Z',
+  errorCode: '',
+  errorMessage: '',
+  createdBy: 'user_1',
+  createdAt: '2026-05-17T00:00:00Z',
+  updatedAt: '2026-05-17T00:00:00Z',
 }
 
 const model = {
@@ -149,7 +189,7 @@ describe('project asset workbench', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('loads project assets and downloads the legacy payload when selecting an asset reference', async () => {
+  it('adds a project asset reference without downloading a legacy File payload', async () => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
@@ -166,15 +206,6 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
         return successResponse(page([asset]))
       }
-      if (url === '/api/v1/assets/asset_1/download') {
-        return new Response(new Blob(['reference-bytes'], { type: 'image/png' }), {
-          headers: {
-            'Content-Disposition': 'attachment; filename="reference.png"',
-            'Content-Type': 'image/png',
-          },
-        })
-      }
-
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
     vi.stubGlobal('fetch', fetchImpl)
@@ -188,13 +219,69 @@ describe('project asset workbench', () => {
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
 
     expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
-    expect(fetchImpl).toHaveBeenCalledWith(
-      '/api/v1/assets/asset_1/download',
-      expect.objectContaining({
-        credentials: 'include',
-        method: 'GET',
-      }),
+    expect(screen.getByAltText('reference.png')).toHaveAttribute('src', '/api/v1/assets/asset_1/download')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/assets/asset_1/download')
+  })
+
+  it('clears project asset references after switching projects before task submission', async () => {
+    const user = userEvent.setup()
+    FakeEventSource.instances.length = 0
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project, secondProject]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([asset]))
+      }
+      if (url === '/api/v1/projects/project_2/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_2/tasks' && init?.method === 'POST') {
+        return successResponse(task, 201)
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('reference.png')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
+    expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
+    expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
+    expect(screen.queryByAltText('reference.png')).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('提示词'), 'Fresh project B prompt')
+    await user.click(screen.getByRole('button', { name: '生成图片' }))
+
+    const taskCreateCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/projects/project_2/tasks' && init?.method === 'POST',
     )
+    expect(taskCreateCall).toBeDefined()
+    expect(JSON.parse(taskCreateCall?.[1]?.body as string)).toEqual({
+      type: 'IMAGE_GENERATION',
+      prompt: 'Fresh project B prompt',
+      providerId: 'provider_1',
+      modelId: 'model_1',
+      parameters: {
+        size: '1024x1024',
+        quality: 'standard',
+        outputFormat: 'png',
+        outputCount: 1,
+      },
+    })
   })
 
   it('creates a project and uploads a reference image with the in-memory CSRF token', async () => {
@@ -253,3 +340,24 @@ describe('project asset workbench', () => {
     expect((uploadCall?.[1]?.body as FormData).get('file')).toBe(file)
   })
 })
+
+class FakeEventSource {
+  static readonly instances: FakeEventSource[] = []
+
+  readonly url: string
+  readonly withCredentials: boolean
+  onerror: ((event: Event) => void) | null = null
+  onopen: ((event: Event) => void) | null = null
+
+  constructor(url: string, init: EventSourceInit) {
+    this.url = url
+    this.withCredentials = Boolean(init.withCredentials)
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener() {}
+
+  removeEventListener() {}
+
+  close() {}
+}

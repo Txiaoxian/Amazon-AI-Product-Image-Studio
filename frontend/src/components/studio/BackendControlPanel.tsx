@@ -1,5 +1,5 @@
 import { RefreshCw, Sparkles } from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { IMAGE_COUNT_OPTIONS } from '../../lib/constants'
 import type { Model } from '../../types/platform'
 import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from '../../types/workbench'
@@ -27,6 +27,7 @@ interface BackendControlPanelProps {
   onGenerate: (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => Promise<void>
   onReferenceAdded?: () => void
   onRefreshModels: () => void
+  resetKey?: string | null
 }
 
 export function BackendControlPanel({
@@ -39,6 +40,7 @@ export function BackendControlPanel({
   onError,
   onRefreshModels,
   onReferenceAdded,
+  resetKey,
 }: BackendControlPanelProps) {
   const [prompt, setPrompt] = useState('')
   const [modelId, setModelId] = useState('')
@@ -47,6 +49,7 @@ export function BackendControlPanel({
   const [outputFormat, setOutputFormat] = useState('')
   const [imageCount, setImageCount] = useState<ImageCount>(1)
   const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
+  const previousResetKey = useRef(resetKey)
   const selectedModel = useMemo(() => models.find((model) => model.id === modelId) ?? null, [modelId, models])
   const isSelectedModelUnavailable = modelId.length > 0 && selectedModel === null
 
@@ -71,6 +74,18 @@ export function BackendControlPanel({
       return draft.references ?? []
     })
   }, [draft])
+
+  useEffect(() => {
+    if (previousResetKey.current === resetKey) {
+      return
+    }
+
+    previousResetKey.current = resetKey
+    setReferences((currentReferences) => {
+      revokeReferencePreviewUrls(currentReferences)
+      return []
+    })
+  }, [resetKey])
 
   useEffect(() => {
     if (!selectedModel) {
@@ -371,5 +386,9 @@ function buildWorkbenchTaskInput(
 }
 
 function revokeReferencePreviewUrls(references: WorkbenchReferenceInput[]) {
-  references.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+  references.forEach((reference) => {
+    if (reference.kind === 'pending') {
+      URL.revokeObjectURL(reference.previewUrl)
+    }
+  })
 }

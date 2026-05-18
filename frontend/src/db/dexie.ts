@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie'
 
-type ImagePurpose = 'generated' | 'reference'
+export type ImagePurpose = 'generated' | 'reference'
 
 export interface HistoryItem {
   id: string

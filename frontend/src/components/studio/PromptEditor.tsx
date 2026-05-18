@@ -1,5 +1,5 @@
 import { Bookmark, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { deletePromptTemplate, listPromptTemplates, savePromptTemplate } from '../../db/promptTemplateRepository'
 import type { PromptTemplate } from '../../db/dexie'
 import { Button } from '../ui/Button'
@@ -13,18 +13,30 @@ interface PromptEditorProps {
 
 export function PromptEditor({ value, onChange, disabled, onError }: PromptEditorProps) {
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
+  const isMounted = useRef(true)
 
   const refreshTemplates = useCallback(async () => {
     try {
-      setTemplates(await listPromptTemplates())
+      const nextTemplates = await listPromptTemplates()
+      if (isMounted.current) {
+        setTemplates(nextTemplates)
+      }
     } catch (error) {
-      onError(error instanceof Error ? error.message : '提示词模板读取失败。')
+      if (isMounted.current) {
+        onError(error instanceof Error ? error.message : '提示词模板读取失败。')
+      }
     }
   }, [onError])
 
   useEffect(() => {
     void refreshTemplates()
   }, [refreshTemplates])
+
+  useEffect(() => {
+    return () => {
+      isMounted.current = false
+    }
+  }, [])
 
   const saveCurrentPrompt = async () => {
     const prompt = value.trim()

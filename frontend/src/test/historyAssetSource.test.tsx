@@ -5,7 +5,6 @@ import App from '../App'
 import { db } from '../db/dexie'
 import { createHistoryItem } from '../db/historyRepository'
 import { saveImage } from '../db/imageRepository'
-import * as providerRegistry from '../providers/registry'
 
 const authenticatedSession = {
   user: {
@@ -226,16 +225,16 @@ describe('backend history asset source', () => {
       referenceImageIds: [],
       request: {
         prompt: 'Legacy local prompt',
-        model: providerRegistry.getModelById('openai-gpt-image-2'),
+        model: {
+          label: 'OpenAI Image 2',
+          model: 'gpt-image-2',
+          provider: 'openai',
+        },
         quality: '1K',
         aspectRatio: '1:1',
         imageCount: 1,
-        references: [],
-        referenceImageUrls: [],
       },
       result: {
-        blob: generatedImage.blob,
-        mimeType: generatedImage.mimeType,
         width: 1,
         height: 1,
         fileSize: generatedImage.size,
@@ -376,7 +375,13 @@ describe('backend history asset source', () => {
     render(<App />)
 
     await user.type(await screen.findByLabelText('提示词'), 'Clean Amazon product image')
+    await waitFor(() => {
+      expect(screen.getByLabelText('提示词')).toHaveValue('Clean Amazon product image')
+    })
     await user.click(screen.getByRole('button', { name: '生成图片' }))
+    await waitFor(() => {
+      expect(FakeEventSource.instances).toHaveLength(1)
+    })
     FakeEventSource.instances[0].emit('IMAGE_OUTPUT', {
       taskId: 'task_1',
       projectId: 'project_1',

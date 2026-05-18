@@ -1,6 +1,24 @@
 import { createId, db, type HistoryItem, type StoredImage } from './dexie'
 import { deleteImages, getImage } from './imageRepository'
-import type { GeneratedImageResult, GenerationRequest } from '../providers/types'
+
+interface LegacyGenerationRequest {
+  prompt: string
+  model: {
+    model: string
+    label: string
+    provider: HistoryItem['provider']
+  }
+  quality: string
+  aspectRatio: string
+  imageCount: number
+}
+
+interface LegacyGeneratedImageResult {
+  fileSize: number
+  width: number
+  height: number
+  durationMs: number
+}
 
 export interface HistoryWithImage {
   item: HistoryItem
@@ -8,8 +26,8 @@ export interface HistoryWithImage {
 }
 
 export interface CreateHistoryInput {
-  request: GenerationRequest
-  result: GeneratedImageResult
+  request: LegacyGenerationRequest
+  result: LegacyGeneratedImageResult
   generatedImageId: string
   referenceImageIds: string[]
 }

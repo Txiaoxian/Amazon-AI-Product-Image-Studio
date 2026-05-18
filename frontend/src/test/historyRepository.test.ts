@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../db/dexie'
 import { createHistoryItem, deleteHistoryItem, listHistory } from '../db/historyRepository'
 import { saveImage } from '../db/imageRepository'
-import { IMAGE_MODELS } from '../providers/registry'
 
 describe('historyRepository', () => {
   beforeEach(async () => {
@@ -23,16 +22,16 @@ describe('historyRepository', () => {
     await createHistoryItem({
       request: {
         prompt: 'white background product image',
-        model: IMAGE_MODELS[0],
+        model: {
+          label: 'OpenAI Image 2',
+          model: 'gpt-image-2',
+          provider: 'openai',
+        },
         quality: '1K',
         aspectRatio: '1:1',
         imageCount: 1,
-        references: [],
-        referenceImageUrls: [],
       },
       result: {
-        blob: generated.blob,
-        mimeType: 'image/png',
         width: 1024,
         height: 1024,
         fileSize: 9,

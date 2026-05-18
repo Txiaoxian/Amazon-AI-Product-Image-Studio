@@ -337,6 +337,9 @@ describe('task-backed workbench', () => {
 
     await screen.findByRole('heading', { name: '项目资产库' })
     await user.type(screen.getByLabelText('提示词'), 'Clean Amazon product image')
+    await waitFor(() => {
+      expect(screen.getByLabelText('提示词')).toHaveValue('Clean Amazon product image')
+    })
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     expect(await screen.findAllByText(/当前模型或参数已失效/)).not.toHaveLength(0)

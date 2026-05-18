@@ -333,6 +333,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             onReferenceAdded={() => setReferenceToAdd(null)}
             onRefreshModels={() => void workbenchModels.refreshModels()}
             referenceToAdd={referenceToAdd}
+            resetKey={projectAssets.selectedProjectId ?? 'no-project'}
           />
         </div>
 
