@@ -1,30 +1,25 @@
-import { Trash2 } from 'lucide-react'
-import type { HistoryWithImage } from '../../db/historyRepository'
-import { StorageMeter } from '../ui/StorageMeter'
+import { RefreshCw } from 'lucide-react'
+import type { BackendHistoryItem } from '../../types/history'
 import { HistoryItem } from './HistoryItem'
 
 interface HistoryPanelProps {
-  items: HistoryWithImage[]
-  usedBytes: number
-  limitBytes: number
+  items: BackendHistoryItem[]
+  error: string
   isLoading: boolean
-  onView: (history: HistoryWithImage) => void
-  onEdit: (history: HistoryWithImage) => void
-  onDownload: (history: HistoryWithImage) => void
-  onDelete: (history: HistoryWithImage) => void
-  onClear: () => void
+  onView: (history: BackendHistoryItem) => void
+  onEdit: (history: BackendHistoryItem) => void
+  onDownload: (history: BackendHistoryItem) => void
+  onRefresh: () => void
 }
 
 export function HistoryPanel({
   items,
-  usedBytes,
-  limitBytes,
+  error,
   isLoading,
   onView,
   onEdit,
   onDownload,
-  onDelete,
-  onClear,
+  onRefresh,
 }: HistoryPanelProps) {
   return (
     <aside className="panel flex min-h-0 flex-col">
@@ -34,19 +29,15 @@ export function HistoryPanel({
           <p className="text-xs text-ink-400">{items.length} 条结果</p>
         </div>
         <button
-          aria-label="清空全部历史"
-          className="icon-button hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-          disabled={items.length === 0}
-          onClick={onClear}
-          title="清空全部"
+          aria-label="刷新历史记录"
+          className="icon-button"
+          disabled={isLoading}
+          onClick={onRefresh}
+          title="刷新历史"
           type="button"
         >
-          <Trash2 className="h-4 w-4" />
+          <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </button>
-      </div>
-
-      <div className="border-b border-ink-200 p-4">
-        <StorageMeter limitBytes={limitBytes} usedBytes={usedBytes} />
       </div>
 
       <div className="flex-1 p-3 xl:overflow-y-auto">
@@ -54,8 +45,14 @@ export function HistoryPanel({
 
         {!isLoading && items.length === 0 ? (
           <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-10 text-center">
-            <p className="text-sm font-medium text-ink-700">暂无历史记录</p>
-            <p className="mt-1 text-xs text-ink-400">生成成功后会自动保存到这里。</p>
+            <p className="text-sm font-medium text-ink-700">当前项目暂无结果历史</p>
+            <p className="mt-1 text-xs text-ink-400">生成或编辑成功后会显示后端资产结果。</p>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
+            {error}
           </div>
         ) : null}
 
@@ -63,8 +60,7 @@ export function HistoryPanel({
           {items.map((history) => (
             <HistoryItem
               history={history}
-              key={history.item.id}
-              onDelete={onDelete}
+              key={history.asset.id}
               onDownload={onDownload}
               onEdit={onEdit}
               onView={onView}

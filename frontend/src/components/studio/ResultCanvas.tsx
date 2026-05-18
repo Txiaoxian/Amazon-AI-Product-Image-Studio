@@ -75,11 +75,15 @@ export function ResultCanvas({
               <RotateCcw className="h-4 w-4" />
             </button>
           ) : null}
-          {current?.kind === 'legacy' ? (
+          {current ? (
             <>
-              <button aria-label="查看参数详情" className="icon-button" onClick={onOpenDetail} title="查看参数" type="button">
+              <button aria-label="查看结果详情" className="icon-button" onClick={onOpenDetail} title="查看详情" type="button">
                 <Info className="h-4 w-4" />
               </button>
+            </>
+          ) : null}
+          {current?.kind === 'legacy' ? (
+            <>
               <button aria-label="下载原图" className="icon-button" onClick={onDownload} title="下载原图" type="button">
                 <Download className="h-4 w-4" />
               </button>
@@ -118,7 +122,12 @@ export function ResultCanvas({
             {status === 'error' && error ? (
               <div className="w-full max-w-lg rounded-md border border-red-200 bg-white px-3 py-2 text-sm text-red-700">{error}</div>
             ) : null}
-            <button className="max-h-full max-w-full overflow-hidden rounded-lg border border-ink-200 bg-white p-2 shadow-panel" onClick={onOpenDetail} type="button">
+            <button
+              aria-label="打开当前结果详情"
+              className="max-h-full max-w-full overflow-hidden rounded-lg border border-ink-200 bg-white p-2 shadow-panel"
+              onClick={onOpenDetail}
+              type="button"
+            >
               <img alt="生成结果" className="max-h-[52dvh] w-auto object-contain sm:max-h-[64vh]" src={imageUrl} />
             </button>
             {currentItems.length > 1 ? (

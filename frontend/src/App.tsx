@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 import type { HistoryWithImage } from './db/historyRepository'
 import { AuthStatus } from './components/auth/AuthStatus'
@@ -6,7 +6,8 @@ import { LoginPanel } from './components/auth/LoginPanel'
 import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
-import { ImageDetailModal } from './components/modals/ImageDetailModal'
+import { LegacyHistoryPanel } from './components/history/LegacyHistoryPanel'
+import { ImageDetailModal, type ImageDetail } from './components/modals/ImageDetailModal'
 import { AssetDetailModal } from './components/projects/AssetDetailModal'
 import { ProjectAssetsPanel } from './components/projects/ProjectAssetsPanel'
 import { SettingsModal } from './components/modals/SettingsModal'
@@ -22,8 +23,9 @@ import { useSettings } from './hooks/useSettings'
 import { useStorageUsage } from './hooks/useStorageUsage'
 import { downloadBlob } from './lib/download'
 import { IMAGE_MODELS } from './providers/registry'
-import type { GenerationRequest } from './providers/types'
+import type { GenerationRequest, ImageCount } from './providers/types'
 import type { AuthSession } from './types/auth'
+import type { BackendHistoryItem } from './types/history'
 import type { Asset } from './types/platform'
 import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from './types/workbench'
 
@@ -75,8 +77,9 @@ interface StudioWorkbenchProps {
 
 function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: StudioWorkbenchProps) {
   const { settings, setSettings } = useSettings()
-  const history = useHistory()
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
+  const history = useHistory({ projectId: projectAssets.selectedProjectId })
+  const refreshHistory = history.refresh
   const workbenchModels = useWorkbenchModels()
   const generation = useGeneration(settings, {
     csrfToken: session.csrfToken,
@@ -87,11 +90,18 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [isSettingsOpen, setSettingsOpen] = useState(false)
   const [isAdminOpen, setAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
+  const [detail, setDetail] = useState<ImageDetail | null>(null)
+  const [detailError, setDetailError] = useState('')
+  const [isDetailLoading, setDetailLoading] = useState(false)
   const [assetDetail, setAssetDetail] = useState<Asset | null>(null)
   const [notice, setNotice] = useState('')
   const [draft, setDraft] = useState<ControlPanelDraft | null>(null)
   const [referenceToAdd, setReferenceToAdd] = useState<WorkbenchReferenceInput | null>(null)
   const [workbenchMode, setWorkbenchMode] = useState<'backend' | 'legacy-history'>('backend')
+  const [pendingEditSourceAssetId, setPendingEditSourceAssetId] = useState<Asset['id'] | null>(null)
+  const [isLegacyHistoryVisible, setLegacyHistoryVisible] = useState(false)
+  const selectedProjectIdRef = useRef(projectAssets.selectedProjectId)
+  const detailRequestVersionRef = useRef(0)
 
   useEffect(() => {
     if (generation.error) {
@@ -111,6 +121,25 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
   }, [workbenchModels.error])
 
+  useEffect(() => {
+    selectedProjectIdRef.current = projectAssets.selectedProjectId
+    detailRequestVersionRef.current += 1
+    setDetail(null)
+    setDetailError('')
+    setDetailOpen(false)
+    setPendingEditSourceAssetId(null)
+    setDraft(null)
+    setReferenceToAdd(null)
+    setWorkbenchMode('backend')
+    setLegacyHistoryVisible(false)
+  }, [projectAssets.selectedProjectId])
+
+  useEffect(() => {
+    if (generation.taskState?.status === 'SUCCEEDED') {
+      void refreshHistory()
+    }
+  }, [generation.taskState?.status, refreshHistory])
+
   const showNotice = (message: string) => {
     setNotice(message)
   }
@@ -120,9 +149,22 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canOpenAdmin = canManageProviders || canManageModels
 
   const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
-    const task = await generation.generateTask(request, workbenchInput)
+    if (pendingEditSourceAssetId) {
+      const isAvailable = await history.ensureBackendAssetAvailable(pendingEditSourceAssetId)
+      if (!isAvailable) {
+        setNotice('再次编辑所需资产不可用，请刷新历史后重试。')
+        setPendingEditSourceAssetId(null)
+        return
+      }
+    }
+
+    const task = await generation.generateTask(
+      request,
+      pendingEditSourceAssetId ? { ...workbenchInput, editSourceAssetId: pendingEditSourceAssetId } : workbenchInput,
+    )
 
     if (task) {
+      setPendingEditSourceAssetId(null)
       setNotice('任务已创建，结果会通过实时事件流更新。')
     }
   }
@@ -143,9 +185,59 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     await storageUsage.refresh()
   }
 
-  const handleView = (item: HistoryWithImage) => {
+  const handleViewLegacy = (item: HistoryWithImage) => {
+    if (!item.image) {
+      showNotice('历史记录中的原图不存在，无法查看。')
+      return
+    }
+
     generation.setFromHistory(item)
+    setDetail({
+      kind: 'legacy',
+      current: {
+        kind: 'legacy',
+        history: item,
+        result: {
+          blob: item.image?.blob ?? new Blob(),
+          mimeType: item.image?.mimeType ?? 'image/png',
+          width: item.item.width,
+          height: item.item.height,
+          fileSize: item.item.fileSize,
+          durationMs: item.item.durationMs,
+        },
+      },
+    })
+    setDetailError('')
     setDetailOpen(true)
+  }
+
+  const handleOpenBackendDetail = async (assetId: Asset['id'], taskId?: BackendHistoryItem['task']['id']) => {
+    const detailRequestVersion = detailRequestVersionRef.current + 1
+    detailRequestVersionRef.current = detailRequestVersion
+    setDetail(null)
+    setDetailError('')
+    setDetailLoading(true)
+    setDetailOpen(true)
+
+    try {
+      const backendDetail = await history.loadBackendDetail(assetId, taskId)
+      if (detailRequestVersion !== detailRequestVersionRef.current || selectedProjectIdRef.current !== backendDetail.asset.projectId) {
+        return
+      }
+      setDetail({
+        kind: 'backend',
+        ...backendDetail,
+      })
+    } catch {
+      if (detailRequestVersion !== detailRequestVersionRef.current) {
+        return
+      }
+      setDetailError('无法读取该结果，可能已被删除或无权访问。')
+    } finally {
+      if (detailRequestVersion === detailRequestVersionRef.current) {
+        setDetailLoading(false)
+      }
+    }
   }
 
   const handleDownloadCurrent = async () => {
@@ -164,7 +256,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
   }
 
-  const handleDownloadHistory = (item: HistoryWithImage) => {
+  const handleDownloadLegacyHistory = (item: HistoryWithImage) => {
     if (!item.image) {
       showNotice('历史记录中的原图不存在，无法下载。')
       return
@@ -173,7 +265,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     downloadBlob(item.image.blob)
   }
 
-  const handleEdit = (item: HistoryWithImage) => {
+  const handleEditLegacy = (item: HistoryWithImage) => {
     if (!item.image) {
       showNotice('历史记录中的原图不存在，无法再次编辑。')
       return
@@ -200,7 +292,41 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     setNotice('已进入旧本地历史兼容模式，可调整提示词后再次生成。')
   }
 
-  const handleDelete = async (item: HistoryWithImage) => {
+  const handleDownloadBackendHistory = async (item: BackendHistoryItem) => {
+    const download = await history.downloadBackendAsset(item.asset)
+
+    if (!download) {
+      setNotice('结果下载失败，请稍后重试。')
+      return
+    }
+
+    downloadBlob(download.blob, download.filename ?? item.asset.filename)
+    setNotice('结果下载已开始。')
+  }
+
+  const handleEditBackendHistory = async (item: BackendHistoryItem) => {
+    try {
+      const backendDetail = await history.loadBackendDetail(item.asset.id, item.task.id)
+      if (selectedProjectIdRef.current !== backendDetail.asset.projectId) {
+        return
+      }
+      setPendingEditSourceAssetId(backendDetail.asset.id)
+      setDraft({
+        prompt: backendDetail.task.prompt,
+        modelId: backendDetail.task.modelId,
+        quality: settings.defaultResolution,
+        aspectRatio: '1:1',
+        imageCount: getTaskOutputCount(backendDetail.task),
+      })
+      setWorkbenchMode('backend')
+      setNotice('已准备基于后端资产再次编辑。')
+    } catch {
+      setPendingEditSourceAssetId(null)
+      setNotice('再次编辑所需资产不可用，请刷新历史后重试。')
+    }
+  }
+
+  const handleDeleteLegacy = async (item: HistoryWithImage) => {
     if (!window.confirm('确定删除这条历史记录吗？')) {
       return
     }
@@ -210,7 +336,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     setNotice('历史记录已删除。')
   }
 
-  const handleClear = async () => {
+  const handleClearLegacy = async () => {
     if (!window.confirm('确定清空全部历史记录吗？此操作不可恢复。')) {
       return
     }
@@ -269,6 +395,40 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         setAssetDetail(null)
       }
     }
+  }
+
+  const handleOpenCurrentDetail = () => {
+    if (!generation.current) {
+      return
+    }
+
+    if (generation.current.kind === 'legacy') {
+      setDetail({
+        kind: 'legacy',
+        current: generation.current,
+      })
+      setDetailError('')
+      setDetailLoading(false)
+      setDetailOpen(true)
+      return
+    }
+
+    void handleOpenBackendDetail(generation.current.result.assetId, generation.current.task.id)
+  }
+
+  const handleDownloadDetail = async () => {
+    if (detail?.kind === 'backend') {
+      const download = await history.downloadBackendAsset(detail.asset)
+      if (!download) {
+        setNotice('结果下载失败，请稍后重试。')
+        return
+      }
+
+      downloadBlob(download.blob, download.filename ?? detail.asset.filename)
+      return
+    }
+
+    await handleDownloadCurrent()
   }
 
   return (
@@ -350,7 +510,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           error={generation.error}
           onCancelTask={() => void generation.cancelCurrentTask()}
           onDownload={() => void handleDownloadCurrent()}
-          onOpenDetail={() => setDetailOpen(true)}
+          onOpenDetail={handleOpenCurrentDetail}
           onRetryTask={() => void generation.retryCurrentTask()}
           onSelect={generation.selectCurrent}
           pendingTaskAction={generation.pendingTaskAction}
@@ -382,20 +542,38 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             selectedProjectId={projectAssets.selectedProjectId}
           />
 
-          <div className="space-y-2">
-            <div className="px-1 text-xs font-semibold text-ink-500">旧本地历史（兼容）</div>
-            <HistoryPanel
-              isLoading={history.isLoading}
-              items={history.items}
+          <HistoryPanel
+            error={history.error}
+            isLoading={history.isLoading}
+            items={history.items}
+            onDownload={(item) => void handleDownloadBackendHistory(item)}
+            onEdit={(item) => void handleEditBackendHistory(item)}
+            onRefresh={() => void history.refresh()}
+            onView={(item) => void handleOpenBackendDetail(item.asset.id, item.task.id)}
+          />
+
+          <button
+            aria-label="查看旧本地历史"
+            className="rounded-md border border-ink-200 bg-white px-4 py-3 text-left text-sm font-semibold text-ink-700"
+            onClick={() => setLegacyHistoryVisible((visible) => !visible)}
+            type="button"
+          >
+            查看旧本地历史
+          </button>
+          {isLegacyHistoryVisible ? (
+            <LegacyHistoryPanel
+              error={history.legacyError}
+              isLoading={history.isLegacyLoading}
+              items={history.legacyItems}
               limitBytes={settings.storageLimitBytes}
-              onClear={handleClear}
-              onDelete={handleDelete}
-              onDownload={handleDownloadHistory}
-              onEdit={handleEdit}
-              onView={handleView}
+              onClear={handleClearLegacy}
+              onDelete={handleDeleteLegacy}
+              onDownload={handleDownloadLegacyHistory}
+              onEdit={handleEditLegacy}
+              onView={handleViewLegacy}
               usedBytes={storageUsage.usedBytes}
             />
-          </div>
+          ) : null}
         </div>
       </div>
 
@@ -417,10 +595,12 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       ) : null}
 
       <ImageDetailModal
-        current={generation.current?.kind === 'legacy' ? generation.current : null}
+        detail={detail}
+        error={detailError}
         isOpen={isDetailOpen}
+        isLoading={isDetailLoading}
         onClose={() => setDetailOpen(false)}
-        onDownload={() => void handleDownloadCurrent()}
+        onDownload={() => void handleDownloadDetail()}
       />
 
       <AssetDetailModal
@@ -433,6 +613,11 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       />
     </AppShell>
   )
+}
+
+function getTaskOutputCount(task: BackendHistoryItem['task']): ImageCount {
+  const outputCount = task.parameters.outputCount
+  return outputCount === 1 || outputCount === 2 || outputCount === 3 || outputCount === 4 ? outputCount : 1
 }
 
 function hasPermission(session: AuthSession, permission: string): boolean {

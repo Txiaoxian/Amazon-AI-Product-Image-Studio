@@ -1,56 +1,50 @@
-import { Download, Eye, Pencil, Trash2 } from 'lucide-react'
-import type { HistoryWithImage } from '../../db/historyRepository'
-import { useObjectUrl } from '../../hooks/useObjectUrl'
+import { Download, Eye, Pencil } from 'lucide-react'
 import { formatBytes } from '../../lib/storageLimit'
+import type { BackendHistoryItem } from '../../types/history'
 
 interface HistoryItemProps {
-  history: HistoryWithImage
-  onView: (history: HistoryWithImage) => void
-  onEdit: (history: HistoryWithImage) => void
-  onDownload: (history: HistoryWithImage) => void
-  onDelete: (history: HistoryWithImage) => void
+  history: BackendHistoryItem
+  onView: (history: BackendHistoryItem) => void
+  onEdit: (history: BackendHistoryItem) => void
+  onDownload: (history: BackendHistoryItem) => void
 }
 
-export function HistoryItem({ history, onView, onEdit, onDownload, onDelete }: HistoryItemProps) {
-  const imageUrl = useObjectUrl(history.image?.blob)
+export function HistoryItem({ history, onView, onEdit, onDownload }: HistoryItemProps) {
   const createdAt = new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(history.item.createdAt))
+  }).format(new Date(history.asset.createdAt))
+  const previewUrl = history.asset.thumbnailUrl ?? history.asset.previewUrl
 
   return (
     <article className="rounded-lg border border-ink-200 bg-white p-2">
       <div className="flex gap-3">
         <button
           className="h-20 w-20 shrink-0 overflow-hidden rounded-md bg-ink-100"
-          disabled={!history.image}
           onClick={() => onView(history)}
           type="button"
         >
-          {imageUrl ? <img alt={history.item.prompt} className="h-full w-full object-cover" src={imageUrl} /> : null}
+          {previewUrl ? <img alt={history.asset.filename} className="h-full w-full object-cover" src={previewUrl} /> : null}
         </button>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-ink-900">{history.item.modelLabel}</p>
+          <p className="truncate text-sm font-semibold text-ink-900">{history.asset.filename}</p>
           <p className="mt-1 text-xs text-ink-500">
-            {history.item.quality} · {history.item.aspectRatio}
+            {history.asset.kind} · {history.task.status}
           </p>
           <p className="mt-1 text-xs text-ink-400">
-            {createdAt} · {formatBytes(history.item.fileSize)}
+            {createdAt} · {formatBytes(history.asset.fileSize)}
           </p>
           <div className="mt-2 flex gap-1">
-            <button aria-label="查看历史图片" className="icon-button h-8 w-8" onClick={() => onView(history)} title="查看" type="button">
+            <button aria-label={`查看结果 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onView(history)} title="查看" type="button">
               <Eye className="h-4 w-4" />
             </button>
-            <button aria-label="再次编辑" className="icon-button h-8 w-8" onClick={() => onEdit(history)} title="再次编辑" type="button">
+            <button aria-label={`再次编辑 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onEdit(history)} title="再次编辑" type="button">
               <Pencil className="h-4 w-4" />
             </button>
-            <button aria-label="下载历史原图" className="icon-button h-8 w-8" onClick={() => onDownload(history)} title="下载" type="button">
+            <button aria-label={`下载结果 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onDownload(history)} title="下载" type="button">
               <Download className="h-4 w-4" />
-            </button>
-            <button aria-label="删除历史记录" className="icon-button h-8 w-8 hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => onDelete(history)} title="删除" type="button">
-              <Trash2 className="h-4 w-4" />
             </button>
           </div>
         </div>

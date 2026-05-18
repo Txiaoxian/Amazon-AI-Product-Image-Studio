@@ -438,6 +438,8 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
+    expect(await screen.findByRole('button', { name: '查看旧本地历史' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看旧本地历史' }))
     expect(await screen.findByText('旧本地历史（兼容）')).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: '再次编辑' }))
 
@@ -465,6 +467,15 @@ function createWorkbenchFetch(overrides: {
     }
     if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
       return successResponse(page([asset]))
+    }
+    if (url === '/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50') {
+      return successResponse(page([]))
     }
     if (url === '/api/v1/assets/asset_1/download') {
       return new Response(new Blob(['reference-bytes'], { type: 'image/png' }), {
