@@ -1,6 +1,3 @@
-import { geminiImageAdapter } from './geminiImageAdapter'
-import { openaiImageAdapter } from './openaiImageAdapter'
-import type { ProviderAdapter, ProviderId } from './types'
 import type { ImageModelConfig } from './types'
 
 export const IMAGE_MODELS: ImageModelConfig[] = [
@@ -35,17 +32,4 @@ export function getModelById(modelId: string): ImageModelConfig {
   }
 
   return IMAGE_MODELS.find((model) => model.id === modelId) ?? IMAGE_MODELS[0]
-}
-
-const adapters: Record<ProviderId, ProviderAdapter> = {
-  openai: openaiImageAdapter,
-  gemini: geminiImageAdapter,
-  relay2: {
-    ...openaiImageAdapter,
-    provider: 'relay2',
-  },
-}
-
-export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
-  return adapters[provider]
 }

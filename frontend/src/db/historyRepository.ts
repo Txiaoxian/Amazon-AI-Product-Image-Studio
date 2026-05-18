@@ -1,6 +1,6 @@
-import { createId, db, type StoredImage } from './dexie'
+import { createId, db, type HistoryItem, type StoredImage } from './dexie'
 import { deleteImages, getImage } from './imageRepository'
-import type { GeneratedImageResult, GenerationRequest, HistoryItem } from '../providers/types'
+import type { GeneratedImageResult, GenerationRequest } from '../providers/types'
 
 export interface HistoryWithImage {
   item: HistoryItem

@@ -15,18 +15,6 @@ export interface ImageModelConfig {
   description: string
 }
 
-export interface ProviderSettings {
-  apiUrl: string
-  apiKey: string
-}
-
-export interface AppSettings {
-  defaultModelId: string
-  defaultResolution: ImageResolution
-  storageLimitBytes: number
-  providers: Record<ProviderId, ProviderSettings>
-}
-
 export interface ReferenceImageInput {
   file: File
   previewUrl: string
@@ -49,11 +37,6 @@ export interface GeneratedImageResult {
   height: number
   fileSize: number
   durationMs: number
-}
-
-export interface ProviderAdapter {
-  provider: ProviderId
-  generateImages(request: GenerationRequest, settings: ProviderSettings): Promise<GeneratedImageResult[]>
 }
 
 export interface HistoryItem {
