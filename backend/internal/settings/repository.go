@@ -1,0 +1,92 @@
+package settings
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/idgen"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type Repository struct {
+	db *gorm.DB
+}
+
+func NewRepository(db *gorm.DB) Repository {
+	return Repository{db: db}
+}
+
+func (r Repository) withDB(db *gorm.DB) Repository {
+	return Repository{db: db}
+}
+
+func (r Repository) base(ctx context.Context, scope tenant.Scope) (*gorm.DB, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if !scope.Valid() {
+		return nil, tenant.ErrMissingTenantID
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return r.db.WithContext(ctx), nil
+}
+
+func (r Repository) FindByKey(ctx context.Context, scope tenant.Scope, key string) (database.SystemSetting, bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.SystemSetting{}, false, err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return database.SystemSetting{}, false, ErrValidation
+	}
+
+	var record database.SystemSetting
+	err = db.Where("tenant_id = ? AND `key` = ?", scope.ID(), key).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.SystemSetting{}, false, nil
+	}
+	if err != nil {
+		return database.SystemSetting{}, false, err
+	}
+	return record, true, nil
+}
+
+func (r Repository) Upsert(ctx context.Context, scope tenant.Scope, key string, valueJSON string, now time.Time) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	valueJSON = strings.TrimSpace(valueJSON)
+	if key == "" || valueJSON == "" {
+		return ErrValidation
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+
+	record := database.SystemSetting{
+		ID:        idgen.New(),
+		TenantID:  scope.ID(),
+		Key:       key,
+		ValueJSON: valueJSON,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "tenant_id"}, {Name: "key"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"value_json": valueJSON,
+			"updated_at": now,
+		}),
+	}).Create(&record).Error
+}

@@ -108,6 +108,19 @@ func (OperationLog) TableName() string {
 	return "operation_logs"
 }
 
+type SystemSetting struct {
+	ID        string    `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_system_settings_tenant_id,priority:2"`
+	TenantID  string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_system_settings_tenant_key,priority:1;uniqueIndex:uk_system_settings_tenant_id,priority:1"`
+	Key       string    `gorm:"type:varchar(128);not null;uniqueIndex:uk_system_settings_tenant_key,priority:2"`
+	ValueJSON string    `gorm:"type:json;not null"`
+	CreatedAt time.Time `gorm:"type:datetime(3);not null"`
+	UpdatedAt time.Time `gorm:"type:datetime(3);not null"`
+}
+
+func (SystemSetting) TableName() string {
+	return "system_settings"
+}
+
 type Project struct {
 	ID        string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_projects_tenant_id,priority:2"`
 	TenantID  string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_projects_tenant_id,priority:1;index:idx_projects_tenant_status_created,priority:1;index:idx_projects_tenant_asin,priority:1;index:idx_projects_tenant_deleted,priority:1"`

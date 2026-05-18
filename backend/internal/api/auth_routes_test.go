@@ -449,6 +449,15 @@ var authRouteTestSchema = []string{
 		raw_usage_json TEXT NULL,
 		created_at TIMESTAMP NOT NULL
 	)`,
+	`CREATE TABLE system_settings (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		UNIQUE (tenant_id, key)
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {

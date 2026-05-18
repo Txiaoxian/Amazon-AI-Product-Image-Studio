@@ -44,6 +44,7 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"task_outputs",
 		"api_call_logs",
 		"usage_records",
+		"system_settings",
 	}
 	for _, table := range requiredTenantTables {
 		statement := findCreateTableStatement(t, table)
@@ -198,6 +199,27 @@ func TestImageAssetsMigrationStoresMetadataOnly(t *testing.T) {
 	for _, forbidden := range []string{" BLOB", " LONGBLOB", " MEDIUMBLOB", " TINYBLOB", "base64"} {
 		if strings.Contains(strings.ToLower(statement), strings.ToLower(forbidden)) {
 			t.Fatalf("image_assets migration must not store image bytes: found %q", forbidden)
+		}
+	}
+}
+
+func TestSystemSettingsMigrationIsTenantScopedAndUploadPolicyOnly(t *testing.T) {
+	statement := findCreateTableStatement(t, "system_settings")
+	for _, required := range []string{
+		"tenant_id VARCHAR(36) NOT NULL",
+		"`key` VARCHAR(128) NOT NULL",
+		"value_json JSON NOT NULL",
+		"UNIQUE KEY uk_system_settings_tenant_key (tenant_id, `key`)",
+		"CONSTRAINT fk_system_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)",
+		"first active key is upload_policy only",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Fatalf("system_settings migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"default_provider_id", "default_model_id", "tenant_concurrency", "storage_quota", "log_retention"} {
+		if strings.Contains(strings.ToLower(statement), forbidden) {
+			t.Fatalf("system_settings migration must not include deferred setting %q", forbidden)
 		}
 	}
 }
