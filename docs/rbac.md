@@ -140,6 +140,13 @@ P7 task role mapping:
 - Task event SSE streams require the same visibility rules as task read. Event filtering must be applied per tenant and per project/task object, not only when the connection is opened.
 - Worker execution uses backend service authority only; it must not bypass tenant/project checks when reading task-related assets and metadata.
 
+P9 audit/settings role mapping:
+
+- Usage summary and usage-record reads require tenant admin access plus `usage:read`.
+- Operation-log and API-call-log list/detail reads require tenant admin access plus `audit:read`.
+- Cross-tenant log/detail probes must return no rows or `404` without existence disclosure.
+- System settings reads and writes must require tenant admin access plus `system:settings:manage`.
+
 ## Audit requirements
 
 Record operation logs for:

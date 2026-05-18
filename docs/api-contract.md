@@ -293,11 +293,26 @@ Frontend uses enabled model capability fields to render dynamic parameters. P6 o
 
 ## Usage and audit APIs
 
-- `GET /usage/summary`
-- `GET /usage/records`
-- `GET /audit/operation-logs`
-- `GET /audit/api-call-logs`
-- `GET /system-settings`
-- `PATCH /system-settings`
+- `GET /admin/usage/summary`
+- `GET /admin/usage/records`
+- `GET /admin/operation-logs`
+- `GET /admin/api-call-logs`
+- `GET /admin/api-call-logs/:id`
 
-Audit APIs require admin permissions.
+Current P9 backend contract:
+
+- All routes above require tenant admin access plus the matching RBAC permission: `usage:read` for usage endpoints, `audit:read` for operation/API call logs.
+- List endpoints return the standard envelope with `records`, `total`, `pageNum`, and `pageSize`.
+- Shared query parameters: `pageNum`, `pageSize`, `sortBy=createdAt`, `sortOrder=asc|desc`, `createdAtFrom`, `createdAtTo`.
+- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary also accepts `dimension=user|project|provider|model`.
+- Operation log filters: `actorUserId`, `action`, `resourceType`, `resourceId`.
+- API call log filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`, `status=SUCCESS|FAILURE`, `requestId`.
+- Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
+- `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
+
+Planned next P9 settings contract:
+
+- `GET /admin/system-settings`
+- `PATCH /admin/system-settings`
+
+Settings APIs must require admin access plus `system:settings:manage`, and they must not claim a setting is active unless backend behavior actually consumes it.

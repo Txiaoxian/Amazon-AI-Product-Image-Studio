@@ -491,12 +491,12 @@ P8 intentionally does not resolve:
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
-Status: ready to start after completed R8.
+Status: in progress after completed R8. `P9-BE-AUDIT-USAGE-READS` has been reviewed, fixed, merged into `main`, and verified. Continue P9 serially from backend system settings hardening before opening frontend admin UI.
 
 P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
 
-1. `P9-BE-AUDIT-USAGE-READS`: backend usage, operation log, and API call log read APIs with RBAC, tenant isolation, pagination, and recursive redaction. This should run first and serially because it defines the data exposure boundary.
-2. `P9-BE-SYSTEM-SETTINGS-HARDENING`: backend system settings API, validation, operation logs, and production startup secret checks.
+1. `P9-BE-AUDIT-USAGE-READS`: completed and merged. Backend usage, operation log, and API call log read APIs now enforce admin RBAC, tenant isolation, pagination, deterministic ordering, and shared recursive response redaction.
+2. `P9-BE-SYSTEM-SETTINGS-HARDENING`: next, serial. Add backend system settings API, validation, operation logs, and production startup secret checks.
 3. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: admin UI for usage/logs/settings, only after backend contracts exist.
 4. `P9-SECURITY-REGRESSION`: targeted security tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, and residual legacy code cleanup.
 5. `P9-DEPLOY-RELEASE-VALIDATION`: Docker Compose build/up/healthcheck, release documentation, environment variable review, backup/restore notes, and final deployment runbook.
@@ -505,6 +505,7 @@ P9 carry-forward risks:
 
 - Production startup still needs hard failure for placeholder `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`.
 - Unknown secrets cannot be redacted unless they are supplied as known secrets or match heuristic rules.
+- P9 audit reads now use the shared redaction package and support exact known-secret scrubbing through an injected redactor seam, but production read APIs intentionally do not widen Provider API-key decryption scope. If historical dirty rows must be scrubbed for non-heuristic secrets at read time, define a trusted minimal secret source and lifecycle before implementing it.
 - Provider soft-delete linked-model policy remains unresolved.
 - History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
 - Unreachable legacy display/DB helper code should be deleted or explicitly quarantined before release to reduce future agent confusion.

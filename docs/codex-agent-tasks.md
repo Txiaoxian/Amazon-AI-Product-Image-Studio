@@ -2825,13 +2825,15 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 
 ### P9 调度顺序
 
-1. `P9-BE-AUDIT-USAGE-READS` - first, serial. Define safe backend read contracts for usage, operation logs, and API call logs.
-2. `P9-BE-SYSTEM-SETTINGS-HARDENING` - second, serial. Add system settings and production secret validation.
+1. `P9-BE-AUDIT-USAGE-READS` - completed and merged. Defines safe backend read contracts for usage, operation logs, and API call logs.
+2. `P9-BE-SYSTEM-SETTINGS-HARDENING` - next, serial. Add system settings and production secret validation.
 3. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - after backend contracts. Add frontend admin views for usage/logs/settings.
 4. `P9-SECURITY-REGRESSION` - after core backend settings exist. Add targeted security regression tests and residual legacy cleanup.
 5. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
 
-First batch: open only `P9-BE-AUDIT-USAGE-READS`. Do not parallelize settings or frontend admin UI until the read contracts and redaction behavior are stable.
+First batch completed: `P9-BE-AUDIT-USAGE-READS` merged after review-driven redaction fixes.
+
+Second batch: open only `P9-BE-SYSTEM-SETTINGS-HARDENING`. Do not parallelize frontend admin UI until the settings contract and production-secret behavior are stable.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -2842,6 +2844,10 @@ P9-BE-AUDIT-USAGE-READS - 后端用量、操作日志和 API 调用日志查询
 ### 目标
 
 为 admin 用户提供 tenant-scoped usage summary、usage records、operation logs、api call logs 的只读查询 API，带分页、过滤、RBAC、对象级边界和递归脱敏。
+
+### 状态
+
+Completed and merged into `main`. Review required one follow-up fix to centralize redaction into `backend/internal/redaction`, prove exact known-secret value/key scrubbing through a controlled injection seam, and add deterministic same-timestamp pagination coverage. Production read handlers intentionally do not widen Provider plaintext-key decryption scope; if historical dirty rows need exact non-heuristic scrubbing later, first define a trusted minimal secret source and lifecycle.
 
 ### 允许修改文件
 
@@ -2948,15 +2954,111 @@ P9-BE-SYSTEM-SETTINGS-HARDENING - 后端系统设置 API 与生产 secret 校验
 
 实现系统设置后端 API、设置校验、设置修改 operation log、生产默认 secret 启动拒绝，并为上传限制、默认 Provider/model、并发限制、日志保留等设置建立可执行的后端约束。
 
-### 依赖
+### 允许修改文件
 
-- `P9-BE-AUDIT-USAGE-READS` completed or at least its permission/log redaction conventions are stable.
+- `backend/internal/api/**`
+- `backend/internal/config/**`
+- `backend/internal/database/**`
+- `backend/internal/rbac/**`
+- `backend/internal/audit/**` 仅限复用现有 sanitized operation-log 能力
+- `backend/internal/provider/**`、`backend/internal/model/**` 仅限默认 Provider/model 校验所需的 tenant-scoped read helper
+- `backend/internal/**/**/*_test.go`
+- `backend/cmd/api/**`、`backend/cmd/worker/**` 仅限启动配置校验 wiring
 
-### 关键约束
+### 禁止修改文件
 
-- 不允许设置 UI 或 API 声称某项设置已生效但后端实际不执行。
-- `APP_ENV=production` 时必须拒绝默认 `JWT_SIGNING_SECRET`、默认 `API_KEY_ENCRYPTION_KEY` 和其他占位 secret。
-- 设置变更必须记录 sanitized operation log。
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- Worker claim/complete/cancel 状态机
+- SSE、queue、Provider Adapter runtime、task execution 主流程
+
+### 前置依赖
+
+- `P9-BE-AUDIT-USAGE-READS` completed and merged.
+- Shared redaction package and current RBAC conventions are available on `main`.
+
+### 必须保持的现有行为
+
+- Existing auth, RBAC, Provider/model management, task/SSE flow, P8 backendized workbench, and P9 audit reads remain stable.
+- Shared local development defaults may still be convenient in non-production environments; only `APP_ENV=production` must hard-fail placeholder secrets.
+- Settings APIs must extend backend behavior, not create a second config source that silently disagrees with existing runtime config.
+
+### 允许的中间态
+
+- Backend settings APIs may land before frontend settings UI.
+- Only settings that the backend can actually consume in this task may be exposed as writable.
+- Existing static config may remain the bootstrap/default source, with database-backed settings overriding only explicitly implemented fields.
+
+### 禁止的半迁移状态
+
+- No API may claim a setting is active if backend code never reads it.
+- No production startup may continue with placeholder `JWT_SIGNING_SECRET`, placeholder `API_KEY_ENCRYPTION_KEY`, or similarly unsafe built-in defaults.
+- No setting update may bypass tenant scope, RBAC, or sanitized operation logging.
+- No system setting may expose secrets or accept unbounded values.
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| non-admin user reads or writes settings | RBAC rejects with `403` |
+| tenant A requests tenant B setting IDs/default Provider/model IDs | no cross-tenant access or existence leak |
+| invalid concurrency/upload/log-retention values | validation error, no partial persistence |
+| default Provider/model belongs to another tenant, is disabled, or deleted | validation rejects it |
+| settings update succeeds | sanitized operation log is written |
+| `APP_ENV=production` with placeholder JWT or API-key encryption secret | API and worker startup fail fast before serving work |
+| non-production local/dev config uses placeholders | existing developer flow remains available unless explicitly tightened later |
+| setting is documented but not yet consumed by runtime | do not expose it as writable or mark it active |
+
+### 必须新增或更新的回归测试
+
+- RBAC denial for settings read/write.
+- Tenant isolation and same-tenant validation for default Provider/model references.
+- Validation for concurrency, upload limits, storage limits if in scope, and log retention bounds.
+- Sanitized operation log on update.
+- Production startup rejection for placeholder JWT and API-key encryption secrets in both API and worker startup paths.
+- Non-production startup remains valid with existing local defaults.
+
+### 具体开发内容
+
+- Add admin-only settings endpoints under `/api/v1/admin/system-settings` using the existing response envelope and RBAC conventions.
+- Define the concrete settings fields that backend behavior will actually honor now, for example:
+  - default Provider/model IDs
+  - task concurrency limits that existing runtime can consume
+  - upload size/dimension/pixel limits only if wired into upload validation in this task
+  - log retention only if there is executable backend behavior in scope
+- Persist tenant-scoped settings in MySQL with `tenant_id`; reuse existing tables if already planned, otherwise add the minimal schema needed by the contract.
+- Add sanitized `operation_logs` for updates.
+- Add startup validation that rejects placeholder production secrets for API and worker entrypoints.
+- Keep secret-validation errors safe: clear enough for operators, never echo actual secret values.
+
+### 安全要求
+
+- All settings rows and queries are tenant scoped.
+- All routes require authentication, admin role, and `system:settings:manage`.
+- Settings responses must not expose JWTs, encryption keys, Provider plaintext keys, cookies, Authorization headers, or other secret material.
+- Production secret validation must not log actual secret values.
+- Do not widen Provider plaintext-key decryption scope while validating default Provider/model references.
+
+### 验收标准
+
+- Admin can read and update only settings that backend behavior truly supports.
+- Invalid or cross-tenant settings are rejected without partial writes or existence leaks.
+- Production API and worker startup fail before serving when placeholder secrets are configured.
+- Operation logs are present and sanitized.
+- No frontend, deploy, docs, or unrelated runtime paths are modified.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+```
 
 ## 子任务 28：管理端用量、日志和系统设置 UI
 

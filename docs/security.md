@@ -16,6 +16,7 @@ Remaining P9 review risks:
 - Unreachable legacy display components and old IndexedDB helper files may still exist. They must remain outside the production import graph and should be deleted or explicitly quarantined in P9.
 - Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
+- Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 
 Resolved transition item:
 
@@ -28,6 +29,7 @@ Resolved transition item:
 - P7 frontend task client work now uses EventSource/SSE contracts and did not introduce polling, new Provider direct calls, or new Provider API key persistence.
 - P8 frontend backendization replaced the production workbench with backend task API + SSE + authorized backend assets, removed normal browser Provider settings, removed browser Provider adapters, removed `legacyFile` reference payloads, and moved history/detail/download/re-edit to backend assets and tasks.
 - R8 verified frontend, backend, and Compose config regression. Sensitive frontend static scan returned no production-code hits for browser Provider credentials, Provider Authorization headers, direct Provider hosts, task polling, or sensitive browser storage. Provider static-scan hits are limited to backend Provider management API consumers.
+- P9 audit/usage read APIs now use shared recursive redaction, tenant-scoped queries, admin RBAC, and deterministic pagination. Review fixes centralized the redaction implementation and proved exact known-secret scrubbing through a controlled injection seam without expanding production Provider-key decryption scope.
 
 P5 review hardening backlog:
 
@@ -144,6 +146,13 @@ Current P7 Provider runtime status:
 - The runtime requirement above is implemented and merged.
 - Configured Provider API keys are decrypted only in backend memory, passed into the redactor as known secrets, and removed from persisted metadata whether they appear as values or nested JSON map keys.
 - Residual boundary: unknown secrets that are neither supplied as known secrets nor matched by heuristic rules cannot be identified automatically. This is a generic limit of redaction, not an uncovered path for the currently configured Provider API key.
+
+Current P9 audit-read status:
+
+- Audit/usage read responses use the same shared redaction implementation as Provider runtime rather than a forked heuristic-only copy.
+- Exact known-secret value/key removal is supported when a trusted redactor is explicitly injected.
+- Production admin read APIs currently default to heuristic redaction only. This is intentional: Provider plaintext API keys are not broadly decrypted just to scrub historical dirty rows.
+- If future requirements demand exact read-time scrubbing of historical non-heuristic secrets, first design a narrowly scoped secret source, authorized lifecycle, and retention policy; do not widen decryption ad hoc inside read handlers.
 
 P8 migration security requirements:
 
