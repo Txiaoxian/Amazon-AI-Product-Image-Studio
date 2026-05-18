@@ -420,7 +420,7 @@ P7 residual risks and carry-forward items:
 
 ## P8: Frontend backendization
 
-Status: in progress after completed R7. `P8-FE-WORKBENCH-FOUNDATION` has been reviewed and merged. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
+Status: frontend code tasks completed and merged; R8 regression/review is the next required gate before P9. P8 is the migration phase that switches the existing frontend workbench from the local/browser execution path to the backend platform path. It must preserve the current workbench concepts while making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
 
 P8 goals:
 
@@ -446,17 +446,18 @@ P8 execution order:
 1. `P8-FE-WORKBENCH-FOUNDATION`: completed and merged. It added backend model capability loading, backend-ready workbench input types, and project asset ID reference state while keeping the default production submit path legacy-safe until the next task.
 2. `P8-FE-TASK-WORKBENCH`: completed and merged. It switched the default workbench submission path to backend task creation + SSE lifecycle, added cancel/retry handling, and drives live result rendering from authorized backend output assets.
 3. `P8-FE-HISTORY-ASSET-SOURCE`: completed and merged. It moved the default history/detail/download/re-edit path to backend task history plus generated/edited assets, while keeping old IndexedDB history as an explicit collapsed compatibility entry.
-4. `P8-FE-LEGACY-RETIREMENT`: remove or isolate browser Provider adapters, Provider key settings, and IndexedDB image/history production paths after the backend flow is proven.
-5. `R8`: main-agent review, regression, migration verification, and public contract cleanup before P9.
+4. `P8-FE-LEGACY-RETIREMENT`: completed and merged. It removed browser Provider adapters, retired normal Provider key/API URL settings, removed `legacyFile` asset-reference payloads, and proved the production import graph no longer reaches old Provider or IndexedDB history/image modules.
+5. `R8`: pending. Main-agent review, regression, migration verification, and public contract cleanup before P9.
 
 P8 current result:
 
-- Backend-ready workbench structures now exist for model capabilities, backend task input, and project asset references.
-- The default production workbench now creates backend tasks only, advances task state from SSE, and renders live backend output assets instead of browser Provider responses.
+- Backend model capabilities, backend task input, and project asset references are the production workbench state model.
+- The default production workbench creates backend tasks only, advances task state from SSE, and renders live backend output assets instead of browser Provider responses.
 - Backend task history, authorized asset download, backend result detail, and backend asset re-editing are now the default production history path.
-- Old IndexedDB history remains only as an explicit collapsed compatibility entry until `P8-FE-LEGACY-RETIREMENT` removes or strictly isolates the remaining old browser path.
-- Review of `P8-FE-TASK-WORKBENCH` left two non-blocking follow-ups still open after the history switch: generic HTTP `422` handling is broader than a future stale-model-specific error contract, and asset references still carry a temporary `legacyFile` compatibility blob until retirement work removes that burden.
-- Review of `P8-FE-HISTORY-ASSET-SOURCE` left two non-blocking follow-ups for later cleanup: the frontend currently joins separately paged task/asset lists to build history, and load failure can still render an empty-state panel beside the error state.
+- Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
+- Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
+- IndexedDB is no longer the production source for generated images or history. Prompt templates and old local DB helper files may still exist as residual non-production code or test scaffolding, but they must not be reintroduced into the main workbench path or silently uploaded into tenant storage.
+- Remaining P8 follow-ups for R8/P9: generic HTTP `422` handling is still broader than a future stale-model-specific error contract; frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; unreachable legacy display/DB helper code should be deleted or quarantined during hardening.
 
 P8 serial policy:
 

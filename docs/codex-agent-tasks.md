@@ -2250,8 +2250,8 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 1. `P8-FE-WORKBENCH-FOUNDATION` - completed and merged. 先切换模型与引用资产的来源。
 2. `P8-FE-TASK-WORKBENCH` - completed and merged. 再切换提交、状态和结果输出。
 3. `P8-FE-HISTORY-ASSET-SOURCE` - completed and merged. 再切换历史与再次编辑来源。
-4. `P8-FE-LEGACY-RETIREMENT` - 最后退役旧直连和旧本地持久化生产路径。
-5. `R8` - 主 agent 串行 review、回归、静态扫描和合同校准。
+4. `P8-FE-LEGACY-RETIREMENT` - completed and merged. 最后退役旧直连和旧本地持久化生产路径。
+5. `R8` - pending. 主 agent 串行 review、回归、静态扫描和合同校准。
 
 ### P8 总体约束
 
@@ -2600,6 +2600,20 @@ npm run build
 
 P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路径
 
+### 当前状态
+
+Completed and merged into `main`.
+
+Review result:
+
+- 删除了浏览器 Provider adapter、frontend Provider registry/types、普通 Provider API Key/API URL 设置入口和相关旧测试。
+- 生产工作台只使用 `BackendControlPanel`、backend task API、SSE、authorized backend assets 和 backend history/detail/download/re-edit。
+- `legacyFile` 已从 project asset reference 类型和生产路径中移除；项目资产作为参考图只提交 backend `assetId`。
+- 项目切换会清空待提交参考图，避免把旧项目 assetId 带入新项目任务。
+- 静态扫描确认生产路径没有 Provider direct host、Provider Authorization header、Provider key storage、task polling 或 `frontend/src/providers/**` import。
+- 合并前验证通过：`npm run lint`、`npm run type-check`、`npm run test`、`npm run build`，18 个 test files / 59 个 tests 全部通过。
+- 非阻塞遗留：`ResultCanvas`、`ImageDetailModal`、`LegacyHistoryPanel`、旧 IndexedDB history/image helper 和 `useStorageUsage` 仍有不可达或非生产残留，R8/P9 应确认后删除或明确 quarantine；generic HTTP `422` handling、history frontend join 和 error/empty-state overlap 仍待 P9/hardening 收口。
+
 ### 目标
 
 在后端工作流已经替换完成后，清理旧浏览器 Provider 直连、Provider 凭据设置、IndexedDB 图片/历史生产引用和相关测试，完成 P8 的迁移收口。
@@ -2717,6 +2731,10 @@ R8 - 前端后端化 review、回归和迁移验收
 
 由主 agent 串行 review P8 四个子任务，确认主工作台已完成从浏览器本地链路到后端平台链路的迁移，再进入 P9。
 
+### 推荐分支
+
+- `codex/r8-p8-regression-review`
+
 ### 允许修改文件
 
 - `docs/**`
@@ -2742,11 +2760,13 @@ R8 - 前端后端化 review、回归和迁移验收
 - 跑前端完整回归、后端必要回归、Compose config 和关键静态扫描。
 - 确认项目资产、任务 API、SSE 和历史 UI 已成为主生产路径。
 - 更新公共合同中的 P8 实际完成状态、残余风险和 P9 前置条件。
+- 明确 P9 首批任务是否从审计/用量/系统设置横切任务拆小，避免一个过大的 `P9-AUDIT-HARDENING` worktree。
 
 ### 安全要求
 
 - 重点检查浏览器直连、密钥持久化、任务轮询、未经授权下载、静默上传旧 Blob、图片 base64 日志。
 - 不允许因兼容入口重新引入旧违规链路。
+- 对静态扫描保留命中必须逐条分类：backend Provider 管理 API、非敏感 prompt-template IndexedDB、不可达 legacy residue、测试-only 命中，不能笼统放过。
 
 ### 验收标准
 
@@ -2754,6 +2774,7 @@ R8 - 前端后端化 review、回归和迁移验收
 - 主工作台生产路径只使用 backend API + SSE + authorized assets。
 - 静态扫描和回归测试未发现旧直连、旧密钥持久化或 polling；允许保留的本地存储命中已逐条确认只承载非敏感 UI 偏好。
 - 文档已经反映 P8 实际完成情况和 P9 遗留。
+- P9 的下一批任务包必须按 P8/P9 强制任务包标准拆小，并说明是否串行或有限并行。
 
 ### 测试命令
 

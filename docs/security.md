@@ -1,17 +1,21 @@
 # Security Plan
 
-## Current transition risks after R7
+## Current transition risks after P8
 
-The current `main` branch is still a migration baseline, not a compliant platform release. The following risks are known and must be removed in the documented phases:
+The current `main` branch has completed the P8 frontend backendization code tasks. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the P8 transition risks and their current status so future agents do not reintroduce them:
 
-| Risk | Current location | Required removal phase | Acceptance check |
+| Risk | Previous location | Status after P8 | Acceptance check |
 | --- | --- | --- | --- |
-| Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | P8 frontend backendization | No API key field is persisted in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
-| Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, `frontend/src/hooks/useGeneration.ts` | P8 frontend backendization, after P6/P7 backend replacements exist | Browser generation flow creates backend tasks only; no Provider `Authorization` header is created in frontend. |
-| Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | P8 frontend backendization, after P5 asset APIs exist | Project assets and task history APIs are the primary data source; IndexedDB is limited to drafts or temporary previews. |
-| Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` | P8 frontend backendization for legacy generation paths | Backend asset upload already rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. Legacy local paths must not be treated as platform asset storage. |
+| Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | Resolved. Normal Provider settings were removed; Provider keys are submitted only through backend Provider management forms and are not persisted in browser storage. | Static scan and tests must continue to show no Provider API key/API URL persistence in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
+| Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, old browser Provider adapters | Resolved. Browser Provider adapter files and frontend Provider registry/types were removed; workbench generation creates backend tasks only. | Browser generation flow creates backend tasks only; no Provider `Authorization` header or direct Provider host appears in production frontend code. |
+| Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
+| Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
-These risks are tracked so future agents do not treat the transition state as acceptable production architecture.
+Remaining P8/R8 review risks:
+
+- Unreachable legacy display components and old IndexedDB helper files may still exist. They must remain outside the production import graph and should be deleted or explicitly quarantined in R8/P9.
+- Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
+- Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 
 Resolved transition item:
 
@@ -22,6 +26,7 @@ Resolved transition item:
 - P6 frontend Provider/model management now submits Provider API keys only to backend APIs, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
 - P7 Provider runtime now uses connect-time SSRF-safe outbound transport before real Provider calls and recursively redacts runtime metadata before persistence. Review fixes explicitly covered API keys appearing as values and as nested JSON map keys.
 - P7 frontend task client work now uses EventSource/SSE contracts and did not introduce polling, new Provider direct calls, or new Provider API key persistence.
+- P8 frontend backendization replaced the production workbench with backend task API + SSE + authorized backend assets, removed normal browser Provider settings, removed browser Provider adapters, removed `legacyFile` reference payloads, and moved history/detail/download/re-edit to backend assets and tasks.
 
 P5 review hardening backlog:
 
@@ -65,7 +70,7 @@ Every object ID endpoint must verify:
 - Never return full API keys to frontend.
 - Show only masked metadata such as hint and last update time.
 - Do not log secrets.
-- Frontend may collect Provider API keys only in backend Provider management forms for immediate submission. It must never persist Provider API keys, and after P8 the legacy local settings flow must be removed. Provider credentials must be managed through backend APIs only.
+- Frontend may collect Provider API keys only in backend Provider management forms for immediate submission. It must never persist Provider API keys. The legacy local settings flow has been removed in P8; Provider credentials must be managed through backend APIs only.
 
 P6 Provider management must additionally enforce:
 
@@ -145,6 +150,13 @@ P8 migration security requirements:
 - Any browser-persisted settings that survive P8 must be non-sensitive UI preferences only; Provider API keys and Provider API URLs are forbidden.
 - Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
 - Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
+
+Current P8 frontend security status:
+
+- Production workbench generation/edit flows create backend tasks and use SSE for status.
+- Static scan after `P8-FE-LEGACY-RETIREMENT` found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
+- Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
+- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production residual helpers until R8/P9 cleanup.
 
 ## Upload defense
 
