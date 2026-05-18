@@ -438,12 +438,72 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
+    expect(await screen.findByRole('button', { name: '查看旧本地历史' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看旧本地历史' }))
     expect(await screen.findByText('旧本地历史（兼容）')).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: '再次编辑' }))
 
     expect(await screen.findByText('旧本地历史兼容模式')).toBeInTheDocument()
     expect(screen.getByLabelText('提示词')).toHaveValue('Legacy edit prompt')
     expect(screen.getByRole('button', { name: '生成图片' })).toBeEnabled()
+  })
+
+  it('refreshes visible legacy history immediately after a legacy generation succeeds', async () => {
+    const user = userEvent.setup()
+    const generatedImage = await saveImage({
+      blob: new Blob(['legacy-image'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      purpose: 'generated',
+      size: 12,
+      width: 1,
+      height: 1,
+    })
+    await createHistoryItem({
+      generatedImageId: generatedImage.id,
+      referenceImageIds: [],
+      request: {
+        prompt: 'Legacy edit prompt',
+        model: providerRegistry.getModelById('openai-gpt-image-2'),
+        quality: '1K',
+        aspectRatio: '1:1',
+        imageCount: 1,
+        references: [],
+        referenceImageUrls: [],
+      },
+      result: {
+        blob: generatedImage.blob,
+        mimeType: generatedImage.mimeType,
+        width: 1,
+        height: 1,
+        fileSize: generatedImage.size,
+        durationMs: 42,
+      },
+    })
+    vi.spyOn(providerRegistry, 'getProviderAdapter').mockReturnValue({
+      provider: 'openai',
+      generateImages: vi.fn(async () => [
+        {
+          blob: new Blob(['new-legacy-image'], { type: 'image/png' }),
+          mimeType: 'image/png',
+          width: 1,
+          height: 1,
+          fileSize: 16,
+          durationMs: 84,
+        },
+      ]),
+    } as ReturnType<typeof providerRegistry.getProviderAdapter>)
+    vi.stubGlobal('fetch', createWorkbenchFetch())
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '查看旧本地历史' }))
+    expect(await screen.findByText('1 条旧结果')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '再次编辑' }))
+    expect(await screen.findByText('旧本地历史兼容模式')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /删除 reference-/ }))
+    await user.click(screen.getByRole('button', { name: '生成图片' }))
+
+    expect(await screen.findByText('2 条旧结果')).toBeInTheDocument()
   })
 })
 
@@ -465,6 +525,15 @@ function createWorkbenchFetch(overrides: {
     }
     if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
       return successResponse(page([asset]))
+    }
+    if (url === '/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50') {
+      return successResponse(page([]))
     }
     if (url === '/api/v1/assets/asset_1/download') {
       return new Response(new Blob(['reference-bytes'], { type: 'image/png' }), {
