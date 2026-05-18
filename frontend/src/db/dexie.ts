@@ -1,5 +1,24 @@
 import Dexie, { type Table } from 'dexie'
-import type { HistoryItem, ImagePurpose } from '../providers/types'
+
+export type ImagePurpose = 'generated' | 'reference'
+
+export interface HistoryItem {
+  id: string
+  prompt: string
+  model: string
+  modelLabel: string
+  provider: 'openai' | 'gemini' | 'relay2'
+  quality: string
+  aspectRatio: string
+  imageCount: number
+  fileSize: number
+  width: number
+  height: number
+  createdAt: string
+  durationMs: number
+  imageId: string
+  referenceImageIds: string[]
+}
 
 export interface StoredImage {
   id: string

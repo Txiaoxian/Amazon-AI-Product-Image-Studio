@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { assetApi as defaultAssetApi, type AssetApi } from '../api/assets'
 import { isApiClientError } from '../api/client'
 import { taskApi as defaultTaskApi, type TaskApi } from '../api/tasks'
-import { clearHistory, deleteHistoryItem, listHistory, type HistoryWithImage } from '../db/historyRepository'
-import { FriendlyError, toFriendlyError } from '../lib/errors'
+import { FriendlyError } from '../lib/errors'
 import type { BackendHistoryItem } from '../types/history'
 import type { Asset, AssetId, ProjectId, Task, TaskId } from '../types/platform'
 
@@ -19,11 +18,8 @@ export function useHistory({
   taskApi = defaultTaskApi,
 }: UseHistoryOptions = {}) {
   const [items, setItems] = useState<BackendHistoryItem[]>([])
-  const [legacyItems, setLegacyItems] = useState<HistoryWithImage[]>([])
   const [error, setError] = useState('')
-  const [legacyError, setLegacyError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isLegacyLoading, setLegacyLoading] = useState(true)
   const refreshVersionRef = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -61,31 +57,6 @@ export function useHistory({
       }
     }
   }, [assetApi, projectId, taskApi])
-
-  const refreshLegacy = useCallback(async () => {
-    setLegacyLoading(true)
-    setLegacyError('')
-    try {
-      setLegacyItems(await listHistory())
-    } catch (err) {
-      setLegacyError(toFriendlyError(err).message)
-    } finally {
-      setLegacyLoading(false)
-    }
-  }, [])
-
-  const remove = useCallback(
-    async (id: string) => {
-      await deleteHistoryItem(id)
-      await refreshLegacy()
-    },
-    [refreshLegacy],
-  )
-
-  const clear = useCallback(async () => {
-    await clearHistory()
-    await refreshLegacy()
-  }, [refreshLegacy])
 
   const loadBackendDetail = useCallback(
     async (assetId: AssetId, taskId?: TaskId): Promise<{ asset: Asset; task: Task }> => {
@@ -152,24 +123,14 @@ export function useHistory({
     void refresh()
   }, [refresh])
 
-  useEffect(() => {
-    void refreshLegacy()
-  }, [refreshLegacy])
-
   return {
     downloadBackendAsset,
     ensureBackendAssetAvailable,
     items,
     error,
     isLoading,
-    isLegacyLoading,
-    legacyError,
-    legacyItems,
     loadBackendDetail,
     refresh,
-    refreshLegacy,
-    remove,
-    clear,
   }
 }
 

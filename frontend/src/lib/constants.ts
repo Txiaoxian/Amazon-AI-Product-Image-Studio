@@ -1,11 +1,5 @@
 export const APP_NAME = 'Amazon AI Product Image Studio'
 
-export const LEGACY_OPENAI_API_URL = 'https://api.openai.com/v1'
-export const LEGACY_TUTUJIN_APP_API_URL = 'https://api.tutujin.app/v1'
-export const DEFAULT_OPENAI_API_URL = 'https://api.tutujin.com/v1'
-export const DEFAULT_RELAY2_API_URL = 'https://api.flymux.com'
-export const RELAY2_PROXY_API_URL = '/relay2'
-
 export const STORAGE_LIMIT_OPTIONS = [
   { label: '200MB', value: 200 * 1024 * 1024 },
   { label: '500MB', value: 500 * 1024 * 1024 },

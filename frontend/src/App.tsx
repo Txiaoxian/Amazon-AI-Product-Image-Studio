@@ -1,17 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
-import type { HistoryWithImage } from './db/historyRepository'
 import { AuthStatus } from './components/auth/AuthStatus'
 import { LoginPanel } from './components/auth/LoginPanel'
 import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
-import { LegacyHistoryPanel } from './components/history/LegacyHistoryPanel'
 import { ImageDetailModal, type ImageDetail } from './components/modals/ImageDetailModal'
 import { AssetDetailModal } from './components/projects/AssetDetailModal'
 import { ProjectAssetsPanel } from './components/projects/ProjectAssetsPanel'
-import { SettingsModal } from './components/modals/SettingsModal'
-import { ControlPanel, type ControlPanelDraft } from './components/studio/ControlPanel'
+import { BackendControlPanel, type BackendControlPanelDraft } from './components/studio/BackendControlPanel'
 import { ResultCanvas } from './components/studio/ResultCanvas'
 import { useWorkbenchModels } from './components/studio/useWorkbenchModels'
 import { AuthProvider } from './hooks/AuthProvider'
@@ -19,11 +16,7 @@ import { useAuth } from './hooks/useAuth'
 import { useGeneration } from './hooks/useGeneration'
 import { useHistory } from './hooks/useHistory'
 import { useProjectAssets } from './hooks/useProjectAssets'
-import { useSettings } from './hooks/useSettings'
-import { useStorageUsage } from './hooks/useStorageUsage'
 import { downloadBlob } from './lib/download'
-import { IMAGE_MODELS } from './providers/registry'
-import type { GenerationRequest, ImageCount } from './providers/types'
 import type { AuthSession } from './types/auth'
 import type { BackendHistoryItem } from './types/history'
 import type { Asset } from './types/platform'
@@ -76,18 +69,15 @@ interface StudioWorkbenchProps {
 }
 
 function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: StudioWorkbenchProps) {
-  const { settings, setSettings } = useSettings()
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
   const history = useHistory({ projectId: projectAssets.selectedProjectId })
   const refreshHistory = history.refresh
   const workbenchModels = useWorkbenchModels()
-  const generation = useGeneration(settings, {
+  const generation = useGeneration({
     csrfToken: session.csrfToken,
     onModelInvalidated: workbenchModels.refreshModels,
     projectId: projectAssets.selectedProjectId,
   })
-  const storageUsage = useStorageUsage()
-  const [isSettingsOpen, setSettingsOpen] = useState(false)
   const [isAdminOpen, setAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<ImageDetail | null>(null)
@@ -95,11 +85,9 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [isDetailLoading, setDetailLoading] = useState(false)
   const [assetDetail, setAssetDetail] = useState<Asset | null>(null)
   const [notice, setNotice] = useState('')
-  const [draft, setDraft] = useState<ControlPanelDraft | null>(null)
+  const [draft, setDraft] = useState<BackendControlPanelDraft | null>(null)
   const [referenceToAdd, setReferenceToAdd] = useState<WorkbenchReferenceInput | null>(null)
-  const [workbenchMode, setWorkbenchMode] = useState<'backend' | 'legacy-history'>('backend')
   const [pendingEditSourceAssetId, setPendingEditSourceAssetId] = useState<Asset['id'] | null>(null)
-  const [isLegacyHistoryVisible, setLegacyHistoryVisible] = useState(false)
   const selectedProjectIdRef = useRef(projectAssets.selectedProjectId)
   const detailRequestVersionRef = useRef(0)
 
@@ -130,8 +118,6 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     setPendingEditSourceAssetId(null)
     setDraft(null)
     setReferenceToAdd(null)
-    setWorkbenchMode('backend')
-    setLegacyHistoryVisible(false)
   }, [projectAssets.selectedProjectId])
 
   useEffect(() => {
@@ -169,48 +155,6 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
   }
 
-  const handleGenerateLegacy = async (request: GenerationRequest) => {
-    const results = await generation.generateLegacy(request)
-
-    if (!results) {
-      return
-    }
-
-    if (results.length < request.imageCount) {
-      setNotice(`兼容模式请求生成 ${request.imageCount} 张，图片服务实际返回 ${results.length} 张；结果仍保存到旧本地历史。`)
-    } else {
-      setNotice(`兼容模式已生成 ${results.length} 张图片，并保存到旧本地历史。`)
-    }
-    await history.refreshLegacy()
-    await storageUsage.refresh()
-  }
-
-  const handleViewLegacy = (item: HistoryWithImage) => {
-    if (!item.image) {
-      showNotice('历史记录中的原图不存在，无法查看。')
-      return
-    }
-
-    generation.setFromHistory(item)
-    setDetail({
-      kind: 'legacy',
-      current: {
-        kind: 'legacy',
-        history: item,
-        result: {
-          blob: item.image?.blob ?? new Blob(),
-          mimeType: item.image?.mimeType ?? 'image/png',
-          width: item.item.width,
-          height: item.item.height,
-          fileSize: item.item.fileSize,
-          durationMs: item.item.durationMs,
-        },
-      },
-    })
-    setDetailError('')
-    setDetailOpen(true)
-  }
-
   const handleOpenBackendDetail = async (assetId: Asset['id'], taskId?: BackendHistoryItem['task']['id']) => {
     const detailRequestVersion = detailRequestVersionRef.current + 1
     detailRequestVersionRef.current = detailRequestVersion
@@ -245,52 +189,10 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       return
     }
 
-    if (generation.current.kind === 'legacy') {
-      downloadBlob(generation.current.result.blob)
-      return
-    }
-
     const download = await generation.downloadCurrentBackendAsset()
     if (download) {
       downloadBlob(download.blob, download.filename)
     }
-  }
-
-  const handleDownloadLegacyHistory = (item: HistoryWithImage) => {
-    if (!item.image) {
-      showNotice('历史记录中的原图不存在，无法下载。')
-      return
-    }
-
-    downloadBlob(item.image.blob)
-  }
-
-  const handleEditLegacy = (item: HistoryWithImage) => {
-    if (!item.image) {
-      showNotice('历史记录中的原图不存在，无法再次编辑。')
-      return
-    }
-
-    const model = IMAGE_MODELS.find((candidate) => candidate.provider === item.item.provider && candidate.model === item.item.model) ?? IMAGE_MODELS[0]
-    const file = new File([item.image.blob], `reference-${item.item.id}.png`, { type: item.image.mimeType })
-    const reference: WorkbenchReferenceInput = {
-      kind: 'pending',
-      file,
-      previewUrl: URL.createObjectURL(file),
-    }
-
-    generation.setFromHistory(item)
-    setPendingEditSourceAssetId(null)
-    setDraft({
-      prompt: item.item.prompt,
-      modelId: model.id,
-      quality: item.item.quality,
-      aspectRatio: item.item.aspectRatio,
-      imageCount: 1,
-      references: [reference],
-    })
-    setWorkbenchMode('legacy-history')
-    setNotice('已进入旧本地历史兼容模式，可调整提示词后再次生成。')
   }
 
   const handleDownloadBackendHistory = async (item: BackendHistoryItem) => {
@@ -315,36 +217,13 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       setDraft({
         prompt: backendDetail.task.prompt,
         modelId: backendDetail.task.modelId,
-        quality: settings.defaultResolution,
-        aspectRatio: '1:1',
         imageCount: getTaskOutputCount(backendDetail.task),
       })
-      setWorkbenchMode('backend')
       setNotice('已准备基于后端资产再次编辑。')
     } catch {
       setPendingEditSourceAssetId(null)
       setNotice('再次编辑所需资产不可用，请刷新历史后重试。')
     }
-  }
-
-  const handleDeleteLegacy = async (item: HistoryWithImage) => {
-    if (!window.confirm('确定删除这条历史记录吗？')) {
-      return
-    }
-
-    await history.remove(item.item.id)
-    await storageUsage.refresh()
-    setNotice('历史记录已删除。')
-  }
-
-  const handleClearLegacy = async () => {
-    if (!window.confirm('确定清空全部历史记录吗？此操作不可恢复。')) {
-      return
-    }
-
-    await history.clear()
-    await storageUsage.refresh()
-    setNotice('全部历史记录已清空。')
   }
 
   const handleCreateProject = async (request: { name: string; brand?: string; asin?: string; site?: string; notes?: string }) => {
@@ -399,18 +278,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleOpenCurrentDetail = () => {
-    if (!generation.current) {
-      return
-    }
-
-    if (generation.current.kind === 'legacy') {
-      setDetail({
-        kind: 'legacy',
-        current: generation.current,
-      })
-      setDetailError('')
-      setDetailLoading(false)
-      setDetailOpen(true)
+    if (!generation.current || generation.current.kind !== 'backend') {
       return
     }
 
@@ -452,56 +320,21 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         </>
       }
       notice={authError ?? notice}
-      onOpenSettings={() => setSettingsOpen(true)}
     >
       <div className="grid grid-cols-1 gap-3 sm:gap-4 xl:min-h-[calc(100dvh-112px)] xl:grid-cols-[360px_minmax(0,1fr)_380px]">
         <div className="flex min-h-0 flex-col gap-3">
-          {workbenchMode === 'legacy-history' ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              <div className="font-semibold">旧本地历史兼容模式</div>
-              <div className="mt-1 text-xs">当前再次编辑仍沿用旧本地数据源；默认新任务已切换到后端 task API。</div>
-              <button
-                className="mt-2 text-xs font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2"
-                onClick={() => {
-                  setPendingEditSourceAssetId(null)
-                  setWorkbenchMode('backend')
-                  setDraft(null)
-                }}
-                type="button"
-              >
-                返回后端工作台
-              </button>
-            </div>
-          ) : null}
-
-          {workbenchMode === 'backend' ? (
-            <ControlPanel
-              defaultModelId={settings.defaultModelId}
-              defaultResolution={settings.defaultResolution}
-              draft={draft}
-              isGenerating={generation.status === 'loading'}
-              modelStatus={workbenchModels.status}
-              models={workbenchModels.models}
-              onError={showNotice}
-              onGenerate={handleGenerateTask}
-              onReferenceAdded={() => setReferenceToAdd(null)}
-              onRefreshModels={() => void workbenchModels.refreshModels()}
-              referenceToAdd={referenceToAdd}
-              submissionMode="backend"
-            />
-          ) : (
-            <ControlPanel
-              defaultModelId={settings.defaultModelId}
-              defaultResolution={settings.defaultResolution}
-              draft={draft}
-              isGenerating={generation.status === 'loading'}
-              onError={showNotice}
-              onGenerate={handleGenerateLegacy}
-              onReferenceAdded={() => setReferenceToAdd(null)}
-              referenceToAdd={referenceToAdd}
-              submissionMode="legacy"
-            />
-          )}
+          <BackendControlPanel
+            draft={draft}
+            isGenerating={generation.status === 'loading'}
+            modelStatus={workbenchModels.status}
+            models={workbenchModels.models}
+            onError={showNotice}
+            onGenerate={handleGenerateTask}
+            onReferenceAdded={() => setReferenceToAdd(null)}
+            onRefreshModels={() => void workbenchModels.refreshModels()}
+            referenceToAdd={referenceToAdd}
+            resetKey={projectAssets.selectedProjectId ?? 'no-project'}
+          />
         </div>
 
         <ResultCanvas
@@ -553,38 +386,8 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             onRefresh={() => void history.refresh()}
             onView={(item) => void handleOpenBackendDetail(item.asset.id, item.task.id)}
           />
-
-          <button
-            aria-label="查看旧本地历史"
-            className="rounded-md border border-ink-200 bg-white px-4 py-3 text-left text-sm font-semibold text-ink-700"
-            onClick={() => setLegacyHistoryVisible((visible) => !visible)}
-            type="button"
-          >
-            查看旧本地历史
-          </button>
-          {isLegacyHistoryVisible ? (
-            <LegacyHistoryPanel
-              error={history.legacyError}
-              isLoading={history.isLegacyLoading}
-              items={history.legacyItems}
-              limitBytes={settings.storageLimitBytes}
-              onClear={handleClearLegacy}
-              onDelete={handleDeleteLegacy}
-              onDownload={handleDownloadLegacyHistory}
-              onEdit={handleEditLegacy}
-              onView={handleViewLegacy}
-              usedBytes={storageUsage.usedBytes}
-            />
-          ) : null}
         </div>
       </div>
-
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSave={setSettings}
-        settings={settings}
-      />
 
       {canOpenAdmin ? (
         <ProviderModelAdminPanel
@@ -617,7 +420,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   )
 }
 
-function getTaskOutputCount(task: BackendHistoryItem['task']): ImageCount {
+function getTaskOutputCount(task: BackendHistoryItem['task']): 1 | 2 | 3 | 4 {
   const outputCount = task.parameters.outputCount
   return outputCount === 1 || outputCount === 2 || outputCount === 3 || outputCount === 4 ? outputCount : 1
 }

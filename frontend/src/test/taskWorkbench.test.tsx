@@ -2,10 +2,6 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { db } from '../db/dexie'
-import { createHistoryItem } from '../db/historyRepository'
-import { saveImage } from '../db/imageRepository'
-import * as providerRegistry from '../providers/registry'
 
 const authenticatedSession = {
   user: {
@@ -202,21 +198,28 @@ describe('task-backed workbench', () => {
       configurable: true,
       value: vi.fn(),
     })
-    await db.delete()
-    await db.open()
   })
 
-  afterEach(async () => {
+  afterEach(() => {
     cleanup()
     localStorage.clear()
-    await db.delete()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
   it('submits visible backend parameters once, renders backend asset outputs, and does not call browser Provider adapters', async () => {
     const user = userEvent.setup()
-    const getProviderAdapter = vi.spyOn(providerRegistry, 'getProviderAdapter')
+    localStorage.setItem(
+      'amazon-ai-product-image-studio.settings',
+      JSON.stringify({
+        providers: {
+          openai: {
+            apiUrl: 'https://legacy-provider.example/v1',
+            apiKey: 'legacy-openai-key',
+          },
+        },
+      }),
+    )
     const fetchImpl = createWorkbenchFetch()
     vi.stubGlobal('fetch', fetchImpl)
 
@@ -249,7 +252,6 @@ describe('task-backed workbench', () => {
         outputCount: 4,
       },
     })
-    expect(getProviderAdapter).not.toHaveBeenCalled()
 
     const stream = FakeEventSource.instances[0]
     expect(stream.url).toContain('/api/v1/events/tasks?')
@@ -335,6 +337,9 @@ describe('task-backed workbench', () => {
 
     await screen.findByRole('heading', { name: '项目资产库' })
     await user.type(screen.getByLabelText('提示词'), 'Clean Amazon product image')
+    await waitFor(() => {
+      expect(screen.getByLabelText('提示词')).toHaveValue('Clean Amazon product image')
+    })
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     expect(await screen.findAllByText(/当前模型或参数已失效/)).not.toHaveLength(0)
@@ -402,109 +407,6 @@ describe('task-backed workbench', () => {
     expect(await screen.findByText(/RETRYING/)).toBeInTheDocument()
   })
 
-  it('keeps old local history explicitly available for legacy re-editing', async () => {
-    const user = userEvent.setup()
-    const generatedImage = await saveImage({
-      blob: new Blob(['legacy-image'], { type: 'image/png' }),
-      mimeType: 'image/png',
-      purpose: 'generated',
-      size: 12,
-      width: 1,
-      height: 1,
-    })
-    await createHistoryItem({
-      generatedImageId: generatedImage.id,
-      referenceImageIds: [],
-      request: {
-        prompt: 'Legacy edit prompt',
-        model: providerRegistry.getModelById('openai-gpt-image-2'),
-        quality: '1K',
-        aspectRatio: '1:1',
-        imageCount: 1,
-        references: [],
-        referenceImageUrls: [],
-      },
-      result: {
-        blob: generatedImage.blob,
-        mimeType: generatedImage.mimeType,
-        width: 1,
-        height: 1,
-        fileSize: generatedImage.size,
-        durationMs: 42,
-      },
-    })
-    const fetchImpl = createWorkbenchFetch()
-    vi.stubGlobal('fetch', fetchImpl)
-
-    render(<App />)
-
-    expect(await screen.findByRole('button', { name: '查看旧本地历史' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '查看旧本地历史' }))
-    expect(await screen.findByText('旧本地历史（兼容）')).toBeInTheDocument()
-    await user.click(await screen.findByRole('button', { name: '再次编辑' }))
-
-    expect(await screen.findByText('旧本地历史兼容模式')).toBeInTheDocument()
-    expect(screen.getByLabelText('提示词')).toHaveValue('Legacy edit prompt')
-    expect(screen.getByRole('button', { name: '生成图片' })).toBeEnabled()
-  })
-
-  it('refreshes visible legacy history immediately after a legacy generation succeeds', async () => {
-    const user = userEvent.setup()
-    const generatedImage = await saveImage({
-      blob: new Blob(['legacy-image'], { type: 'image/png' }),
-      mimeType: 'image/png',
-      purpose: 'generated',
-      size: 12,
-      width: 1,
-      height: 1,
-    })
-    await createHistoryItem({
-      generatedImageId: generatedImage.id,
-      referenceImageIds: [],
-      request: {
-        prompt: 'Legacy edit prompt',
-        model: providerRegistry.getModelById('openai-gpt-image-2'),
-        quality: '1K',
-        aspectRatio: '1:1',
-        imageCount: 1,
-        references: [],
-        referenceImageUrls: [],
-      },
-      result: {
-        blob: generatedImage.blob,
-        mimeType: generatedImage.mimeType,
-        width: 1,
-        height: 1,
-        fileSize: generatedImage.size,
-        durationMs: 42,
-      },
-    })
-    vi.spyOn(providerRegistry, 'getProviderAdapter').mockReturnValue({
-      provider: 'openai',
-      generateImages: vi.fn(async () => [
-        {
-          blob: new Blob(['new-legacy-image'], { type: 'image/png' }),
-          mimeType: 'image/png',
-          width: 1,
-          height: 1,
-          fileSize: 16,
-          durationMs: 84,
-        },
-      ]),
-    } as ReturnType<typeof providerRegistry.getProviderAdapter>)
-    vi.stubGlobal('fetch', createWorkbenchFetch())
-
-    render(<App />)
-
-    await user.click(await screen.findByRole('button', { name: '查看旧本地历史' }))
-    expect(await screen.findByText('1 条旧结果')).toBeInTheDocument()
-    await user.click(await screen.findByRole('button', { name: '再次编辑' }))
-    expect(await screen.findByText('旧本地历史兼容模式')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /删除 reference-/ }))
-    await user.click(screen.getByRole('button', { name: '生成图片' }))
-
-    expect(await screen.findByText('2 条旧结果')).toBeInTheDocument()
-  })
 })
 
 function createWorkbenchFetch(overrides: {
