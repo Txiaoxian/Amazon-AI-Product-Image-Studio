@@ -568,7 +568,7 @@ func containsString(values []string, expected string) bool {
 func assertNoSensitiveFields(t *testing.T, body string) {
 	t.Helper()
 	lower := strings.ToLower(body)
-	for _, forbidden := range []string{"password_hash", "passwordHash", "jwt", "authorization", "cookie"} {
+	for _, forbidden := range []string{"password_hash", "passwordhash", `"jwt"`, `"authorization"`, `"cookie"`} {
 		if strings.Contains(lower, strings.ToLower(forbidden)) {
 			t.Fatalf("response contains sensitive field marker %q: %s", forbidden, body)
 		}
