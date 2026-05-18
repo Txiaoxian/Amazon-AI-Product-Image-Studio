@@ -12,6 +12,7 @@ import (
 	auditlog "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/audit"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/httpx"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -25,17 +26,22 @@ const (
 )
 
 type adminAuditUsageService struct {
-	repo auditlog.Repository
-	log  *slog.Logger
+	repo     auditlog.Repository
+	log      *slog.Logger
+	redactor *redaction.Redactor
 }
 
-func newAdminAuditUsageService(db *gorm.DB, log *slog.Logger) *adminAuditUsageService {
+func newAdminAuditUsageService(db *gorm.DB, log *slog.Logger, redactor *redaction.Redactor) *adminAuditUsageService {
 	if log == nil {
 		log = slog.Default()
 	}
+	if redactor == nil {
+		redactor = redaction.New()
+	}
 	return &adminAuditUsageService{
-		repo: auditlog.NewRepository(db),
-		log:  log,
+		repo:     auditlog.NewRepository(db),
+		log:      log,
+		redactor: redactor,
 	}
 }
 
@@ -104,7 +110,7 @@ func (s *adminAuditUsageService) ListUsageRecords(c *gin.Context) {
 	}
 	records := make([]auditlog.UsageRecordResponse, 0, len(rows))
 	for _, row := range rows {
-		records = append(records, auditlog.UsageRecordResponseFromRecord(row))
+		records = append(records, auditlog.UsageRecordResponseFromRecord(row, s.redactor))
 	}
 	httpx.JSON(c, http.StatusOK, auditlog.UsageRecordPage{
 		Records:  records,
@@ -137,7 +143,7 @@ func (s *adminAuditUsageService) ListOperationLogs(c *gin.Context) {
 	}
 	records := make([]auditlog.OperationLogResponse, 0, len(rows))
 	for _, row := range rows {
-		records = append(records, auditlog.OperationLogResponseFromRecord(row))
+		records = append(records, auditlog.OperationLogResponseFromRecord(row, s.redactor))
 	}
 	httpx.JSON(c, http.StatusOK, auditlog.OperationLogPage{
 		Records:  records,
@@ -170,7 +176,7 @@ func (s *adminAuditUsageService) ListAPICallLogs(c *gin.Context) {
 	}
 	records := make([]auditlog.APICallLogResponse, 0, len(rows))
 	for _, row := range rows {
-		records = append(records, auditlog.APICallLogResponseFromRecord(row))
+		records = append(records, auditlog.APICallLogResponseFromRecord(row, s.redactor))
 	}
 	httpx.JSON(c, http.StatusOK, auditlog.APICallLogPage{
 		Records:  records,
@@ -196,7 +202,7 @@ func (s *adminAuditUsageService) GetAPICallLog(c *gin.Context) {
 		s.respondError(c, err)
 		return
 	}
-	httpx.JSON(c, http.StatusOK, auditlog.APICallLogResponseFromRecord(record))
+	httpx.JSON(c, http.StatusOK, auditlog.APICallLogResponseFromRecord(record, s.redactor))
 }
 
 func (s *adminAuditUsageService) requireAdminPermission(c *gin.Context, permission string) (auth.Principal, bool) {

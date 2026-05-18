@@ -3,12 +3,14 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"gorm.io/gorm"
 )
@@ -150,6 +152,117 @@ func TestAdminUsageSummaryAggregatesWithinTenant(t *testing.T) {
 	if invalid.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid summary dimension status = %d, want %d", invalid.Code, http.StatusUnprocessableEntity)
 	}
+}
+
+func TestAdminAuditUsageReadResponsesRedactInjectedKnownSecretsRecursively(t *testing.T) {
+	const knownSecret = "relay_live_1234567890abcdef"
+
+	router, db, adminSession := newAuditUsageRouteTestRouter(t, redaction.New(knownSecret))
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	actor := adminSession.userID
+	statusOK := 200
+
+	seedUsageRecord(t, db, usageSeed{
+		ID:            "usage-known-secret",
+		TenantID:      adminSession.tenantID,
+		TaskID:        "task-known-secret",
+		UserID:        adminSession.userID,
+		ProjectID:     "project-known-secret",
+		ProviderID:    "provider-known-secret",
+		ModelID:       "model-known-secret",
+		InputTokens:   1,
+		OutputTokens:  2,
+		ImageCount:    1,
+		EstimatedCost: "0.01000000",
+		RawUsageJSON:  `{"safe":"usage","message":"provider echoed relay_live_1234567890abcdef","nested":{"prefix_relay_live_1234567890abcdef":"drop me","safe":"keep me"}}`,
+		CreatedAt:     now,
+	})
+	seedOperationLog(t, db, database.OperationLog{
+		ID:           "operation-known-secret",
+		TenantID:     adminSession.tenantID,
+		ActorUserID:  &actor,
+		Action:       "provider.test",
+		ResourceType: "provider",
+		ResourceID:   "provider-known-secret",
+		IP:           "127.0.0.1",
+		UserAgent:    "test-agent",
+		MetadataJSON: `{"safe":"operation","message":"provider echoed relay_live_1234567890abcdef","nested":{"relay_live_1234567890abcdef":"drop me","safe":"keep me"}}`,
+		CreatedAt:    now,
+	})
+	seedGenerationTaskForAPILog(t, db, adminSession.tenantID, "task-api-known-secret", "project-known-secret", adminSession.userID, now)
+	seedAPICallLog(t, db, database.APICallLog{
+		ID:                   "api-log-known-secret",
+		TenantID:             adminSession.tenantID,
+		TaskID:               "task-api-known-secret",
+		ProviderID:           "provider-known-secret",
+		ModelID:              "model-known-secret",
+		Status:               "SUCCESS",
+		DurationMs:           10,
+		RequestID:            "provider-request-known-secret",
+		HTTPStatus:           &statusOK,
+		ErrorCode:            "",
+		ErrorMessage:         "",
+		RedactedRequestJSON:  `{"safe":"request","message":"provider echoed relay_live_1234567890abcdef","nested":{"prefix_relay_live_1234567890abcdef":"drop me","safe":"keep me"}}`,
+		RedactedResponseJSON: `{"safe":"response","message":"provider echoed relay_live_1234567890abcdef","nested":{"relay_live_1234567890abcdef":"drop me","safe":"keep me"}}`,
+		CreatedAt:            now,
+	})
+
+	usage := performJSON(router, http.MethodGet, "/api/v1/admin/usage/records?taskId=task-known-secret", nil, adminSession.cookies, nil)
+	if usage.Code != http.StatusOK {
+		t.Fatalf("usage known-secret status = %d, want %d: %s", usage.Code, http.StatusOK, usage.Body.String())
+	}
+	assertResponseExcludes(t, usage.Body.String(), knownSecret)
+	usagePayload := objectField(t, recordsField(t, decodeData(t, usage))[0].(map[string]any), "rawUsage")
+	assertNestedKnownSecretKeyDropped(t, usagePayload, "nested")
+
+	operation := performJSON(router, http.MethodGet, "/api/v1/admin/operation-logs?resourceId=provider-known-secret", nil, adminSession.cookies, nil)
+	if operation.Code != http.StatusOK {
+		t.Fatalf("operation known-secret status = %d, want %d: %s", operation.Code, http.StatusOK, operation.Body.String())
+	}
+	assertResponseExcludes(t, operation.Body.String(), knownSecret)
+	operationPayload := objectField(t, recordsField(t, decodeData(t, operation))[0].(map[string]any), "metadata")
+	assertNestedKnownSecretKeyDropped(t, operationPayload, "nested")
+
+	apiCall := performJSON(router, http.MethodGet, "/api/v1/admin/api-call-logs/api-log-known-secret", nil, adminSession.cookies, nil)
+	if apiCall.Code != http.StatusOK {
+		t.Fatalf("api call known-secret status = %d, want %d: %s", apiCall.Code, http.StatusOK, apiCall.Body.String())
+	}
+	assertResponseExcludes(t, apiCall.Body.String(), knownSecret)
+	apiCallPayload := decodeData(t, apiCall)
+	assertNestedKnownSecretKeyDropped(t, objectField(t, apiCallPayload, "redactedRequest"), "nested")
+	assertNestedKnownSecretKeyDropped(t, objectField(t, apiCallPayload, "redactedResponse"), "nested")
+}
+
+func TestAdminUsageRecordsPaginationIsStableWhenCreatedAtMatches(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	createdAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	for _, id := range []string{"usage-same-a", "usage-same-c", "usage-same-b"} {
+		seedUsageRecord(t, db, usageSeed{
+			ID:            id,
+			TenantID:      adminSession.tenantID,
+			TaskID:        "task-" + id,
+			UserID:        adminSession.userID,
+			ProjectID:     "project-a",
+			ProviderID:    "provider-a",
+			ModelID:       "model-a",
+			InputTokens:   1,
+			OutputTokens:  1,
+			ImageCount:    1,
+			EstimatedCost: "0.01000000",
+			RawUsageJSON:  `{}`,
+			CreatedAt:     createdAt,
+		})
+	}
+
+	pageOne := performJSON(router, http.MethodGet, "/api/v1/admin/usage/records?pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
+	pageTwo := performJSON(router, http.MethodGet, "/api/v1/admin/usage/records?pageNum=2&pageSize=2", nil, adminSession.cookies, nil)
+	repeatedPageOne := performJSON(router, http.MethodGet, "/api/v1/admin/usage/records?pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
+	repeatedPageTwo := performJSON(router, http.MethodGet, "/api/v1/admin/usage/records?pageNum=2&pageSize=2", nil, adminSession.cookies, nil)
+
+	assertRecordIDs(t, pageOne, []string{"usage-same-c", "usage-same-b"})
+	assertRecordIDs(t, pageTwo, []string{"usage-same-a"})
+	assertRecordIDs(t, repeatedPageOne, []string{"usage-same-c", "usage-same-b"})
+	assertRecordIDs(t, repeatedPageTwo, []string{"usage-same-a"})
 }
 
 func TestAdminOperationLogsListTenantIsolationAndRecursiveRedaction(t *testing.T) {
@@ -360,6 +473,37 @@ func seedAPICallLog(t *testing.T, db *gorm.DB, record database.APICallLog) {
 	}
 }
 
+func newAuditUsageRouteTestRouter(t *testing.T, redactor *redaction.Redactor) (http.Handler, *gorm.DB, projectRouteSession) {
+	t.Helper()
+
+	db := newAuthRouteTestDB(t)
+	router := NewRouter(RouterOptions{
+		Config:            authRouteTestConfig("test"),
+		Logger:            discardLogger(),
+		Database:          db,
+		AuditReadRedactor: redactor,
+	})
+
+	initResponse := performJSON(router, http.MethodPost, "/api/v1/auth/init-admin", map[string]string{
+		"tenantName":  "Studio Tenant",
+		"email":       "admin@example.com",
+		"displayName": "Admin User",
+		"password":    "initial-password-123",
+	}, nil, nil)
+	if initResponse.Code != http.StatusCreated {
+		t.Fatalf("init admin status = %d, want %d: %s", initResponse.Code, http.StatusCreated, initResponse.Body.String())
+	}
+	data := decodeData(t, initResponse)
+	authCookie := findCookie(t, initResponse, "studio_auth")
+	csrfCookie := findCookie(t, initResponse, "studio_csrf")
+	return router, db, projectRouteSession{
+		tenantID: nestedString(t, data, "tenant", "id"),
+		userID:   nestedString(t, data, "user", "id"),
+		cookies:  []*http.Cookie{authCookie, csrfCookie},
+		csrf:     csrfCookie.Value,
+	}
+}
+
 func recordsField(t *testing.T, data map[string]any) []any {
 	t.Helper()
 	records, ok := data["records"].([]any)
@@ -376,6 +520,30 @@ func objectField(t *testing.T, data map[string]any, key string) map[string]any {
 		t.Fatalf("data.%s is not an object: %#v", key, data[key])
 	}
 	return value
+}
+
+func assertNestedKnownSecretKeyDropped(t *testing.T, payload map[string]any, key string) {
+	t.Helper()
+	nested := objectField(t, payload, key)
+	if len(nested) != 1 || nested["safe"] != "keep me" {
+		t.Fatalf("nested payload = %#v, want only safe key", nested)
+	}
+}
+
+func assertRecordIDs(t *testing.T, response *httptest.ResponseRecorder, want []string) {
+	t.Helper()
+	if response.Code != http.StatusOK {
+		t.Fatalf("record page status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	records := recordsField(t, decodeData(t, response))
+	if len(records) != len(want) {
+		t.Fatalf("record page len = %d, want %d: %s", len(records), len(want), response.Body.String())
+	}
+	for index, id := range want {
+		if actual := stringField(t, records[index].(map[string]any), "id"); actual != id {
+			t.Fatalf("record id[%d] = %q, want %q", index, actual, id)
+		}
+	}
 }
 
 func assertPageMeta(t *testing.T, data map[string]any, total int, pageNum int, pageSize int) {

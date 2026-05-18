@@ -15,6 +15,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/sse"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
@@ -23,15 +24,16 @@ import (
 )
 
 type RouterOptions struct {
-	Config       config.Config
-	Logger       *slog.Logger
-	HealthChecks []health.DependencyChecker
-	Database     *gorm.DB
-	ObjectStore  storage.ObjectStore
-	ProviderOpts []provider.Option
-	TaskEnqueuer queue.TaskEnqueuer
-	SSEBroker    *sse.Broker
-	SSEHeartbeat time.Duration
+	Config            config.Config
+	Logger            *slog.Logger
+	HealthChecks      []health.DependencyChecker
+	Database          *gorm.DB
+	ObjectStore       storage.ObjectStore
+	ProviderOpts      []provider.Option
+	AuditReadRedactor *redaction.Redactor
+	TaskEnqueuer      queue.TaskEnqueuer
+	SSEBroker         *sse.Broker
+	SSEHeartbeat      time.Duration
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -72,7 +74,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		model.NewService(options.Database, options.Logger),
 		taskService,
 		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
-		newAdminAuditUsageService(options.Database, options.Logger),
+		newAdminAuditUsageService(options.Database, options.Logger, options.AuditReadRedactor),
 		options.HealthChecks...,
 	)
 

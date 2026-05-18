@@ -7,14 +7,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
 )
 
 const (
-	readRedactedValue = "[REDACTED]"
-
 	PermissionUsageRead = "usage:read"
 	PermissionAuditRead = "audit:read"
 
@@ -174,7 +172,8 @@ type APICallLogResponse struct {
 	CreatedAt        string `json:"createdAt"`
 }
 
-func UsageRecordResponseFromRecord(record database.UsageRecord) UsageRecordResponse {
+func UsageRecordResponseFromRecord(record database.UsageRecord, redactor *redaction.Redactor) UsageRecordResponse {
+	redactor = ensureRedactor(redactor)
 	return UsageRecordResponse{
 		ID:            record.ID,
 		TenantID:      record.TenantID,
@@ -188,7 +187,7 @@ func UsageRecordResponseFromRecord(record database.UsageRecord) UsageRecordRespo
 		ImageCount:    record.ImageCount,
 		EstimatedCost: record.EstimatedCost,
 		Currency:      record.Currency,
-		RawUsage:      redactJSONPayload(record.RawUsageJSON),
+		RawUsage:      redactJSONPayload(record.RawUsageJSON, redactor),
 		CreatedAt:     formatTime(record.CreatedAt),
 	}
 }
@@ -207,7 +206,8 @@ func UsageSummaryResponseFromRow(dimension string, row UsageSummaryRow) UsageSum
 	}
 }
 
-func OperationLogResponseFromRecord(record database.OperationLog) OperationLogResponse {
+func OperationLogResponseFromRecord(record database.OperationLog, redactor *redaction.Redactor) OperationLogResponse {
+	redactor = ensureRedactor(redactor)
 	return OperationLogResponse{
 		ID:           record.ID,
 		TenantID:     record.TenantID,
@@ -217,15 +217,16 @@ func OperationLogResponseFromRecord(record database.OperationLog) OperationLogRe
 		ResourceID:   record.ResourceID,
 		IP:           record.IP,
 		UserAgent:    record.UserAgent,
-		Metadata:     redactJSONPayload(record.MetadataJSON),
+		Metadata:     redactJSONPayload(record.MetadataJSON, redactor),
 		CreatedAt:    formatTime(record.CreatedAt),
 	}
 }
 
-func APICallLogResponseFromRecord(record database.APICallLog) APICallLogResponse {
+func APICallLogResponseFromRecord(record database.APICallLog, redactor *redaction.Redactor) APICallLogResponse {
+	redactor = ensureRedactor(redactor)
 	errorMessage := ""
 	if strings.TrimSpace(record.ErrorMessage) != "" {
-		errorMessage = sanitizeErrorMessage(record.ErrorMessage)
+		errorMessage = redactor.SanitizeErrorMessage(record.ErrorMessage)
 	}
 	return APICallLogResponse{
 		ID:               record.ID,
@@ -235,12 +236,12 @@ func APICallLogResponseFromRecord(record database.APICallLog) APICallLogResponse
 		ModelID:          record.ModelID,
 		Status:           record.Status,
 		DurationMs:       record.DurationMs,
-		RequestID:        redactString(record.RequestID),
+		RequestID:        redactor.RedactString(record.RequestID),
 		HTTPStatus:       record.HTTPStatus,
-		ErrorCode:        redactString(record.ErrorCode),
+		ErrorCode:        redactor.RedactString(record.ErrorCode),
 		ErrorMessage:     errorMessage,
-		RedactedRequest:  redactJSONPayload(record.RedactedRequestJSON),
-		RedactedResponse: redactJSONPayload(record.RedactedResponseJSON),
+		RedactedRequest:  redactJSONPayload(record.RedactedRequestJSON, redactor),
+		RedactedResponse: redactJSONPayload(record.RedactedResponseJSON, redactor),
 		CreatedAt:        formatTime(record.CreatedAt),
 	}
 }
@@ -254,7 +255,7 @@ func ValidUsageSummaryDimension(dimension string) bool {
 	}
 }
 
-func redactJSONPayload(raw string) any {
+func redactJSONPayload(raw string, redactor *redaction.Redactor) any {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return map[string]any{}
@@ -264,128 +265,18 @@ func redactJSONPayload(raw string) any {
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		return map[string]any{}
 	}
-	redacted := redactValue(decoded)
+	redacted := ensureRedactor(redactor).RedactValue(decoded)
 	if redacted == nil {
 		return map[string]any{}
 	}
 	return redacted
 }
 
-func redactValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		clean := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if readSensitiveKey(key) || redactString(key) != key {
-				continue
-			}
-			clean[key] = redactValue(item)
-		}
-		return clean
-	case map[string]string:
-		clean := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if readSensitiveKey(key) || redactString(key) != key {
-				continue
-			}
-			clean[key] = redactValue(item)
-		}
-		return clean
-	case []any:
-		clean := make([]any, 0, len(typed))
-		for _, item := range typed {
-			clean = append(clean, redactValue(item))
-		}
-		return clean
-	case []string:
-		clean := make([]any, 0, len(typed))
-		for _, item := range typed {
-			clean = append(clean, redactValue(item))
-		}
-		return clean
-	case string:
-		return redactString(typed)
-	default:
-		return value
+func ensureRedactor(redactor *redaction.Redactor) *redaction.Redactor {
+	if redactor == nil {
+		return redaction.New()
 	}
-}
-
-func redactString(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if looksSensitiveString(strings.ToLower(value)) {
-		return readRedactedValue
-	}
-	if utf8.RuneCountInString(value) > 512 {
-		return string([]rune(value)[:512])
-	}
-	return value
-}
-
-func sanitizeErrorMessage(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if looksSensitiveString(strings.ToLower(value)) {
-		return "Provider error message redacted."
-	}
-	if utf8.RuneCountInString(value) > 512 {
-		return string([]rune(value)[:512])
-	}
-	return value
-}
-
-func readSensitiveKey(key string) bool {
-	key = strings.ToLower(strings.TrimSpace(key))
-	for _, marker := range []string{
-		"authorization",
-		"cookie",
-		"api_key",
-		"apikey",
-		"api-key",
-		"secret",
-		"password",
-		"token",
-		"bearer",
-		"b64_json",
-		"base64",
-		"inline_data",
-		"inlinedata",
-		"bytes",
-		"raw",
-	} {
-		if strings.Contains(key, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksSensitiveString(lower string) bool {
-	if strings.Contains(lower, "sk-") || strings.Contains(lower, "bearer ") {
-		return true
-	}
-	for _, marker := range []string{
-		"authorization",
-		"cookie",
-		"api_key",
-		"apikey",
-		"secret",
-		"base64",
-		"b64_json",
-		"-----begin",
-	} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	if len(lower) > 2048 {
-		return true
-	}
-	return false
+	return redactor
 }
 
 func formatTime(value time.Time) string {
