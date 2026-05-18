@@ -491,23 +491,22 @@ P8 intentionally does not resolve:
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
-Status: in progress after completed R8. `P9-BE-AUDIT-USAGE-READS` has been reviewed, fixed, merged into `main`, and verified. The first attempt to package `P9-BE-SYSTEM-SETTINGS-HARDENING` exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope. Continue serially with production secret guard first, then define and implement runtime-backed settings before opening frontend admin UI.
+Status: in progress after completed R8. `P9-BE-AUDIT-USAGE-READS` and `P9-BE-PRODUCTION-SECRET-GUARD` have both been reviewed, fixed where needed, merged into `main`, and verified. The first attempt to package `P9-BE-SYSTEM-SETTINGS-HARDENING` exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope. Continue serially with one runtime-backed settings slice at a time before opening frontend admin UI.
 
 P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
 
 1. `P9-BE-AUDIT-USAGE-READS`: completed and merged. Backend usage, operation log, and API call log read APIs now enforce admin RBAC, tenant isolation, pagination, deterministic ordering, and shared recursive response redaction.
-2. `P9-BE-PRODUCTION-SECRET-GUARD`: next, serial. Reject placeholder production secrets in API and Worker startup paths without inventing settings APIs.
-3. `P9-BE-RUNTIME-SETTINGS-CONTRACT`: after secret guard, serial. Define and implement only settings whose runtime consumers are explicitly in scope, including any necessary task/asset/worker integration.
+2. `P9-BE-PRODUCTION-SECRET-GUARD`: completed and merged. API and Worker startup now reject placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` in production while preserving non-production defaults.
+3. `P9-BE-RUNTIME-SETTINGS-CONTRACT`: next, serial. Land only the first honest runtime-backed settings slice: tenant upload policy consumed by backend asset upload validation. Default Provider/model selection, tenant concurrency, storage quota, and log retention remain deferred until their runtime consumers are deliberately in scope.
 4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: admin UI for usage/logs/settings, only after backend settings contracts are honest and executable.
 5. `P9-SECURITY-REGRESSION`: targeted security tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, and residual legacy code cleanup.
 6. `P9-DEPLOY-RELEASE-VALIDATION`: Docker Compose build/up/healthcheck, release documentation, environment variable review, backup/restore notes, and final deployment runbook.
 
 P9 carry-forward risks:
 
-- Production startup still needs hard failure for placeholder `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`.
 - Unknown secrets cannot be redacted unless they are supplied as known secrets or match heuristic rules.
 - P9 audit reads now use the shared redaction package and support exact known-secret scrubbing through an injected redactor seam, but production read APIs intentionally do not widen Provider API-key decryption scope. If historical dirty rows must be scrubbed for non-heuristic secrets at read time, define a trusted minimal secret source and lifecycle before implementing it.
-- Writable system settings are not yet safe to expose. `defaultProviderId/defaultModelId`, upload limits, and tenant concurrency all require runtime consumer changes before they can be represented as active settings.
+- P9 will expose only settings with live runtime consumers. The first approved slice is tenant-scoped upload policy consumed by asset validation; `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred because their task/worker/cleanup consumers are not yet in scope.
 - Provider soft-delete linked-model policy remains unresolved.
 - History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
 - Unreachable legacy display/DB helper code should be deleted or explicitly quarantined before release to reduce future agent confusion.

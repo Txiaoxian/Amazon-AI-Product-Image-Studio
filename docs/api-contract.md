@@ -310,9 +310,27 @@ Current P9 backend contract:
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
 
-Deferred P9 settings contract:
+Current P9 settings contract:
 
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-These routes are not active yet. They remain deferred until the runtime consumer contract is defined. `defaultProviderId/defaultModelId`, upload limits, and tenant concurrency must not be exposed as writable settings until task creation, asset validation, and worker limit consumption are explicitly in scope and implemented. Future settings APIs must require admin access plus `system:settings:manage`, and they must not claim a setting is active unless backend behavior actually consumes it.
+The first active settings slice is intentionally narrow and runtime-backed:
+
+```json
+{
+  "uploadPolicy": {
+    "maxFileSizeBytes": 26214400,
+    "maxWidth": 8192,
+    "maxHeight": 8192,
+    "maxPixels": 40000000
+  }
+}
+```
+
+- Both routes require tenant admin access plus `system:settings:manage`.
+- `GET /admin/system-settings` returns the effective tenant upload policy, using the environment-configured upload limits when the tenant has no override row yet.
+- `PATCH /admin/system-settings` may update one or more fields under `uploadPolicy`; omitted fields keep their current effective values.
+- Tenant overrides must stay positive and may only narrow or match the environment-configured upload hard caps. Runtime asset validation remains the security boundary and consumes the effective tenant policy for request-body size, dimensions, and pixel-count checks.
+- Allowed MIME types remain configuration-owned security policy; the settings API must not make SVG or any non-allowlisted type writable.
+- `defaultProviderId`, `defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until task creation, worker limiting, quota enforcement, or cleanup jobs actually consume them.

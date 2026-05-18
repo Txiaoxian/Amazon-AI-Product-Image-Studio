@@ -2826,8 +2826,8 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 ### P9 调度顺序
 
 1. `P9-BE-AUDIT-USAGE-READS` - completed and merged. Defines safe backend read contracts for usage, operation logs, and API call logs.
-2. `P9-BE-PRODUCTION-SECRET-GUARD` - next, serial. Add production placeholder-secret rejection without exposing settings APIs.
-3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - after secret guard. Define and implement only settings with runtime consumers explicitly in scope.
+2. `P9-BE-PRODUCTION-SECRET-GUARD` - completed and merged. Rejects production placeholder secrets before API or Worker startup can proceed.
+3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - next, serial. Implement only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
 4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - after honest backend contracts. Add frontend admin views for usage/logs/settings.
 5. `P9-SECURITY-REGRESSION` - after core backend settings exist. Add targeted security regression tests and residual legacy cleanup.
 6. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
@@ -2838,6 +2838,10 @@ Second batch correction: the original `P9-BE-SYSTEM-SETTINGS-HARDENING` package 
 
 1. open only `P9-BE-PRODUCTION-SECRET-GUARD`;
 2. after it merges, main agent must define `P9-BE-RUNTIME-SETTINGS-CONTRACT` with the actual runtime write scope before any settings API is exposed.
+
+Second batch completed: `P9-BE-PRODUCTION-SECRET-GUARD` merged after review required the startup-path failure matrix to be completed for both API and Worker entrypoints.
+
+Third batch decision: `P9-BE-RUNTIME-SETTINGS-CONTRACT` will expose only tenant upload policy in its first slice. `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention stay deferred because task creation, Worker limit resolution, quota enforcement, and cleanup jobs are not in scope yet.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -2958,6 +2962,10 @@ P9-BE-PRODUCTION-SECRET-GUARD - 生产 placeholder secret 启动拒绝
 
 仅实现生产环境 placeholder secret 启动拒绝，确保 `APP_ENV=production` 时 API 和 Worker 都不能带默认 JWT signing secret 或默认 API-key encryption secret 启动。此任务不实现 system settings API，也不制造尚未被 runtime 消费的可写设置。
 
+### 状态
+
+Completed and merged into `main`. Review required one follow-up test fix so both API and Worker startup paths explicitly cover placeholder JWT and placeholder API-key-encryption rejection. Production startup now fails fast on both placeholders, explicit replacement secrets still load, and non-production defaults remain valid.
+
 ### 允许修改文件
 
 - `backend/internal/config/**`
@@ -3052,19 +3060,143 @@ go build ./cmd/api ./cmd/worker
 
 P9-BE-RUNTIME-SETTINGS-CONTRACT - 真实可执行的系统设置 API 与 runtime 消费链路
 
-### 状态
+### 推荐执行信息
 
-Deferred until after `P9-BE-PRODUCTION-SECRET-GUARD`. Main agent must first decide the exact active settings surface and allowed runtime write scope. The previous broad package was invalid because writable `defaultProviderId/defaultModelId`, upload limits, and tenant concurrency would require changes in task creation, asset validation, and worker runtime; exposing them without those consumers would create a fake settings API.
+- 推荐线程名：`P9-BE-RUNTIME-SETTINGS-CONTRACT`
+- 推荐分支名：`codex/p9-backend-runtime-settings-contract`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务完成、review、合并和回归后，再进入 `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`；不要并行启动前端 admin UI。
 
-### 前置设计决策
+### 目标
 
-- Which settings are truly tenant-scoped and need live runtime reads.
-- Whether task creation should allow default Provider/model fallback or continue requiring explicit IDs.
-- Whether upload limits become tenant overrides over static config, and how asset validation resolves them per request.
-- Whether tenant concurrency becomes dynamic per task execution, and how Worker refreshes or caches it.
-- Whether log retention gets an actual cleanup job before becoming writable.
+实现第一段真实可执行的 system settings 合同：只暴露 tenant-scoped `uploadPolicy`，并让 backend asset upload 在每次请求时消费该策略。此任务不实现默认 Provider/model、租户并发、存储配额或日志保留周期，因为这些字段当前还没有同批次 runtime consumer。
 
-Do not open this task until those choices are written into the public contracts and its allowed-file list includes every runtime consumer needed to make the chosen settings real.
+### 设置字段与 runtime consumer 对照表
+
+| 对外字段 | Runtime consumer | 本任务是否在范围内 |
+| --- | --- | --- |
+| `uploadPolicy.maxFileSizeBytes` | Asset upload request-body limit and upload validator | 是 |
+| `uploadPolicy.maxWidth` | Asset upload image-dimension validator | 是 |
+| `uploadPolicy.maxHeight` | Asset upload image-dimension validator | 是 |
+| `uploadPolicy.maxPixels` | Asset upload pixel-count validator | 是 |
+| `defaultProviderId` | Task creation fallback resolution | 否，继续要求显式 `providerId` |
+| `defaultModelId` | Task creation fallback resolution | 否，继续要求显式 `modelId` |
+| `tenantConcurrency` | Worker concurrency-dimension resolution | 否 |
+| `storageQuotaBytes` | Asset/task storage quota enforcement | 否 |
+| `logRetentionDays` | Cleanup/retention job | 否 |
+
+### 允许修改文件
+
+- `backend/internal/api/**`
+- `backend/internal/asset/**`
+- `backend/internal/database/**`
+- `backend/internal/settings/**`
+- `backend/internal/rbac/**` 仅限复用或测试 `system:settings:manage`
+- `backend/internal/httpx/**` 仅限必要分页/响应复用
+- `backend/cmd/api/**` 仅限路由装配
+- `backend/internal/**/**/*_test.go`
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/internal/task/**`
+- `backend/cmd/worker/**`
+- `backend/internal/provider/**`
+- `backend/internal/model/**`
+- `backend/internal/sse/**`
+- `backend/internal/queue/**`
+- Provider Adapter runtime
+- Worker claim/complete/cancel 状态机
+
+### 前置依赖
+
+- `P9-BE-AUDIT-USAGE-READS` completed and merged.
+- `P9-BE-PRODUCTION-SECRET-GUARD` completed and merged.
+- Public contract docs now state that only runtime-backed upload policy is active in this slice.
+
+### 必须保持的现有行为
+
+- Existing task creation still requires explicit `providerId` and `modelId`.
+- Existing non-admin flows, project/asset authorization, Provider/model management, task/SSE flow, and P8 backendized workbench remain unchanged.
+- Existing environment upload config remains the hard-cap fallback for tenants with no override row.
+- Allowed MIME types remain config-owned and SVG remains forbidden.
+
+### 允许的中间态
+
+- Backend admin settings API may land before frontend admin UI.
+- Only tenant upload policy is exposed as writable active state.
+- Tenants without a persisted override continue using effective upload limits derived from current config.
+
+### 禁止的半迁移状态
+
+- No response may expose fake-active `defaultProviderId`, `defaultModelId`, concurrency, quota, or retention fields.
+- No settings API may accept values that asset upload does not actually consume.
+- No tenant upload-policy override may raise limits above the configured environment hard caps.
+- No static asset upload validation path may silently bypass tenant overrides once the override exists.
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| non-admin reads or writes system settings | RBAC rejects with `403` |
+| tenant A reads or updates settings | only tenant A effective settings are visible or changed |
+| tenant has no override row | GET returns config-derived effective upload policy; upload uses same limits |
+| PATCH narrows file size / dimensions / pixels | subsequent uploads for that tenant enforce the new narrower limits |
+| PATCH attempts zero, negative, malformed, or over-hard-cap values | validation fails; old effective policy remains unchanged |
+| tenant A override exists, tenant B has none | tenant B still uses its own config fallback and is unaffected |
+| PATCH succeeds | sanitized operation log is recorded without secrets or raw file content |
+| client sends deferred fields such as `defaultProviderId` or `tenantConcurrency` | validation rejects them rather than pretending they are active |
+
+### 必须新增或更新的回归测试
+
+- RBAC denial for GET/PATCH system-settings endpoints.
+- Effective GET fallback when no tenant override exists.
+- Tenant isolation for reads and updates.
+- PATCH validation for invalid and over-hard-cap upload values.
+- Asset upload enforcement after tenant policy is narrowed.
+- Deferred-field rejection for fake-active settings.
+- Sanitized operation-log write on successful update.
+
+### 具体开发内容
+
+- Add `system_settings` persistence for tenant-scoped settings, with unique `(tenant_id, key)` handling and the first active key `upload_policy`.
+- Add a settings domain/service/repository for effective tenant upload policy resolution.
+- Implement `GET /api/v1/admin/system-settings` and `PATCH /api/v1/admin/system-settings`.
+- Keep the response/request surface limited to `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}`.
+- Resolve effective upload policy per request in the asset upload path so tenant overrides are enforced before image persistence.
+- Keep config upload values as hard caps and fallback defaults; tenant overrides may only narrow or match them.
+- Record operation logs for successful settings updates with sanitized metadata.
+
+### 安全要求
+
+- System settings APIs require Cookie auth, tenant admin access, CSRF for PATCH, and `system:settings:manage`.
+- All settings reads/writes must filter by `tenant_id`.
+- Upload-policy overrides must never widen the configured MIME allowlist or permit SVG.
+- Operation logs must not contain secrets, Authorization headers, Cookies, image bytes, or image base64.
+- Do not expose deferred settings as active writable state.
+
+### 验收标准
+
+- Active system settings contract is truthful: every exposed writable field is consumed by asset upload runtime.
+- Tenant upload-policy overrides are tenant isolated, bounded by config hard caps, and enforced by real uploads.
+- Tenants without overrides preserve current behavior through config fallback.
+- Deferred settings remain absent from API responses and rejected on writes.
+- No frontend, worker, task, provider, model, queue, SSE, deploy, docs, or agent-rule files are modified.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+git diff --check
+```
 
 ## 子任务 29：管理端用量、日志和系统设置 UI
 
@@ -3079,7 +3211,7 @@ P9-FE-ADMIN-OBSERVABILITY-SETTINGS - 前端管理端观测与设置页面
 ### 依赖
 
 - `P9-BE-AUDIT-USAGE-READS`
-- `P9-BE-SYSTEM-SETTINGS-HARDENING`
+- `P9-BE-RUNTIME-SETTINGS-CONTRACT`
 
 ### 关键约束
 

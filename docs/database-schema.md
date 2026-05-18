@@ -183,6 +183,15 @@ Stores tenant-scoped settings.
 
 Key fields: `id`, `tenant_id`, `key`, `value_json`, `created_at`, `updated_at`.
 
+P9 implementation notes:
+
+- `(tenant_id, key)` must be unique.
+- The first active key is `upload_policy`.
+- `upload_policy.value_json` is a bounded object with `maxFileSizeBytes`, `maxWidth`, `maxHeight`, and `maxPixels`.
+- Stored upload-policy values are tenant overrides only; effective runtime values fall back to environment-configured upload limits when no override exists.
+- Tenant upload-policy overrides may only narrow or match the environment-configured hard caps and are consumed by backend asset upload validation before file persistence.
+- Do not persist `default_provider_id`, `default_model_id`, tenant concurrency, storage quota, or log retention settings until their runtime consumers are deliberately in scope.
+
 ## Indexing expectations
 
 - All business tables index `tenant_id`.
