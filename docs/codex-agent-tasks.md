@@ -2248,7 +2248,7 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 ### P8 调度顺序
 
 1. `P8-FE-WORKBENCH-FOUNDATION` - completed and merged. 先切换模型与引用资产的来源。
-2. `P8-FE-TASK-WORKBENCH` - 再切换提交、状态和结果输出。
+2. `P8-FE-TASK-WORKBENCH` - completed and merged. 再切换提交、状态和结果输出。
 3. `P8-FE-HISTORY-ASSET-SOURCE` - 再切换历史与再次编辑来源。
 4. `P8-FE-LEGACY-RETIREMENT` - 最后退役旧直连和旧本地持久化生产路径。
 5. `R8` - 主 agent 串行 review、回归、静态扫描和合同校准。
@@ -2349,6 +2349,18 @@ npm run build
 ### 任务名称
 
 P8-FE-TASK-WORKBENCH - 用 task API 与 SSE 替换工作台执行链路
+
+### 当前状态
+
+Completed and merged into `main`.
+
+Review result:
+
+- 默认工作台已切到 backend task create + SSE；主路径不会再触发浏览器 Provider submit。
+- 结果区已经由 backend output assets 驱动，duplicate submit、stale model create failure、cancel/retry、SSE replay/heartbeat/canonical statuses 都有回归覆盖。
+- 旧本地历史仍以显式兼容模式保留，再次编辑没有被提前打成死路。
+- 合并前验证通过：`npm run lint`、`npm run type-check`、`npm run test`、`npm run build`，19 个 test files / 73 个 tests 全部通过。
+- 非阻塞遗留：backend 结果图点击还没有真实详情内容；所有 HTTP `422` 暂时都按 stale model/capability 处理；asset reference 仍保留 `legacyFile` 兼容负担。这三项分别由后续历史切换、未来更细错误码合同和 legacy retirement 继续收口。
 
 ### 目标
 
@@ -2501,6 +2513,7 @@ P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
 - `P8-FE-TASK-WORKBENCH` 已接管的 backend task submit、SSE 状态流和 backend result asset 显示必须保持可用。
 - 授权下载、当前项目上下文和再次编辑概念必须继续存在。
 - 若保留 legacy history 兼容入口，它必须保持显式、可理解、非默认，不得偷偷与 backend 主历史混成一体。
+- 当前 backend 结果图虽然已经可展示，但详情入口还没有真实 backend 内容；本任务必须把它接到后端 asset/task detail，不得继续保留无反馈点击。
 
 ### 允许的中间态
 
@@ -2526,6 +2539,7 @@ P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
 | 下载失败 | 保持 UI 可恢复，不绕过后端鉴权 |
 | 再次编辑时 source asset 不可用 | 明确提示并阻止创建无效任务 |
 | 切换项目 | 历史、详情和编辑上下文随项目切换，不串数据 |
+| 点击当前 backend 结果图 | 打开真实 backend 资产/任务详情，不出现无反馈点击 |
 
 ### 必须新增或更新的回归测试
 
@@ -2533,12 +2547,14 @@ P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
 - 空态、项目切换、asset 不可见或已删除场景不串租户/项目数据。
 - 下载继续通过后端授权接口。
 - 再次编辑使用 backend `assetId` / `editSourceAssetId`，不依赖 Blob 回灌。
+- 当前 backend 结果图详情入口已经接到后端详情数据，不再是 no-op。
 - 若保留 legacy history 兼容入口，测试必须证明它是显式且非默认的。
 
 ### 具体开发内容
 
 - 历史面板改读项目 task history 与 generated/edited assets。
 - 图片详情、下载和再次编辑入口都基于后端 asset/task 信息工作。
+- 接管当前 backend 结果图的详情入口，让结果区和历史区共用真实的后端 asset/task detail 语义。
 - 再次编辑使用已有 `assetId` 作为 `editSourceAssetId`，不再依赖 IndexedDB Blob 回灌。
 - 明确旧本地历史的展示策略：若保留，只能是单独、显式、非默认的兼容入口；不得混成平台主历史。
 - 保持用户能查看过去结果、下载、再次编辑的工作流完整。
