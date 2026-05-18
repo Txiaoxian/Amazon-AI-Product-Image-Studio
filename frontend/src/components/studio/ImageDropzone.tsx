@@ -9,9 +9,17 @@ interface ImageDropzoneProps {
   onChange: (references: WorkbenchReferenceInput[]) => void
   onError: (message: string) => void
   disabled?: boolean
+  allowUpload?: boolean
 }
 
-export function ImageDropzone({ references, maxReferences, onChange, onError, disabled }: ImageDropzoneProps) {
+export function ImageDropzone({
+  references,
+  maxReferences,
+  onChange,
+  onError,
+  disabled,
+  allowUpload = true,
+}: ImageDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -64,44 +72,52 @@ export function ImageDropzone({ references, maxReferences, onChange, onError, di
         <span className="text-xs text-ink-400">{references.length} 张</span>
       </div>
 
-      <button
-        className={`flex min-h-28 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition ${
-          isDragging ? 'border-amazon-500 bg-amazon-500/10' : 'border-ink-300 bg-ink-50 hover:bg-white'
-        }`}
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-        onDragLeave={() => setIsDragging(false)}
-        onDragOver={(event) => {
-          event.preventDefault()
-          setIsDragging(true)
-        }}
-        onDrop={(event) => {
-          event.preventDefault()
-          setIsDragging(false)
-          addFiles(event.dataTransfer.files)
-        }}
-        type="button"
-      >
-        <ImagePlus className="h-6 w-6 text-ink-500" />
-        <span className="text-sm font-medium text-ink-700">上传或拖入图片</span>
-        <span className="text-xs text-ink-400">JPG / PNG / WebP，单张 15MB 内</span>
-      </button>
+      {allowUpload ? (
+        <>
+          <button
+            className={`flex min-h-28 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition ${
+              isDragging ? 'border-amazon-500 bg-amazon-500/10' : 'border-ink-300 bg-ink-50 hover:bg-white'
+            }`}
+            disabled={disabled}
+            onClick={() => inputRef.current?.click()}
+            onDragLeave={() => setIsDragging(false)}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setIsDragging(true)
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              setIsDragging(false)
+              addFiles(event.dataTransfer.files)
+            }}
+            type="button"
+          >
+            <ImagePlus className="h-6 w-6 text-ink-500" />
+            <span className="text-sm font-medium text-ink-700">上传或拖入图片</span>
+            <span className="text-xs text-ink-400">JPG / PNG / WebP，单张 15MB 内</span>
+          </button>
 
-      <input
-        ref={inputRef}
-        accept="image/jpeg,image/png,image/webp"
-        className="hidden"
-        disabled={disabled}
-        id="reference-images"
-        multiple
-        onChange={(event) => {
-          if (event.target.files) {
-            addFiles(event.target.files)
-          }
-          event.target.value = ''
-        }}
-        type="file"
-      />
+          <input
+            ref={inputRef}
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            disabled={disabled}
+            id="reference-images"
+            multiple
+            onChange={(event) => {
+              if (event.target.files) {
+                addFiles(event.target.files)
+              }
+              event.target.value = ''
+            }}
+            type="file"
+          />
+        </>
+      ) : (
+        <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-4 text-sm leading-6 text-ink-500">
+          请先在右侧项目资产库上传参考图，再点击“作为参考图”加入当前任务。
+        </div>
+      )}
 
       {references.length > 0 ? (
         <div className="grid grid-cols-3 gap-2">

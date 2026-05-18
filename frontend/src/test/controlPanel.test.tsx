@@ -266,9 +266,9 @@ describe('ControlPanel', () => {
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     expect(onGenerate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        imageCount: 4,
-      }),
+      {
+        prompt: 'Clean Amazon product image',
+      },
       {
         providerId: 'provider_1',
         modelId: 'model_image',

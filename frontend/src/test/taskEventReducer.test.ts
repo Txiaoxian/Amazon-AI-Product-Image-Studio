@@ -203,4 +203,25 @@ describe('task event reducer', () => {
       finishedAt: '2026-05-17T00:02:00Z',
     })
   })
+
+  it('ignores heartbeat and events from a different project context', () => {
+    const initial = createTaskEventState('task_3' as TaskId, 'project_1' as ProjectId)
+    const heartbeat = reduceTaskEventState(
+      initial,
+      event('HEARTBEAT', {}),
+    )
+    const crossProject = reduceTaskEventState(
+      heartbeat,
+      event('TASK_STARTED', {
+        taskId: 'task_3' as TaskId,
+        projectId: 'project_2' as ProjectId,
+        status: 'RUNNING',
+        attempt: 1,
+        startedAt: '2026-05-17T00:03:00Z',
+      }),
+    )
+
+    expect(heartbeat).toBe(initial)
+    expect(crossProject).toBe(initial)
+  })
 })

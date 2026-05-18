@@ -28,3 +28,7 @@ export interface WorkbenchTaskInput {
     outputCount: number
   }
 }
+
+export interface WorkbenchTaskSubmission {
+  prompt: string
+}
