@@ -17,6 +17,7 @@ Remaining P9 review risks:
 - Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
+- Writable system settings are intentionally deferred until their runtime consumers are explicit. Exposing default Provider/model IDs, upload limits, or tenant concurrency before task/asset/worker paths consume them would create a misleading second source of truth.
 
 Resolved transition item:
 

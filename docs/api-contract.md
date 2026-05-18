@@ -310,9 +310,9 @@ Current P9 backend contract:
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
 
-Planned next P9 settings contract:
+Deferred P9 settings contract:
 
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-Settings APIs must require admin access plus `system:settings:manage`, and they must not claim a setting is active unless backend behavior actually consumes it.
+These routes are not active yet. They remain deferred until the runtime consumer contract is defined. `defaultProviderId/defaultModelId`, upload limits, and tenant concurrency must not be exposed as writable settings until task creation, asset validation, and worker limit consumption are explicitly in scope and implemented. Future settings APIs must require admin access plus `system:settings:manage`, and they must not claim a setting is active unless backend behavior actually consumes it.

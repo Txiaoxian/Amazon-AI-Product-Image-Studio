@@ -52,6 +52,18 @@ The matrix must cover the relevant cases, such as:
 
 If a case is intentionally out of scope, the package must say so explicitly.
 
+## Control-plane and settings rules
+
+Any task that adds settings, policy, or other control-plane APIs must include an explicit table that maps:
+
+- each externally visible field
+- the backend runtime consumer that makes it effective
+- whether that consumer is already in scope for the task
+
+If a field has no runtime consumer yet, it must not be exposed as active writable state. If making a field real requires changing a runtime consumer outside the allowed file scope, the task package is invalid as written and must be split or widened by the main agent before implementation starts.
+
+Examples include default Provider/model selection, upload limits, concurrency limits, retention rules, feature flags, and billing policies.
+
 ## Child-agent responsibilities
 
 - Do not treat unstated destructive behavior as permission. If the task would break an existing production path before its replacement exists, stop and report the conflict.
