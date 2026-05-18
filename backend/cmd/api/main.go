@@ -21,7 +21,7 @@ import (
 func main() {
 	bootstrapLog := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	cfg, err := config.Load()
+	cfg, err := loadStartupConfig()
 	if err != nil {
 		bootstrapLog.Error("configuration error", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -76,6 +76,10 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("api stopped")
+}
+
+func loadStartupConfig() (config.Config, error) {
+	return config.Load()
 }
 
 func newRouter(cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ...health.DependencyChecker) *gin.Engine {

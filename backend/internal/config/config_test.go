@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -388,6 +389,83 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Queue.MaxDeliveries != 6 || cfg.Queue.GlobalConcurrency != 7 || cfg.Queue.TenantConcurrency != 8 || cfg.Queue.UserConcurrency != 9 || cfg.Queue.ProviderConcurrency != 10 || cfg.Queue.ModelConcurrency != 11 {
 		t.Fatalf("Queue concurrency overrides = %#v", cfg.Queue)
+	}
+}
+
+func TestLoadRejectsPlaceholderJWTSigningSecretInProduction(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV":                "production",
+		"API_KEY_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef",
+	}
+
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("load returned nil error for placeholder JWT signing secret in production")
+	}
+	if got := err.Error(); got != "invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production" {
+		t.Fatalf("load error = %q", got)
+	}
+	if strings.Contains(err.Error(), defaultJWTSigningSecret) {
+		t.Fatal("load error leaked the JWT signing secret value")
+	}
+}
+
+func TestLoadRejectsPlaceholderAPIKeyEncryptionSecretInProduction(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV":            "production",
+		"JWT_SIGNING_SECRET": "0123456789abcdef0123456789abcdef",
+	}
+
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("load returned nil error for placeholder API key encryption secret in production")
+	}
+	if got := err.Error(); got != "invalid API_KEY_ENCRYPTION_KEY: placeholder secret is not allowed in production" {
+		t.Fatalf("load error = %q", got)
+	}
+	if strings.Contains(err.Error(), defaultAPIKeyEncryptionKey) {
+		t.Fatal("load error leaked the API key encryption secret value")
+	}
+}
+
+func TestLoadAllowsExplicitProductionSecrets(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV":                "production",
+		"JWT_SIGNING_SECRET":     "0123456789abcdef0123456789abcdef",
+		"API_KEY_ENCRYPTION_KEY": "abcdef0123456789abcdef0123456789",
+	}
+
+	if _, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}); err != nil {
+		t.Fatalf("load returned error for explicit production secrets: %v", err)
+	}
+}
+
+func TestLoadAllowsPlaceholderSecretsOutsideProduction(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV": "test",
+	}
+
+	cfg, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatalf("load returned error outside production: %v", err)
+	}
+	if cfg.Auth.JWTSigningSecret != defaultJWTSigningSecret {
+		t.Fatal("Auth.JWTSigningSecret default was not preserved outside production")
+	}
+	if cfg.Provider.APIKeyEncryptionKey != defaultAPIKeyEncryptionKey {
+		t.Fatal("Provider.APIKeyEncryptionKey default was not preserved outside production")
 	}
 }
 

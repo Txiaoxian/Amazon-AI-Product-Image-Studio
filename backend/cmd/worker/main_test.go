@@ -48,3 +48,41 @@ func TestWorkerReadinessFileLifecycle(t *testing.T) {
 		t.Fatalf("second removeWorkerReady returned error: %v", err)
 	}
 }
+
+func TestWorkerStartupRejectsPlaceholderProductionSecrets(t *testing.T) {
+	tests := []struct {
+		name             string
+		jwtSigningSecret string
+		apiKeyEncryption string
+		wantErrorMessage string
+	}{
+		{
+			name:             "placeholder JWT signing secret",
+			jwtSigningSecret: "",
+			apiKeyEncryption: "0123456789abcdef0123456789abcdef",
+			wantErrorMessage: "invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production",
+		},
+		{
+			name:             "placeholder API key encryption secret",
+			jwtSigningSecret: "0123456789abcdef0123456789abcdef",
+			apiKeyEncryption: "",
+			wantErrorMessage: "invalid API_KEY_ENCRYPTION_KEY: placeholder secret is not allowed in production",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "production")
+			t.Setenv("JWT_SIGNING_SECRET", tt.jwtSigningSecret)
+			t.Setenv("API_KEY_ENCRYPTION_KEY", tt.apiKeyEncryption)
+
+			_, err := loadStartupConfig()
+			if err == nil {
+				t.Fatal("loadStartupConfig returned nil error for placeholder production secret")
+			}
+			if got := err.Error(); got != tt.wantErrorMessage {
+				t.Fatalf("loadStartupConfig returned unexpected error: %q", got)
+			}
+		})
+	}
+}
