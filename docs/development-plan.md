@@ -445,7 +445,7 @@ P8 execution order:
 
 1. `P8-FE-WORKBENCH-FOUNDATION`: completed and merged. It added backend model capability loading, backend-ready workbench input types, and project asset ID reference state while keeping the default production submit path legacy-safe until the next task.
 2. `P8-FE-TASK-WORKBENCH`: completed and merged. It switched the default workbench submission path to backend task creation + SSE lifecycle, added cancel/retry handling, and drives live result rendering from authorized backend output assets.
-3. `P8-FE-HISTORY-ASSET-SOURCE`: replace the local history panel/details/download/edit source with backend task history and generated/edited project assets.
+3. `P8-FE-HISTORY-ASSET-SOURCE`: completed and merged. It moved the default history/detail/download/re-edit path to backend task history plus generated/edited assets, while keeping old IndexedDB history as an explicit collapsed compatibility entry.
 4. `P8-FE-LEGACY-RETIREMENT`: remove or isolate browser Provider adapters, Provider key settings, and IndexedDB image/history production paths after the backend flow is proven.
 5. `R8`: main-agent review, regression, migration verification, and public contract cleanup before P9.
 
@@ -453,8 +453,10 @@ P8 current result:
 
 - Backend-ready workbench structures now exist for model capabilities, backend task input, and project asset references.
 - The default production workbench now creates backend tasks only, advances task state from SSE, and renders live backend output assets instead of browser Provider responses.
-- Old IndexedDB history remains as an explicit legacy compatibility source until `P8-FE-HISTORY-ASSET-SOURCE` replaces the default history/detail/edit path.
-- Review of `P8-FE-TASK-WORKBENCH` left three non-blocking follow-ups: backend result clicks still need a real backend detail path, generic HTTP `422` handling is broader than a future stale-model-specific error contract, and asset references still carry a temporary `legacyFile` compatibility blob until retirement work removes that burden.
+- Backend task history, authorized asset download, backend result detail, and backend asset re-editing are now the default production history path.
+- Old IndexedDB history remains only as an explicit collapsed compatibility entry until `P8-FE-LEGACY-RETIREMENT` removes or strictly isolates the remaining old browser path.
+- Review of `P8-FE-TASK-WORKBENCH` left two non-blocking follow-ups still open after the history switch: generic HTTP `422` handling is broader than a future stale-model-specific error contract, and asset references still carry a temporary `legacyFile` compatibility blob until retirement work removes that burden.
+- Review of `P8-FE-HISTORY-ASSET-SOURCE` left two non-blocking follow-ups for later cleanup: the frontend currently joins separately paged task/asset lists to build history, and load failure can still render an empty-state panel beside the error state.
 
 P8 serial policy:
 

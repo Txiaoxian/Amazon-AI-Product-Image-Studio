@@ -2249,7 +2249,7 @@ P8 目标是把已有工作台从旧的浏览器直连执行路径迁移到后�
 
 1. `P8-FE-WORKBENCH-FOUNDATION` - completed and merged. 先切换模型与引用资产的来源。
 2. `P8-FE-TASK-WORKBENCH` - completed and merged. 再切换提交、状态和结果输出。
-3. `P8-FE-HISTORY-ASSET-SOURCE` - 再切换历史与再次编辑来源。
+3. `P8-FE-HISTORY-ASSET-SOURCE` - completed and merged. 再切换历史与再次编辑来源。
 4. `P8-FE-LEGACY-RETIREMENT` - 最后退役旧直连和旧本地持久化生产路径。
 5. `R8` - 主 agent 串行 review、回归、静态扫描和合同校准。
 
@@ -2475,6 +2475,18 @@ npm run build
 
 P8-FE-HISTORY-ASSET-SOURCE - 用后端任务与资产替换本地历史主路径
 
+### 当前状态
+
+Completed and merged into `main`.
+
+Review result:
+
+- 默认历史、详情、下载和再次编辑路径已经切到 backend task/assets，旧 IndexedDB 历史被收成显式折叠的兼容入口。
+- 当前 backend 结果图详情入口已经接到真实 backend asset/task detail，不再是 no-op。
+- 首轮 review 发现 legacy 生成后误刷 backend history、backend re-edit source 会残留污染普通生成；修复后再 review 通过。
+- 合并前验证通过：`npm run lint`、`npm run type-check`、`npm run test`、`npm run build`，20 个 test files / 83 个 tests 全部通过。
+- 非阻塞遗留：当前 history 由前端对分页 task/assets 列表做 join，未来最好由 backend 提供统一 history query；history 加载失败且为空时仍可能同时显示 empty state 与 error state。
+
 ### 目标
 
 把历史面板、图片详情、下载和再次编辑的主数据源切换到后端项目任务与生成/编辑资产，不再以 IndexedDB 历史记录作为平台真值。
@@ -2624,6 +2636,7 @@ P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路
 - backend task submit、SSE、backend history、authorized download、再次编辑和 admin Provider/model 管理必须继续可用。
 - 非敏感 UI 偏好如果仍有价值可以保留，但不得夹带 Provider credentials。
 - 如果保留 legacy import/compat 入口，它必须是明确、默认关闭、不会触发 Provider 请求或租户写入的独立路径。
+- `P8-FE-HISTORY-ASSET-SOURCE` 已建立的默认 backend history/detail/download/re-edit 路径必须继续是生产主路径。
 
 ### 允许的中间态
 
@@ -2646,7 +2659,8 @@ P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路
 | 浏览器里仍残留旧 Provider key/settings | 启动后不再被生产路径读取或使用 |
 | 旧 IndexedDB 里仍有历史 Blob | 不会被静默上传，不会成为默认历史源 |
 | 用户打开普通设置页 | 不再看到 Provider API Key / Provider URL 输入 |
-| 兼容代码若保留 | 默认不可达，且不触发网络调用或租户写入 |
+| 兼容代码若保留 | 默认不可达，且不触发 Provider 网络调用、任务创建或租户写入 |
+| 旧 legacy history UI 被删除或收口 | 不留下仍可见但已失效的按钮、菜单或提示语 |
 | 静态扫描命中 `localStorage` / `providers` | 每个保留命中都有明确、非敏感、非生产理由 |
 
 ### 必须新增或更新的回归测试
@@ -2655,6 +2669,8 @@ P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路
 - 主工作台生产 imports 不再触达 `frontend/src/providers/**`。
 - IndexedDB 不再承担生成图或历史主数据职责。
 - 浏览器旧设置残留不会被 production flow 读取使用。
+- 若保留 legacy 兼容入口，测试必须证明它不会再触发 Provider submit、任务创建或新的本地生成。
+- 若移除 legacy 兼容入口，测试必须证明不存在仍可见但失效的按钮和文案。
 - 静态扫描和必要测试覆盖 direct fetch、Authorization、polling、sensitive storage 的移除。
 
 ### 具体开发内容
@@ -2662,6 +2678,7 @@ P8-FE-LEGACY-RETIREMENT - 移除或隔离旧直连与旧本地持久化生产路
 - 删除或彻底隔离生产路径上的 `frontend/src/providers/**` 导入；如保留兼容代码，必须显式命名并从主工作台不可达。
 - 从普通设置流移除 Provider API Key 和 Provider API URL 持久化；只保留非敏感 UI 偏好。
 - 删除已经失去生产意义的 IndexedDB image/history 主路径引用和相关回归测试，或把它们降级为清晰隔离的兼容代码。
+- 收口当前显式 legacy history / legacy generation 兼容路径：要么删除，要么隔离为不会触发 Provider submit、不会创建任务、不会再被默认工作流使用的非生产入口。
 - 用静态扫描和测试证明旧直连、旧密钥持久化、旧 history primary path 已退出生产路径。
 
 ### 安全要求
