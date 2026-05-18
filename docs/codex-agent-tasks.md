@@ -2827,8 +2827,8 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 
 1. `P9-BE-AUDIT-USAGE-READS` - completed and merged. Defines safe backend read contracts for usage, operation logs, and API call logs.
 2. `P9-BE-PRODUCTION-SECRET-GUARD` - completed and merged. Rejects production placeholder secrets before API or Worker startup can proceed.
-3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - next, serial. Implement only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
-4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - after honest backend contracts. Add frontend admin views for usage/logs/settings.
+3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - completed and merged. Implemented only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
+4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - next, serial. Add frontend admin views for usage/logs/settings using only merged backend contracts.
 5. `P9-SECURITY-REGRESSION` - after core backend settings exist. Add targeted security regression tests and residual legacy cleanup.
 6. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
 
@@ -2841,7 +2841,9 @@ Second batch correction: the original `P9-BE-SYSTEM-SETTINGS-HARDENING` package 
 
 Second batch completed: `P9-BE-PRODUCTION-SECRET-GUARD` merged after review required the startup-path failure matrix to be completed for both API and Worker entrypoints.
 
-Third batch decision: `P9-BE-RUNTIME-SETTINGS-CONTRACT` will expose only tenant upload policy in its first slice. `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention stay deferred because task creation, Worker limit resolution, quota enforcement, and cleanup jobs are not in scope yet.
+Third batch completed: `P9-BE-RUNTIME-SETTINGS-CONTRACT` exposed only tenant upload policy in its first slice and wired it into backend asset validation. `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention stay deferred because task creation, Worker limit resolution, quota enforcement, and cleanup jobs are not in scope yet.
+
+Fourth batch decision: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` may now start from latest `main`. It must be a frontend-only task that consumes the merged P9 backend contracts for usage/audit reads and the narrow `uploadPolicy` system setting. It must not add fake UI controls for deferred settings.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3060,6 +3062,10 @@ go build ./cmd/api ./cmd/worker
 
 P9-BE-RUNTIME-SETTINGS-CONTRACT - 真实可执行的系统设置 API 与 runtime 消费链路
 
+### 状态
+
+Completed and merged into `main`. Review accepted the narrow contract because every exposed writable field is consumed by backend asset upload runtime. The merged backend keeps deferred settings absent from responses and rejected on writes, enforces tenant isolation/RBAC/CSRF, records sanitized operation logs, and uses environment upload limits as hard caps and fallback defaults.
+
 ### 推荐执行信息
 
 - 推荐线程名：`P9-BE-RUNTIME-SETTINGS-CONTRACT`
@@ -3208,16 +3214,127 @@ P9-FE-ADMIN-OBSERVABILITY-SETTINGS - 前端管理端观测与设置页面
 
 在已有 admin Provider/model 管理基础上增加 usage summary、usage records、operation logs、api call logs 和 system settings UI，只消费 P9 后端真实合同，不展示未生效的假设置。
 
-### 依赖
+### 推荐执行信息
+
+- 推荐线程名：`P9-FE-ADMIN-OBSERVABILITY-SETTINGS`
+- 推荐分支名：`codex/p9-frontend-admin-observability-settings`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务完成、review、合并和回归后，再进入 `P9-SECURITY-REGRESSION`；不要并行启动安全回归或部署发布任务。
+
+### 允许修改文件
+
+- `frontend/src/api/**`
+- `frontend/src/types/**`
+- `frontend/src/components/admin/**`
+- `frontend/src/App.tsx` 仅限接入现有 admin 入口和权限可见性
+- `frontend/src/components/**` 仅限 admin 入口/状态展示所需的局部复用，不重构工作台
+- `frontend/src/test/**`
+
+### 禁止修改文件
+
+- `backend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/src/providers/**` 或任何已退役浏览器 Provider 直连代码
+- `frontend/src/hooks/useGeneration.ts`、task/SSE runtime、workbench 生成主流程，除非发现编译阻塞并先报告
+- 任何 localStorage/sessionStorage/IndexedDB auth token、Provider API key、Provider URL 或日志敏感字段持久化代码
+
+### 前置依赖
 
 - `P9-BE-AUDIT-USAGE-READS`
 - `P9-BE-RUNTIME-SETTINGS-CONTRACT`
+- Existing P8 backendized workbench and P6 Provider/model admin UI are merged on `main`.
 
-### 关键约束
+### 必须保持的现有行为
 
-- 不得在前端保存 Provider API Key、日志敏感字段或 auth token。
-- 非 admin 用户不得看到管理入口。
-- 列表必须分页，不得一次性拉取无界日志。
+- Provider/model admin management remains usable and keeps its current key-masking and no-browser-persistence behavior.
+- Workbench generation still uses backend task creation plus SSE only; no polling or Provider direct calls are reintroduced.
+- Existing project/asset/task/history flows remain unchanged.
+- Non-admin users, or users lacking the relevant permission, do not see admin observability/settings controls.
+
+### 允许的中间态
+
+- Frontend admin UI may ship before a richer backend dashboard aggregation exists.
+- Empty states may be simple if the backend returns no records.
+- Settings UI may cover only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` because that is the only active backend settings slice.
+
+### 禁止的半迁移状态
+
+- Do not display `defaultProviderId`, `defaultModelId`, tenant concurrency, storage quota, or log retention as active editable controls.
+- Do not create frontend-only settings that are not saved through or consumed by backend runtime.
+- Do not fetch unbounded logs or usage rows.
+- Do not render unredacted secrets or provide a "show raw secret" path.
+- Do not add `setInterval`, repeated `setTimeout`, repeated fetch loops, or polling for admin lists.
+- Do not use browser storage for filters if those filters may contain IDs, errors, metadata, or sensitive text.
+
+### 失败模式与边界场景
+
+| 场景 | 预期 |
+| --- | --- |
+| user lacks `usage:read` | usage summary/records UI is hidden or disabled without triggering unauthorized fetches |
+| user lacks `audit:read` | operation/API-call log UI is hidden or disabled without triggering unauthorized fetches |
+| user lacks `system:settings:manage` | settings UI is hidden or read-only without PATCH capability |
+| backend returns empty pages | UI shows bounded empty state with pagination metadata preserved |
+| backend returns validation error for settings PATCH | form keeps user input visible, shows API error, and does not claim success |
+| backend returns redacted metadata | UI displays redacted fields only; no attempt is made to recover hidden values |
+| API call log detail is large | UI uses bounded/truncated/preformatted display and remains responsive |
+| admin changes upload policy | PATCH sends only `uploadPolicy` fields through existing API client with CSRF support |
+| deferred settings are requested by product copy or old docs | task stops and reports conflict instead of adding fake controls |
+
+### 必须新增或更新的回归测试
+
+- API wrapper tests for usage summary, usage records, operation logs, API call logs list/detail, and GET/PATCH system settings URLs/query serialization.
+- Permission-gating tests proving users without `usage:read`, `audit:read`, or `system:settings:manage` do not see or trigger the corresponding admin UI/API calls.
+- UI tests for loading, empty, error, and paginated list states.
+- Settings form tests proving only `uploadPolicy` fields are rendered and PATCHed.
+- Regression test proving deferred settings such as default Provider/model, concurrency, quota, and retention are absent from the UI.
+- Regression test proving no Provider API key or auth token is written to browser storage by the new admin UI.
+
+### 具体开发内容
+
+- Add frontend API client functions for:
+  - `GET /api/v1/admin/usage/summary`
+  - `GET /api/v1/admin/usage/records`
+  - `GET /api/v1/admin/operation-logs`
+  - `GET /api/v1/admin/api-call-logs`
+  - `GET /api/v1/admin/api-call-logs/:id`
+  - `GET /api/v1/admin/system-settings`
+  - `PATCH /api/v1/admin/system-settings`
+- Add or extend frontend types for paginated admin read responses, usage summaries, usage records, operation logs, API call logs, redacted metadata, and system settings upload policy.
+- Integrate an admin observability/settings view into the existing admin entry pattern without breaking `ProviderModelAdminPanel`.
+- Use existing auth session permissions to decide which admin sections are visible or enabled.
+- Use explicit user actions/page changes for list fetching; keep page size bounded.
+- Render redacted JSON/metadata safely and compactly; avoid raw unbounded dumps.
+- Implement settings update UX for the narrow upload policy only, including loading/success/error states.
+
+### 安全要求
+
+- Frontend must not store Provider API keys, Authorization headers, Cookies, auth tokens, log metadata, Provider errors, or system settings payloads in localStorage/sessionStorage/IndexedDB.
+- Frontend must not call AI Providers, MinIO, or backend-internal service names directly.
+- PATCH requests must go through the existing API client so credentials and CSRF behavior remain consistent.
+- Permission checks are UI hygiene only; backend remains authoritative. Do not rely on frontend gating as security.
+- Never add fake controls for deferred settings.
+
+### 验收标准
+
+- Admin users with matching permissions can view paginated usage/audit data and update upload-policy settings through backend APIs.
+- Users lacking permissions do not see or trigger unauthorized admin sections.
+- Provider/model management and P8 workbench behavior remain unchanged.
+- UI and tests prove deferred settings are absent.
+- No backend, deploy, docs, AGENTS, or agent-instruction files are modified.
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+git diff --check
+```
 
 ## 子任务 30：安全回归与残余 legacy 清理
 

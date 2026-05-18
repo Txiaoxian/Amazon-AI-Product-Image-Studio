@@ -17,7 +17,7 @@ Remaining P9 review risks:
 - Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. The next approved slice is tenant upload policy backed by asset validation; default Provider/model IDs, tenant concurrency, storage quotas, and retention remain deferred until their task/worker/cleanup consumers are explicit.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is now the only active writable slice and is backed by asset validation; default Provider/model IDs, tenant concurrency, storage quotas, and retention remain deferred until their task/worker/quota/cleanup consumers are explicit.
 
 Resolved transition item:
 
@@ -32,6 +32,7 @@ Resolved transition item:
 - R8 verified frontend, backend, and Compose config regression. Sensitive frontend static scan returned no production-code hits for browser Provider credentials, Provider Authorization headers, direct Provider hosts, task polling, or sensitive browser storage. Provider static-scan hits are limited to backend Provider management API consumers.
 - P9 audit/usage read APIs now use shared recursive redaction, tenant-scoped queries, admin RBAC, and deterministic pagination. Review fixes centralized the redaction implementation and proved exact known-secret scrubbing through a controlled injection seam without expanding production Provider-key decryption scope.
 - P9 production startup hardening now rejects placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup can proceed in production, while keeping non-production defaults available.
+- P9 runtime settings now expose only tenant upload policy and enforce it in backend asset upload validation. Deferred settings are absent from responses and rejected on writes until their runtime consumers exist.
 
 P5 review hardening backlog:
 

@@ -191,6 +191,7 @@ P9 implementation notes:
 - Stored upload-policy values are tenant overrides only; effective runtime values fall back to environment-configured upload limits when no override exists.
 - Tenant upload-policy overrides may only narrow or match the environment-configured hard caps and are consumed by backend asset upload validation before file persistence.
 - Do not persist `default_provider_id`, `default_model_id`, tenant concurrency, storage quota, or log retention settings until their runtime consumers are deliberately in scope.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` has merged the `system_settings` model/migration and the first active `upload_policy` runtime path.
 
 ## Indexing expectations
 
