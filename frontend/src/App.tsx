@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Settings } from 'lucide-react'
+import { BarChart3, Settings } from 'lucide-react'
 import { AuthStatus } from './components/auth/AuthStatus'
 import { LoginPanel } from './components/auth/LoginPanel'
+import { AdminObservabilitySettingsPanel } from './components/admin/AdminObservabilitySettingsPanel'
 import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
@@ -79,6 +80,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     projectId: projectAssets.selectedProjectId,
   })
   const [isAdminOpen, setAdminOpen] = useState(false)
+  const [isObservabilityAdminOpen, setObservabilityAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<ImageDetail | null>(null)
   const [detailError, setDetailError] = useState('')
@@ -132,7 +134,11 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
   const canManageProviders = hasPermission(session, 'provider:manage')
   const canManageModels = hasPermission(session, 'model:manage')
+  const canReadUsage = hasPermission(session, 'usage:read')
+  const canReadAudit = hasPermission(session, 'audit:read')
+  const canManageSystemSettings = hasPermission(session, 'system:settings:manage')
   const canOpenAdmin = canManageProviders || canManageModels
+  const canOpenObservabilityAdmin = canReadUsage || canReadAudit || canManageSystemSettings
 
   const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
     if (pendingEditSourceAssetId) {
@@ -316,6 +322,18 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
               <span className="hidden sm:inline">Provider/model 管理</span>
             </button>
           ) : null}
+          {canOpenObservabilityAdmin ? (
+            <button
+              aria-label="观测与设置"
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-ink-200 bg-white px-3 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-50 hover:text-ink-900 focus:outline-none focus:ring-2 focus:ring-amazon-500/30"
+              onClick={() => setObservabilityAdminOpen(true)}
+              title="观测与设置"
+              type="button"
+            >
+              <BarChart3 className="h-4 w-4" />
+              <span className="hidden sm:inline">观测与设置</span>
+            </button>
+          ) : null}
           <AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />
         </>
       }
@@ -396,6 +414,17 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           csrfToken={session.csrfToken}
           isOpen={isAdminOpen}
           onClose={() => setAdminOpen(false)}
+        />
+      ) : null}
+
+      {canOpenObservabilityAdmin ? (
+        <AdminObservabilitySettingsPanel
+          canManageSystemSettings={canManageSystemSettings}
+          canReadAudit={canReadAudit}
+          canReadUsage={canReadUsage}
+          csrfToken={session.csrfToken}
+          isOpen={isObservabilityAdminOpen}
+          onClose={() => setObservabilityAdminOpen(false)}
         />
       ) : null}
 

@@ -141,6 +141,52 @@ describe('admin Provider and model management UI', () => {
 
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Provider/model 管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '观测与设置' })).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => url.startsWith('/api/v1/admin/'))).toBe(false)
+  })
+
+  it('shows the observability/settings entry from current session permissions without exposing Provider management', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({
+          ...baseSession,
+          permissions: ['usage:read'],
+        })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/admin/usage/summary?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc&dimension=provider') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/admin/usage/records?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc') {
+        return successResponse(page([]))
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Provider/model 管理' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '观测与设置' }))
+
+    expect(await screen.findByRole('heading', { name: '管理端观测与设置' })).toBeInTheDocument()
+    expect(await screen.findByText('暂无用量汇总')).toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain(
+      '/api/v1/admin/usage/summary?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc&dimension=provider',
+    )
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain(
+      '/api/v1/admin/usage/records?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc',
+    )
   })
 
   it('submits Provider keys once and keeps only masked metadata visible after save', async () => {
