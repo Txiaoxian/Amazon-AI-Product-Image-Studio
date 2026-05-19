@@ -33,6 +33,7 @@ Resolved transition item:
 - P9 audit/usage read APIs now use shared recursive redaction, tenant-scoped queries, admin RBAC, and deterministic pagination. Review fixes centralized the redaction implementation and proved exact known-secret scrubbing through a controlled injection seam without expanding production Provider-key decryption scope.
 - P9 production startup hardening now rejects placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup can proceed in production, while keeping non-production defaults available.
 - P9 runtime settings now expose only tenant upload policy and enforce it in backend asset upload validation. Deferred settings are absent from responses and rejected on writes until their runtime consumers exist.
+- P9 frontend admin observability/settings UI now consumes only backend admin contracts, gates sections by `usage:read`, `audit:read`, and `system:settings:manage`, keeps lists paginated, PATCHes settings with CSRF through the shared API client, and does not persist Provider keys, auth tokens, log metadata, or system settings payloads in browser storage.
 
 P5 review hardening backlog:
 

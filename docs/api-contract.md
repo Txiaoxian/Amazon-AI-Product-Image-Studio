@@ -309,6 +309,7 @@ Current P9 backend contract:
 - API call log filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`, `status=SUCCESS|FAILURE`, `requestId`.
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
+- Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` consumes these routes through `frontend/src/api/admin.ts`, keeps list reads paginated, and gates visible sections by `usage:read` or `audit:read`.
 
 Current P9 settings contract:
 
@@ -335,3 +336,4 @@ The first active settings slice is intentionally narrow and runtime-backed:
 - Allowed MIME types remain configuration-owned security policy; the settings API must not make SVG or any non-allowlisted type writable.
 - `defaultProviderId`, `defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until task creation, worker limiting, quota enforcement, or cleanup jobs actually consume them.
 - Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`. Frontend admin UI must consume this exact narrow surface and must not show deferred settings as active controls.
+- Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.

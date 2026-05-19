@@ -2828,8 +2828,8 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 1. `P9-BE-AUDIT-USAGE-READS` - completed and merged. Defines safe backend read contracts for usage, operation logs, and API call logs.
 2. `P9-BE-PRODUCTION-SECRET-GUARD` - completed and merged. Rejects production placeholder secrets before API or Worker startup can proceed.
 3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - completed and merged. Implemented only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
-4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - next, serial. Add frontend admin views for usage/logs/settings using only merged backend contracts.
-5. `P9-SECURITY-REGRESSION` - after core backend settings exist. Add targeted security regression tests and residual legacy cleanup.
+4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - completed and merged. Added frontend admin views for usage/logs/settings using only merged backend contracts.
+5. `P9-SECURITY-REGRESSION` - next, serial. Add targeted security regression tests and residual legacy cleanup/quarantine.
 6. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
 
 First batch completed: `P9-BE-AUDIT-USAGE-READS` merged after review-driven redaction fixes.
@@ -2843,7 +2843,9 @@ Second batch completed: `P9-BE-PRODUCTION-SECRET-GUARD` merged after review requ
 
 Third batch completed: `P9-BE-RUNTIME-SETTINGS-CONTRACT` exposed only tenant upload policy in its first slice and wired it into backend asset validation. `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention stay deferred because task creation, Worker limit resolution, quota enforcement, and cleanup jobs are not in scope yet.
 
-Fourth batch decision: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` may now start from latest `main`. It must be a frontend-only task that consumes the merged P9 backend contracts for usage/audit reads and the narrow `uploadPolicy` system setting. It must not add fake UI controls for deferred settings.
+Fourth batch completed: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` merged after review. The accepted frontend UI consumes paginated usage/audit reads and only the narrow `uploadPolicy` system setting, keeps Provider/model admin intact, and adds tests for permission gating, deferred-setting absence, browser-storage safety, and admin API contracts.
+
+Fifth batch decision: `P9-SECURITY-REGRESSION` starts from latest `main` and remains serial. It is a targeted regression-and-cleanup task, not a broad rewrite. It should add missing high-value tests and delete or explicitly quarantine residual legacy production-confusing files only when the static import graph proves they are unreachable. If a new test exposes a real security bug requiring a wide production-code change, the child agent must stop and report the required scope instead of quietly widening the task.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3210,6 +3212,10 @@ git diff --check
 
 P9-FE-ADMIN-OBSERVABILITY-SETTINGS - 前端管理端观测与设置页面
 
+### 状态
+
+Completed and merged into `main`. Review found no blockers. Non-blocking follow-ups: `AdminObservabilitySettingsPanel` is large and can be split later; API-call detail lacks a stale-request guard, so slow detail responses can overwrite a newer click for the same admin user.
+
 ### 目标
 
 在已有 admin Provider/model 管理基础上增加 usage summary、usage records、operation logs、api call logs 和 system settings UI，只消费 P9 后端真实合同，不展示未生效的假设置。
@@ -3342,14 +3348,143 @@ git diff --check
 
 P9-SECURITY-REGRESSION - 安全回归、残余 legacy 清理和发布前硬化
 
+### 推荐执行信息
+
+- 推荐线程名：`P9-SECURITY-REGRESSION`
+- 推荐分支名：`codex/p9-security-regression`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务完成、review、合并和回归后，再进入 `P9-DEPLOY-RELEASE-VALIDATION`；不要并行启动部署发布验证。
+
 ### 目标
 
-补齐 SSRF、租户隔离、对象级权限、上传安全、敏感日志、SSE replay 可见性、生产 secret、残余 legacy code 的回归测试和清理。
+补齐 SSRF、租户隔离、对象级权限、上传安全、敏感日志、SSE replay 可见性、生产 secret、前端静态安全和残余 legacy code 的回归测试与最小清理。此任务优先补测试、证明安全边界和清理明显不可达的遗留代码；不要把它扩大成新功能开发。
 
-### 关键约束
+### 允许修改文件
 
-- 删除或明确 quarantine R8 标记的不可达 legacy display/DB helper。
-- 不得重新引入 browser Provider direct call、Provider key persistence、polling 或 IndexedDB production history。
+- `backend/internal/**/**/*_test.go`
+- `backend/internal/api/**` 仅限为新增安全回归测试做最小 bug fix；若需要改变公开合同，先停止报告
+- `backend/internal/provider/**`、`backend/internal/provideradapter/**` 仅限 SSRF/redaction/security regression 的最小 bug fix
+- `backend/internal/asset/**`、`backend/internal/storage/**` 仅限 upload/object-permission regression 的最小 bug fix
+- `backend/internal/task/**`、`backend/internal/sse/**`、`backend/internal/queue/**` 仅限 task/SSE replay/security regression 的最小 bug fix，不改状态机语义
+- `backend/internal/config/**`、`backend/cmd/**` 仅限 production secret guard regression 的最小 bug fix
+- `frontend/src/test/**`
+- `frontend/src/**/*.test.ts`
+- `frontend/src/**/*.test.tsx`
+- `frontend/src/db/**`、`frontend/src/lib/**` 仅限删除或 quarantine 已证明不在生产 import graph 的 legacy helper
+- `frontend/src/components/**` 仅限删除或 quarantine 已证明不在生产 import graph 的 legacy display helper
+- `frontend/src/vite-env.d.ts` 或测试 setup 文件，仅限测试需要
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `deploy/**`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/api/tasks.ts`
+- `frontend/src/components/studio/**`
+- `frontend/src/components/admin/**`，除非新增安全回归测试证明已有管理端安全 bug 且修复很小
+- Provider/model/task/asset public API response contracts，除非先报告合同冲突
+- Worker claim/complete/cancel 状态机语义
+- 任何新增 AI Provider browser direct call、Provider key browser persistence、task polling、unbounded admin log fetch、fake system setting、MinIO direct browser access
+
+### 前置依赖
+
+- `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` completed and merged.
+- R8 frontend backendization verification completed.
+- Existing P5-P9 backend security foundations are merged: upload validation, Provider URL validation, runtime SSRF transport, recursive redaction, production secret guard, admin read APIs, and runtime-backed upload policy settings.
+
+### 必须保持的现有行为
+
+- Workbench generation continues to use backend task API plus SSE only.
+- Frontend admin Provider/model and observability/settings UI remain usable and keep their no-secret-browser-persistence behavior.
+- Existing auth, RBAC, tenant isolation, project/asset/task APIs, Provider/model management, task queue/worker, SSE replay, MinIO-backed asset download, and Docker Compose config behavior remain stable.
+- Residual legacy helper cleanup must not remove code still imported by tests that protect migration invariants unless the test is updated to preserve the same invariant.
+
+### 允许的中间态
+
+- Security regression tests may be added before all release hardening is complete.
+- Residual legacy files may be deleted if static import checks prove they are not in the production graph.
+- If a legacy file is risky but cannot be safely deleted in this task, explicitly quarantine it with tests/comments that prevent production imports rather than partially rewiring behavior.
+- If a new regression test exposes a broad security bug, commit the failing characterization only if useful, then stop and report the required follow-up scope.
+
+### 禁止的半迁移状态
+
+- No production frontend path may re-import legacy browser Provider adapters, local Provider settings, IndexedDB image/history primary source, or relay URLs.
+- No backend security test may be weakened, skipped, or replaced with a snapshot that does not assert behavior.
+- No secret may be added to fixtures, logs, docs, snapshots, or final output.
+- No cross-tenant read/write behavior may be accepted as a test setup shortcut.
+- No system settings field may become visible or writable without a runtime consumer.
+- No task status polling may be introduced while adding tests or cleanup.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| Provider URL / SSRF | save/update/test/runtime URL points to localhost, loopback, private IP, link-local, Docker hostname, DNS rebinding, or redirect to blocked IP | request is rejected before Provider call or before following redirect |
+| Provider redaction | API key appears as value, nested key, error body key, Authorization/Cookie, or base64-like image payload | persisted logs and admin read responses are redacted or dropped |
+| Tenant isolation | tenant A probes tenant B project, asset, task, API call log, operation log, usage record, Provider, model, or settings object IDs | response is 403/404/no rows without existence leak |
+| Object permissions | viewer/seller/admin attempts project, asset download/delete, task cancel/retry, Provider/model/settings/admin reads outside permission | backend rejects with expected status and no side effect |
+| Upload validation | forged MIME, SVG, oversized bytes, over dimensions, over pixel count, tenant upload-policy override | backend rejects before MinIO persistence; valid allowed JPEG/PNG/WebP still works |
+| SSE replay | Last-Event-ID before/after known sequence, cross-tenant task stream, heartbeat, reconnect replay | replay is ordered, scoped, heartbeat-safe, and no cross-tenant events leak |
+| Production secrets | production startup uses placeholder JWT or API key encryption secret | API and Worker startup fail before serving work; non-production defaults remain usable |
+| Frontend static safety | production frontend imports or contains Provider direct calls, API key persistence, task polling, relay proxy assumptions, MinIO direct URLs, deferred settings UI | static test fails |
+| Residual legacy code | legacy display/DB helper is unreachable but confusing | delete it or quarantine it with a failing test if re-imported by production code |
+
+### 必须新增或更新的回归测试
+
+- Backend SSRF regression tests for Provider save/update/test and runtime transport edge cases not already covered.
+- Backend tenant isolation/object-permission regression tests for the highest-risk object ID APIs not already covered.
+- Backend upload validation regression tests for forged MIME/SVG/size/dimension/pixel/tenant policy edge cases.
+- Backend SSE replay regression tests for Last-Event-ID ordering, heartbeat presence, reconnect replay, and cross-tenant rejection.
+- Backend sensitive redaction regression tests for nested known-secret key/value and admin read response paths.
+- Backend production secret guard regression tests must remain green for both API and Worker.
+- Frontend static safety test scanning production imports/source for Provider direct calls, API key persistence, task polling, relay URLs, MinIO direct access, and deferred settings UI.
+- Regression or import-graph test proving deleted/quarantined legacy helpers cannot re-enter the production path.
+
+### 具体开发内容
+
+- Inventory existing P5-P9 security tests and avoid duplicating already-covered cases.
+- Add targeted tests for the gaps above, using existing test helpers and fixtures.
+- Run frontend static scans/tests against production source, excluding test-only fixtures where appropriate.
+- Delete or quarantine residual legacy display/DB helper files only after proving they are outside the production import graph.
+- Apply only minimal code fixes needed for newly added tests when the fix stays within the allowed scope and does not change public contracts.
+- If a fix requires broad runtime/API/state-machine changes, stop and report the exact failing test and proposed follow-up task.
+
+### 安全要求
+
+- Do not introduce real secrets in test data. Use obvious fake tokens such as `fake-secret-for-redaction-test`.
+- Do not log full API keys, Authorization headers, Cookies, image base64, or raw upload bytes.
+- Preserve tenant filtering on every business query touched by fixes.
+- Preserve backend authorization as the source of truth; frontend checks are regression guards only.
+- Keep Redis/MySQL/MinIO usage on shared local development services if an integration check is needed; do not create project-specific service containers for routine validation.
+
+### 验收标准
+
+- New regression tests cover the named failure modes or explicitly document why a case is already covered.
+- No production frontend import path contains browser Provider direct calls, Provider key persistence, task polling, relay assumptions, MinIO direct access, or deferred settings UI.
+- Residual legacy helper files are deleted or quarantined only when safe.
+- Existing frontend, backend, task/SSE, Provider/model, admin, and asset flows remain green.
+- No docs, deploy, AGENTS, or agent-instruction files are modified.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+git diff --check
+```
 
 ## 子任务 31：部署和发布验证
 

@@ -491,15 +491,15 @@ P8 intentionally does not resolve:
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
-Status: in progress after completed R8. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, and `P9-BE-RUNTIME-SETTINGS-CONTRACT` have been reviewed, fixed where needed, merged into `main`, and verified. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope. Continue serially; frontend admin UI may now consume the implemented usage/audit/settings contracts, but must not invent deferred settings.
+Status: in progress after completed R8. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, `P9-BE-RUNTIME-SETTINGS-CONTRACT`, and `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` have been reviewed, fixed where needed, merged into `main`, and verified. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope. Continue serially with targeted security regression before deployment release validation.
 
 P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
 
 1. `P9-BE-AUDIT-USAGE-READS`: completed and merged. Backend usage, operation log, and API call log read APIs now enforce admin RBAC, tenant isolation, pagination, deterministic ordering, and shared recursive response redaction.
 2. `P9-BE-PRODUCTION-SECRET-GUARD`: completed and merged. API and Worker startup now reject placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` in production while preserving non-production defaults.
 3. `P9-BE-RUNTIME-SETTINGS-CONTRACT`: completed and merged. Backend system settings now expose only the first honest runtime-backed slice: tenant upload policy consumed by asset upload validation. Default Provider/model selection, tenant concurrency, storage quota, and log retention remain deferred until their runtime consumers are deliberately in scope.
-4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: next, serial. Add admin UI for usage/logs/settings using only the P9 backend contracts already merged into `main`.
-5. `P9-SECURITY-REGRESSION`: targeted security tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, and residual legacy code cleanup.
+4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: completed and merged. Frontend admin UI now consumes paginated usage/audit reads and the narrow runtime-backed `uploadPolicy` settings contract without exposing deferred settings.
+5. `P9-SECURITY-REGRESSION`: next, serial. Add targeted security tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, production secret guards, frontend static regressions, and residual legacy code cleanup/quarantine.
 6. `P9-DEPLOY-RELEASE-VALIDATION`: Docker Compose build/up/healthcheck, release documentation, environment variable review, backup/restore notes, and final deployment runbook.
 
 P9 carry-forward risks:
@@ -510,6 +510,8 @@ P9 carry-forward risks:
 - Provider soft-delete linked-model policy remains unresolved.
 - History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
 - Unreachable legacy display/DB helper code should be deleted or explicitly quarantined before release to reduce future agent confusion.
+- Admin observability UI is intentionally acceptable as one component for this slice, but should be split after security regression if it becomes a maintenance hotspot.
+- API call log detail UI has no stale-request guard; a slower detail response can overwrite a newer click for the same admin user. This is a display correctness issue, not a security blocker, and should be considered for a follow-up frontend hardening task.
 
 ## Phase boundaries
 
