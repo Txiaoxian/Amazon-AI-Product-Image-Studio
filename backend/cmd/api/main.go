@@ -48,7 +48,13 @@ func main() {
 		}
 	}()
 
-	router := newRouter(cfg, log, db, database.NewHealthChecker(db))
+	healthChecks, err := runtimeHealthChecks(cfg, db)
+	if err != nil {
+		log.Error("health checker setup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
+	router := newRouter(cfg, log, db, healthChecks...)
 	server := &http.Server{
 		Addr:         cfg.API.Addr,
 		Handler:      router,
@@ -89,6 +95,19 @@ func newRouter(cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ..
 		HealthChecks: healthChecks,
 		Database:     db,
 	})
+}
+
+func runtimeHealthChecks(cfg config.Config, db *gorm.DB) ([]health.DependencyChecker, error) {
+	minioChecker, err := health.NewMinIOChecker(cfg.Storage)
+	if err != nil {
+		return nil, err
+	}
+
+	return []health.DependencyChecker{
+		database.NewHealthChecker(db),
+		health.NewRedisChecker(cfg.Queue),
+		minioChecker,
+	}, nil
 }
 
 func openDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {

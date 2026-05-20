@@ -191,3 +191,53 @@ Documentation outputs:
 - Update `.env.example` only with placeholders, never real local credentials.
 - Update this deployment plan with actual P9 validation results and remaining operational notes.
 - Add or update a release runbook if one does not exist yet, including initialization admin flow, bucket/bootstrap notes, backup/restore notes, and cleanup commands.
+
+## P9 deployment validation result
+
+Validation date: 2026-05-20.
+
+Actual commands executed from the repository root unless noted:
+
+```bash
+cd backend && go test ./...
+cd backend && go test -race ./...
+cd backend && go vet ./...
+cd backend && go build ./cmd/api ./cmd/worker
+cd frontend && npm ci
+cd frontend && npm run lint
+cd frontend && npm run type-check
+cd frontend && npm run test
+cd frontend && npm run build
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs --tail=120 backend-api
+docker compose -f deploy/docker-compose.yml logs --tail=120 backend-worker
+docker compose -f deploy/docker-compose.yml logs --tail=120 frontend
+docker compose -f deploy/docker-compose.yml run --rm --no-deps minio-bootstrap
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+```
+
+Observed result:
+
+- Backend tests, race tests, vet, and API/Worker builds passed.
+- Frontend lint, type-check, tests, and build passed after installing dependencies with `npm ci`.
+- Compose config passed.
+- Compose image build passed for `backend-api`, `backend-worker`, and `frontend`.
+- `docker compose up -d` started the stack successfully.
+- `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, and `frontend` reached `healthy`.
+- `minio-bootstrap` exited with code `0` and created or verified `product-originals`, `product-generated`, and `product-thumbnails`.
+- Direct API health at `http://127.0.0.1:8081/healthz` returned `database`, `redis`, and `minio` as `ok`.
+- Frontend proxy health at `http://127.0.0.1:8080/api/v1/healthz` returned the same backend API health payload, proving `/api/` routes to `backend-api:8080`.
+- Frontend root and a deep SPA route both returned `200 text/html`; built JS and CSS assets returned `200` and were not swallowed by SPA fallback.
+- Runtime Nginx config showed only `/api/v1/events/` and `/api/` proxy locations, both targeting `backend-api:8080`; no OpenAI, Gemini, custom Provider, or AI relay proxy was present.
+- The SSE proxy location has `proxy_buffering off`, cache disabled, long read/send timeouts, and `X-Accel-Buffering: no`.
+- API and Worker both rejected placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` when run with `APP_ENV=production`.
+- Cleanup completed with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans`; follow-up checks showed no project containers or project volumes left behind.
+
+Operational notes:
+
+- `.env.example` contains placeholders only. Do not use it unchanged for staging or production.
+- The Compose stack now includes a repeatable one-shot `minio-bootstrap` service using `mc mb --ignore-existing` for required buckets.
+- Current Redis 7.4 logs can include a go-redis `maintnotifications` fallback warning. It did not affect health checks or Worker/API operation during validation.
