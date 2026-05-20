@@ -2232,14 +2232,14 @@ git diff --check
 - 已确认共享本地 `dev-mysql8`、`dev-redis`、`dev-minio` 服务健康可达；未创建项目专属开发环境。
 - 静态扫描只命中既有 P8 迁移遗留：浏览器 Provider adapter 与本地设置存储。P7 未新增 Provider direct fetch、API Key persistence 或任务轮询路径。
 
-### R7 非阻塞遗留
+### R7 非阻塞遗留 after R9
 
-- P8 必须移除或隔离旧前端 Provider 直连、localStorage API Key 和 IndexedDB 本地历史主路径。
-- Worker 仍是单 processing loop，尚未把 `WORKER_CONCURRENCY` 实现为 worker pool。
-- API Redis event subscription 仍使用 background context，后续应绑定 server shutdown 生命周期。
+- 已在 P8/P9 处理：旧前端 Provider 直连、localStorage API Key、IndexedDB 本地历史主路径和 unreachable legacy display/storage helpers 已从生产路径移除或隔离。
+- P10 继续处理：Worker 仍是单 processing loop，尚未把 `WORKER_CONCURRENCY` 实现为 worker pool。
+- P10 后续处理：API Redis event subscription 仍使用 background context，后续应绑定 server shutdown 生命周期。
 - 当前 runtime 对已知 Provider API Key 已覆盖 value/key 两类脱敏；未知且不命中启发式规则的 secret 仍无法自动识别。
 - 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
-- Provider soft delete 后的 linked-model 行为仍需在 P8/P9 前确定。
+- P10 后续处理：Provider soft delete 后的 linked-model 行为仍需确定。
 
 ## 第八批串行开发
 
@@ -2755,7 +2755,7 @@ R8 residual scan classification:
 | Task polling (`setInterval` / `setTimeout`) | No production hits | Resolved in P8 |
 | Backend Provider management API | `frontend/src/api/providers.ts`, `ProviderModelAdminPanel.tsx` | Allowed; talks only to `/api/v1/providers` backend endpoints |
 | Prompt template IndexedDB | `PromptEditor` -> `promptTemplateRepository` | Allowed non-sensitive local UX data |
-| Legacy display / old DB helpers | `LegacyHistoryPanel`, legacy branches in `ResultCanvas` / `ImageDetailModal`, old local history/image helpers, `useStorageUsage` | Non-blocking P9 cleanup candidate; must remain outside production workbench path |
+| Legacy display / old DB helpers | `LegacyHistoryPanel`, legacy branches in `ResultCanvas` / `ImageDetailModal`, old local history/image helpers, `useStorageUsage` | Resolved in P9 security regression; deleted or protected by static regression coverage |
 
 ### 允许修改文件
 
@@ -2830,7 +2830,7 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - completed and merged. Implemented only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
 4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - completed and merged. Added frontend admin views for usage/logs/settings using only merged backend contracts.
 5. `P9-SECURITY-REGRESSION` - completed and merged. Added targeted security regression tests and residual legacy helper cleanup.
-6. `P9-DEPLOY-RELEASE-VALIDATION` - next, serial. Run Compose build/up/healthcheck and update deployment/release docs.
+6. `P9-DEPLOY-RELEASE-VALIDATION` - completed, reviewed, and merged. Compose build/up/healthcheck passed, release docs/runbook were updated, and the project Compose stack was cleaned up.
 
 First batch completed: `P9-BE-AUDIT-USAGE-READS` merged after review-driven redaction fixes.
 
@@ -2847,7 +2847,11 @@ Fourth batch completed: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` merged after review
 
 Fifth batch completed: `P9-SECURITY-REGRESSION` merged after review. The accepted changes added targeted SSRF, redaction, tenant/object authorization, upload validation, SSE replay, task permission, production frontend static-safety tests, and deleted unreachable legacy history display/storage helpers.
 
-Sixth batch decision: `P9-DEPLOY-RELEASE-VALIDATION` starts from latest `main` and remains serial. This is the deployment-specific exception to the shared-local-services rule: the child agent may start the project Compose stack to validate release topology, but must clean it up afterwards unless the user explicitly asks to keep it. This task should not add product features or change API contracts.
+Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This was the deployment-specific exception to the shared-local-services rule: the child agent validated the project Compose stack and cleaned it up afterwards. No product feature or API contract changes were introduced.
+
+R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
+
+P10 starts serially after R9. The first task is `P10-BE-WORKER-POOL`; do not start SSE bridge lifecycle, Provider/model lifecycle, frontend admin hardening, or history query work in parallel.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3685,6 +3689,7 @@ P10-BE-WORKER-POOL - 让 Worker 并发配置成为真实处理池
 ### 前置依赖
 
 - `P9-DEPLOY-RELEASE-VALIDATION` completed, reviewed, and merged into `main`.
+- `R9` completed with no blocking findings, and P10 is cleared to start from latest `main`.
 - Existing Worker reliable queue, Provider runtime execution, MinIO output persistence, usage/API call logs, and SSE wakeup paths are already merged.
 - Current known carry-forward risk: Worker process still runs one processing loop even though operator-facing concurrency settings exist.
 

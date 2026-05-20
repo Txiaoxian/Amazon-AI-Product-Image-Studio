@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current transition risks after R8
+## Current transition risks after R9
 
-The current `main` branch has completed and passed R8 verification for the P8 frontend backendization work. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the P8 transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed and passed R9 verification after P9 usage/audit/settings/security/deployment work. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Status after P8 | Acceptance check |
 | --- | --- | --- | --- |
@@ -11,12 +11,12 @@ The current `main` branch has completed and passed R8 verification for the P8 fr
 | Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
 | Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
-Remaining P9 review risks:
+Remaining post-R9 security and hardening risks:
 
-- Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 - Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is now the only active writable slice and is backed by asset validation; default Provider/model IDs, tenant concurrency, storage quotas, and retention remain deferred until their task/worker/quota/cleanup consumers are explicit.
+- Admin API-call detail display should add stale-response protection during P10 admin UI hardening.
 
 Resolved transition item:
 
@@ -34,6 +34,7 @@ Resolved transition item:
 - P9 runtime settings now expose only tenant upload policy and enforce it in backend asset upload validation. Deferred settings are absent from responses and rejected on writes until their runtime consumers exist.
 - P9 frontend admin observability/settings UI now consumes only backend admin contracts, gates sections by `usage:read`, `audit:read`, and `system:settings:manage`, keeps lists paginated, PATCHes settings with CSRF through the shared API client, and does not persist Provider keys, auth tokens, log metadata, or system settings payloads in browser storage.
 - P9 security regression added targeted tests for SSRF, redaction, tenant/object authorization, upload validation, task/SSE replay visibility, production secret guards, frontend production import safety, and deleted the unreachable legacy history display/storage helpers identified during P8/R8.
+- R9 verified the full P9 code range with frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config/build/up/health, API health, frontend static route, and Compose cleanup. R9 found no blocking security issues.
 
 P5 review hardening backlog:
 
@@ -45,7 +46,6 @@ P5 review hardening backlog:
 P4 review hardening backlog:
 
 - Frontend CSRF header handling currently uses the default `X-CSRF-Token`; non-default `CSRF_HEADER_NAME` deployments need an explicit frontend config/source of truth before use.
-- Audit metadata redaction currently covers auth usage but should be recursive before Provider, asset, and task modules write nested metadata.
 
 ## Authentication
 
@@ -91,7 +91,7 @@ Current P6 Provider backend status:
 - Provider API key encryption, masked responses, rotation metadata, backend-only Provider test, and recursive operation-log metadata redaction are implemented.
 - Provider test does not create tasks, assets, or usage records.
 - Frontend Provider/model management is implemented and does not persist Provider API keys or create Provider direct browser calls.
-- Full production startup hardening must still reject default placeholder `API_KEY_ENCRYPTION_KEY` before release.
+- P9 production startup hardening rejects default placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup in production.
 
 ## Sensitive logging policy
 
@@ -164,12 +164,12 @@ P8 migration security requirements:
 - Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
 - Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
 
-Current R8 frontend security status:
+Current R9 frontend security status:
 
 - Production workbench generation/edit flows create backend tasks and use SSE for status.
-- Static scan after `P8-FE-LEGACY-RETIREMENT` found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
+- Static scans through R9 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
 - Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production residual helpers until P9 cleanup.
+- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths.
 
 ## Upload defense
 

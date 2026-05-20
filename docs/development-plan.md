@@ -9,7 +9,7 @@ Development and feature verification must use the existing global local environm
 - If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
 - Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
 
-## Status after R7
+## Status after R9
 
 Completed:
 
@@ -36,17 +36,23 @@ Completed:
   - encrypted Provider credentials, SSRF-safe Provider management/testing, model capability APIs, and frontend admin management UI.
 - P7 task, queue, runtime, and SSE foundation:
   - task APIs, SSE replay, Redis queueing, Worker execution, backend Provider Adapter runtime, generated/edited assets, usage/API call logs, and frontend task/SSE contract layer.
+- P8 frontend backendization:
+  - production workbench generation/edit flow now uses backend task creation, SSE, backend model capabilities, project asset IDs, and backend output assets.
+  - browser Provider adapters, normal-user Provider key/API URL settings, and IndexedDB-backed production history/image paths were removed or retired from the production import graph.
+- P9 usage, audit, settings, security regression, and release validation:
+  - admin usage/audit read APIs, production placeholder secret guards, runtime-backed upload policy settings, frontend admin observability/settings UI, security regression coverage, and Docker Compose release validation are merged.
 
 Current review result:
 
-- Frontend and backend local test/build commands pass.
-- `docker compose -f deploy/docker-compose.yml config` passes.
-- P4 through P7 have completed and passed their merge reviews. The next migration step is P8 frontend backendization.
-- The app is still in transition state. Old local frontend AI calls, localStorage Provider API keys, and IndexedDB image Blob storage remain as migration baselines only and must be removed in P8.
-- Non-blocking P4 hardening backlog:
-  - Reject default JWT signing secret when `APP_ENV=production`.
-  - Align frontend CSRF header usage with configurable backend `CSRF_HEADER_NAME` before allowing non-default deployments.
-  - Make audit metadata redaction recursive before broader modules start writing complex metadata.
+- R9 completed with no blocking findings. P9 can close and P10 can start.
+- Frontend validation passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`.
+- Backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
+- Docker Compose validation passed: config, build, up, health checks, API health, frontend static route, and cleanup with `down -v --remove-orphans`.
+- Remaining non-blocking R9 items:
+  - `AdminObservabilitySettingsPanel` has a stale-detail response risk and should be guarded when admin UI hardening is scheduled.
+  - `AdminObservabilitySettingsPanel` is large enough to split in a later maintenance task.
+  - Redis health checker client lifecycle should get explicit ownership if health dependencies become dynamically reloadable.
+- The next phase is P10 runtime hardening. Start serially with `P10-BE-WORKER-POOL`.
 
 ## P3: Runtime deployment repair
 
@@ -251,8 +257,8 @@ P6 backend Provider result:
 
 P6 Provider non-blocking backlog:
 
-- Before P7 real Provider Adapter execution, add an SSRF-safe HTTP transport or `DialContext` so the actual outbound dial re-checks resolved IPs and avoids DNS rebinding between validation and connection.
-- Before production release, reject default placeholder `API_KEY_ENCRYPTION_KEY` at startup alongside other production secret checks.
+- Completed in P7: real Provider Adapter execution uses SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
+- Completed in P9: production startup rejects default placeholder `API_KEY_ENCRYPTION_KEY` alongside other production secret checks.
 
 P6 backend model requirements:
 
@@ -330,9 +336,9 @@ P6 residual risks and carry-forward items:
 
 - P7 real Provider Adapter execution added SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
 - R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the current runtime path; a later management/data-integrity decision may still tighten it.
-- P8/P9 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
-- Production startup hardening must reject default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
-- Legacy frontend generation still uses browser Provider adapters, localStorage Provider API keys, and IndexedDB history as migration baseline. These remain P8 removal targets, not acceptable platform behavior.
+- P10 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- P9 production startup hardening rejects default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
+- P8 removed browser Provider adapters, localStorage Provider API keys, and IndexedDB history/image production paths.
 - `ProviderModelAdminPanel` is large and should be split during later frontend maintenance, but this is not a security or merge blocker.
 
 ## P7: Task queue, worker, Provider Adapter, and SSE
@@ -409,14 +415,14 @@ P7 R7 review result:
 - Docker Compose config validation passed, and shared `dev-mysql8`, `dev-redis`, and `dev-minio` services were confirmed healthy/reachable for local verification.
 - Static scans found only the already-documented P8 migration leftovers: legacy browser Provider adapters and local settings persistence. P7 added no new direct Provider fetch, Provider key persistence, or polling path.
 
-P7 residual risks and carry-forward items:
+P7 residual risks and carry-forward items after R9:
 
-- P8 must remove or isolate the legacy browser Provider adapters, localStorage Provider API key persistence, and IndexedDB-backed local history from production generation paths.
-- Worker still runs a single processing loop instead of honoring `WORKER_CONCURRENCY` as a worker pool.
-- API Redis event subscription lifecycle still uses a background context and should later be tied to API server shutdown.
+- Completed in P8/P9: legacy browser Provider adapters, localStorage Provider API key persistence, IndexedDB-backed production history, and unreachable legacy display/storage helpers were removed or isolated from production paths.
+- Open for P10: Worker still runs a single processing loop instead of honoring `WORKER_CONCURRENCY` as a worker pool.
+- Open for P10: API Redis event subscription lifecycle still uses a background context and should later be tied to API server shutdown.
 - Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
 - Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
-- Provider soft-delete behavior for linked models remains unresolved and should be decided before broader P8/P9 lifecycle UX depends on it.
+- Open for P10: Provider soft-delete behavior for linked models remains unresolved.
 
 ## P8: Frontend backendization
 
@@ -456,8 +462,8 @@ P8 current result:
 - Backend task history, authorized asset download, backend result detail, and backend asset re-editing are now the default production history path.
 - Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
 - Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
-- IndexedDB is no longer the production source for generated images or history. Prompt templates and old local DB helper files may still exist as residual non-production code or test scaffolding, but they must not be reintroduced into the main workbench path or silently uploaded into tenant storage.
-- Remaining P9 follow-ups: generic HTTP `422` handling is still broader than a future stale-model-specific error contract; frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; unreachable legacy display/DB helper code should be deleted or quarantined during hardening.
+- IndexedDB is no longer the production source for generated images or history. Prompt templates may still exist as non-sensitive local convenience data, but they must not be reintroduced into the main workbench history/image path or silently uploaded into tenant storage.
+- Remaining post-R9 follow-ups: frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; admin API-call detail UI needs stale-response protection; large admin observability/settings components should be split during hardening.
 
 R8 verification result:
 
@@ -466,7 +472,7 @@ R8 verification result:
 - Docker Compose config validation passed with `docker compose -f deploy/docker-compose.yml config`.
 - Sensitive frontend static scan for `localStorage`, `sessionStorage`, `indexedDB`, Provider `Authorization`, direct Provider hosts, `setInterval`, and `setTimeout` returned no production-code hits.
 - Provider import static scan found only backend Provider management API paths: `frontend/src/api/providers.ts` and `frontend/src/components/admin/ProviderModelAdminPanel.tsx`. These are allowed backend admin API consumers, not browser AI Provider calls.
-- `frontend/src/providers/` no longer exists. A separate residual scan still finds unreachable legacy display/DB helper code (`LegacyHistoryPanel`, legacy result rendering branches, old local history/image helpers, `useStorageUsage`), but these are outside the production workbench import graph and are P9 cleanup candidates, not P8 blockers.
+- `frontend/src/providers/` no longer exists. P9 security regression deleted the R8-identified unreachable legacy display/storage helpers and added static regression coverage so they cannot re-enter the production path silently.
 
 P8 serial policy:
 
@@ -529,11 +535,11 @@ P9 carry-forward risks:
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: planned. P10 starts after P9 release validation has been merged. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+Status: ready to start after R9. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
 
 P10 priorities:
 
-1. `P10-BE-WORKER-POOL`: next. Make configured Worker concurrency real by running multiple task-processing loops under one Worker process while preserving MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits.
+1. `P10-BE-WORKER-POOL`: first task. Make configured Worker concurrency real by running multiple task-processing loops under one Worker process while preserving MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits.
 2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: later. Tie the API Redis task-event subscriber lifecycle to API server shutdown instead of a background context, without changing SSE replay semantics.
 3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: later. Decide and implement Provider soft-delete behavior for linked models, such as block deletion, hide linked models, or cascade-disable linked models.
 4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: later. Split the large admin observability/settings UI if needed and add stale-request protection for API call log details.
