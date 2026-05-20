@@ -10,6 +10,8 @@ import (
 	"net"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -663,6 +665,238 @@ func TestWorkerDeadLetterMarksTaskFailed(t *testing.T) {
 	assertWorkerEvents(t, db, taskID, []string{EventTaskFailed})
 }
 
+func TestWorkerRunProcessesConfiguredPoolConcurrently(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskA := seedWorkerTask(t, db, workerTaskSeed{ID: "task-pool-a", Status: StatusQueued})
+	taskB := seedWorkerTask(t, db, workerTaskSeed{ID: "task-pool-b", Status: StatusQueued})
+
+	bothStarted := make(chan struct{})
+	releaseExecutor := make(chan struct{})
+	var startedOnce sync.Once
+	var started int32
+	var active int32
+	var maxActive int32
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			current := atomic.AddInt32(&active, 1)
+			recordMaxActive(&maxActive, current)
+			if atomic.AddInt32(&started, 1) == 2 {
+				startedOnce.Do(func() {
+					close(bothStarted)
+				})
+			}
+			select {
+			case <-releaseExecutor:
+			case <-ctx.Done():
+			}
+			atomic.AddInt32(&active, -1)
+			return ExecutionResult{}
+		}),
+	})
+	taskQueue := newClaimListQueue([]queue.TaskClaim{
+		{TaskID: taskA, DeliveryCount: 1},
+		{TaskID: taskB, DeliveryCount: 1},
+	}, 2)
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      2,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, bothStarted, time.Second, "two executor calls to overlap")
+	if got := atomic.LoadInt32(&maxActive); got < 2 {
+		t.Fatalf("max active executor calls = %d, want at least 2", got)
+	}
+
+	close(releaseExecutor)
+	waitForTestSignal(t, taskQueue.ackDone, time.Second, "both claims to be acked")
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+}
+
+func TestWorkerRunRespectsGlobalLimiterBelowPoolSize(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskA := seedWorkerTask(t, db, workerTaskSeed{ID: "task-global-limit-a", Status: StatusQueued})
+	taskB := seedWorkerTask(t, db, workerTaskSeed{ID: "task-global-limit-b", Status: StatusQueued})
+
+	executorStarted := make(chan struct{})
+	releaseExecutor := make(chan struct{})
+	var executorOnce sync.Once
+	limiter := newActiveLimitLimiter("global", 1)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter:             limiter,
+		GlobalConcurrency:   1,
+		TenantConcurrency:   10,
+		UserConcurrency:     10,
+		ProviderConcurrency: 10,
+		ModelConcurrency:    10,
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			executorOnce.Do(func() {
+				close(executorStarted)
+			})
+			select {
+			case <-releaseExecutor:
+			case <-ctx.Done():
+			}
+			return ExecutionResult{}
+		}),
+	})
+	taskQueue := newClaimListQueue([]queue.TaskClaim{
+		{TaskID: taskA, DeliveryCount: 1},
+		{TaskID: taskB, DeliveryCount: 1},
+	}, 1)
+	taskQueue.retryTarget = 1
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      2,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, executorStarted, time.Second, "one task to enter executor")
+	waitForTestSignal(t, taskQueue.retryDone, time.Second, "concurrency-limited claim to be retried")
+	if got := limiter.maxActive(); got != 1 {
+		t.Fatalf("max active executions = %d, want 1", got)
+	}
+
+	close(releaseExecutor)
+	waitForTestSignal(t, taskQueue.ackDone, time.Second, "running claim to be acked")
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+
+	taskARecord := loadWorkerTask(t, db, taskA)
+	taskBRecord := loadWorkerTask(t, db, taskB)
+	statuses := []string{taskARecord.Status, taskBRecord.Status}
+	if !(containsStatus(statuses, StatusSucceeded) && containsStatus(statuses, StatusQueued)) {
+		t.Fatalf("task statuses = %#v, want one SUCCEEDED and one QUEUED after retry", statuses)
+	}
+}
+
+func TestWorkerRunKeepsRecoverySingleOwner(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{})
+	taskQueue := newSingleRecoveryQueue()
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      5,
+		RecoveryInterval: time.Millisecond,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, taskQueue.recoveryEntered, time.Second, "recovery loop to run")
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&taskQueue.promoteCalls); got != 1 {
+		t.Fatalf("PromoteDue calls = %d, want 1 while first recovery is blocked", got)
+	}
+	if got := atomic.LoadInt32(&taskQueue.recoverCalls); got != 1 {
+		t.Fatalf("RecoverStale calls = %d, want 1 while first recovery is blocked", got)
+	}
+
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+}
+
+func TestWorkerRunShutdownCancelsAllProcessingLoops(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{})
+	taskQueue := newBlockingClaimQueue(3)
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      3,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, taskQueue.allStarted, time.Second, "all processing loops to enter Claim")
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+	if got := atomic.LoadInt32(&taskQueue.canceledClaims); got != 3 {
+		t.Fatalf("canceled Claim calls = %d, want 3", got)
+	}
+}
+
+func TestWorkerRunParallelDuplicateDeliveryDoesNotDuplicatePersistence(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-parallel-duplicate", Status: StatusQueued})
+
+	executorStarted := make(chan struct{})
+	releaseExecutor := make(chan struct{})
+	var executorOnce sync.Once
+	statusOK := provideradapter.APICallStatusSuccess
+	pngData := workerTinyPNG(t)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store: newMemoryObjectStore(),
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			executorOnce.Do(func() {
+				close(executorStarted)
+			})
+			select {
+			case <-releaseExecutor:
+			case <-ctx.Done():
+			}
+			httpStatus := 200
+			return ExecutionResult{
+				Outputs: []GeneratedImageOutput{{
+					Data:     pngData,
+					MIMEType: "image/png",
+					Metadata: map[string]any{
+						"providerOutputIndex": 0,
+					},
+				}},
+				Usage: UsageResult{
+					InputTokens:  11,
+					OutputTokens: 7,
+					ImageCount:   1,
+					Raw:          map[string]any{"source": "worker-pool-test"},
+				},
+				APICall: APICallResult{
+					Status:     statusOK,
+					DurationMs: 42,
+					RequestID:  "request-worker-pool",
+					HTTPStatus: &httpStatus,
+					RequestMetadata: map[string]any{
+						"task": taskID,
+					},
+				},
+			}
+		}),
+	})
+	taskQueue := newDuplicateDeliveryQueue(taskID, executorStarted)
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      2,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, executorStarted, time.Second, "first delivery to enter executor")
+	waitForTestSignal(t, taskQueue.duplicateClaimed, time.Second, "duplicate delivery to be claimed while first runs")
+	close(releaseExecutor)
+	waitForTestSignal(t, taskQueue.ackDone, time.Second, "both duplicate claims to be acked")
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+
+	assertTableCount(t, db, &database.ImageAsset{}, 1)
+	assertTableCount(t, db, &database.TaskOutput{}, 1)
+	assertTableCount(t, db, &database.UsageRecord{}, 1)
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventImageOutput, EventUsageRecorded, EventTaskCompleted})
+}
+
 type executorFunc func(context.Context, ExecutionContext) ExecutionResult
 
 func (f executorFunc) Execute(ctx context.Context, execution ExecutionContext) ExecutionResult {
@@ -702,6 +936,57 @@ func (l *recordingLimiter) ReapStale(context.Context, time.Time) error {
 	return nil
 }
 
+type activeLimitLimiter struct {
+	mu        sync.Mutex
+	dimension string
+	limit     int
+	active    int
+	max       int
+}
+
+func newActiveLimitLimiter(dimension string, limit int) *activeLimitLimiter {
+	return &activeLimitLimiter{dimension: dimension, limit: limit}
+}
+
+func (l *activeLimitLimiter) Acquire(_ context.Context, dimensions []queue.ConcurrencyDimension, _ time.Duration, now time.Time) (queue.ConcurrencyLease, error) {
+	limit := l.limit
+	for _, dimension := range dimensions {
+		if dimension.Name == l.dimension {
+			limit = dimension.Limit
+			break
+		}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.active >= limit {
+		return queue.ConcurrencyLease{}, queue.ErrConcurrencyLimited
+	}
+	l.active++
+	if l.active > l.max {
+		l.max = l.active
+	}
+	return queue.ConcurrencyLease{ID: "active-limit", ExpiresAt: now.Add(time.Minute), Keys: []string{l.dimension}}, nil
+}
+
+func (l *activeLimitLimiter) Release(context.Context, queue.ConcurrencyLease) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.active > 0 {
+		l.active--
+	}
+	return nil
+}
+
+func (l *activeLimitLimiter) ReapStale(context.Context, time.Time) error {
+	return nil
+}
+
+func (l *activeLimitLimiter) maxActive() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.max
+}
+
 type recordingReliableQueue struct {
 	promoted  bool
 	recovered bool
@@ -735,6 +1020,292 @@ func (q *recordingReliableQueue) RecoverStale(context.Context, time.Time, int) (
 func (q *recordingReliableQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	q.promoted = true
 	return nil, nil
+}
+
+type claimListQueue struct {
+	mu          sync.Mutex
+	claims      []queue.TaskClaim
+	acked       []string
+	retried     []string
+	ackTarget   int
+	retryTarget int
+	ackDone     chan struct{}
+	retryDone   chan struct{}
+	ackOnce     sync.Once
+	retryOnce   sync.Once
+}
+
+func newClaimListQueue(claims []queue.TaskClaim, ackTarget int) *claimListQueue {
+	return &claimListQueue{
+		claims:    append([]queue.TaskClaim(nil), claims...),
+		ackTarget: ackTarget,
+		ackDone:   make(chan struct{}),
+		retryDone: make(chan struct{}),
+	}
+}
+
+func (q *claimListQueue) EnqueueTask(context.Context, string) error {
+	return nil
+}
+
+func (q *claimListQueue) Claim(ctx context.Context) (queue.TaskClaim, error) {
+	q.mu.Lock()
+	if len(q.claims) > 0 {
+		claim := q.claims[0]
+		q.claims = q.claims[1:]
+		q.mu.Unlock()
+		return claim, nil
+	}
+	q.mu.Unlock()
+	<-ctx.Done()
+	return queue.TaskClaim{}, ctx.Err()
+}
+
+func (q *claimListQueue) Ack(_ context.Context, claim queue.TaskClaim) error {
+	q.mu.Lock()
+	q.acked = append(q.acked, claim.TaskID)
+	done := q.ackTarget > 0 && len(q.acked) >= q.ackTarget
+	q.mu.Unlock()
+	if done {
+		q.ackOnce.Do(func() {
+			close(q.ackDone)
+		})
+	}
+	return nil
+}
+
+func (q *claimListQueue) Retry(_ context.Context, claim queue.TaskClaim, _ time.Duration) error {
+	q.mu.Lock()
+	q.retried = append(q.retried, claim.TaskID)
+	done := q.retryTarget > 0 && len(q.retried) >= q.retryTarget
+	q.mu.Unlock()
+	if done {
+		q.retryOnce.Do(func() {
+			close(q.retryDone)
+		})
+	}
+	return nil
+}
+
+func (q *claimListQueue) DeadLetter(context.Context, queue.TaskClaim, string) error {
+	return nil
+}
+
+func (q *claimListQueue) RecoverStale(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+func (q *claimListQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+type singleRecoveryQueue struct {
+	recoveryEntered chan struct{}
+	recoveryOnce    sync.Once
+	promoteCalls    int32
+	recoverCalls    int32
+}
+
+func newSingleRecoveryQueue() *singleRecoveryQueue {
+	return &singleRecoveryQueue{recoveryEntered: make(chan struct{})}
+}
+
+func (q *singleRecoveryQueue) EnqueueTask(context.Context, string) error {
+	return nil
+}
+
+func (q *singleRecoveryQueue) Claim(ctx context.Context) (queue.TaskClaim, error) {
+	<-ctx.Done()
+	return queue.TaskClaim{}, ctx.Err()
+}
+
+func (q *singleRecoveryQueue) Ack(context.Context, queue.TaskClaim) error {
+	return nil
+}
+
+func (q *singleRecoveryQueue) Retry(context.Context, queue.TaskClaim, time.Duration) error {
+	return nil
+}
+
+func (q *singleRecoveryQueue) DeadLetter(context.Context, queue.TaskClaim, string) error {
+	return nil
+}
+
+func (q *singleRecoveryQueue) RecoverStale(ctx context.Context, _ time.Time, _ int) ([]string, error) {
+	atomic.AddInt32(&q.recoverCalls, 1)
+	q.recoveryOnce.Do(func() {
+		close(q.recoveryEntered)
+	})
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (q *singleRecoveryQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
+	atomic.AddInt32(&q.promoteCalls, 1)
+	return nil, nil
+}
+
+type blockingClaimQueue struct {
+	target         int32
+	startedClaims  int32
+	canceledClaims int32
+	allStarted     chan struct{}
+	startedOnce    sync.Once
+}
+
+func newBlockingClaimQueue(target int) *blockingClaimQueue {
+	return &blockingClaimQueue{target: int32(target), allStarted: make(chan struct{})}
+}
+
+func (q *blockingClaimQueue) EnqueueTask(context.Context, string) error {
+	return nil
+}
+
+func (q *blockingClaimQueue) Claim(ctx context.Context) (queue.TaskClaim, error) {
+	if atomic.AddInt32(&q.startedClaims, 1) == q.target {
+		q.startedOnce.Do(func() {
+			close(q.allStarted)
+		})
+	}
+	<-ctx.Done()
+	atomic.AddInt32(&q.canceledClaims, 1)
+	return queue.TaskClaim{}, ctx.Err()
+}
+
+func (q *blockingClaimQueue) Ack(context.Context, queue.TaskClaim) error {
+	return nil
+}
+
+func (q *blockingClaimQueue) Retry(context.Context, queue.TaskClaim, time.Duration) error {
+	return nil
+}
+
+func (q *blockingClaimQueue) DeadLetter(context.Context, queue.TaskClaim, string) error {
+	return nil
+}
+
+func (q *blockingClaimQueue) RecoverStale(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+func (q *blockingClaimQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+type duplicateDeliveryQueue struct {
+	taskID           string
+	allowDuplicate   <-chan struct{}
+	duplicateClaimed chan struct{}
+	ackDone          chan struct{}
+	duplicateOnce    sync.Once
+	ackOnce          sync.Once
+	claimCount       int32
+	ackCount         int32
+}
+
+func newDuplicateDeliveryQueue(taskID string, allowDuplicate <-chan struct{}) *duplicateDeliveryQueue {
+	return &duplicateDeliveryQueue{
+		taskID:           taskID,
+		allowDuplicate:   allowDuplicate,
+		duplicateClaimed: make(chan struct{}),
+		ackDone:          make(chan struct{}),
+	}
+}
+
+func (q *duplicateDeliveryQueue) EnqueueTask(context.Context, string) error {
+	return nil
+}
+
+func (q *duplicateDeliveryQueue) Claim(ctx context.Context) (queue.TaskClaim, error) {
+	switch atomic.AddInt32(&q.claimCount, 1) {
+	case 1:
+		return queue.TaskClaim{TaskID: q.taskID, DeliveryCount: 1}, nil
+	case 2:
+		select {
+		case <-q.allowDuplicate:
+		case <-ctx.Done():
+			return queue.TaskClaim{}, ctx.Err()
+		}
+		q.duplicateOnce.Do(func() {
+			close(q.duplicateClaimed)
+		})
+		return queue.TaskClaim{TaskID: q.taskID, DeliveryCount: 2}, nil
+	default:
+		<-ctx.Done()
+		return queue.TaskClaim{}, ctx.Err()
+	}
+}
+
+func (q *duplicateDeliveryQueue) Ack(context.Context, queue.TaskClaim) error {
+	if atomic.AddInt32(&q.ackCount, 1) == 2 {
+		q.ackOnce.Do(func() {
+			close(q.ackDone)
+		})
+	}
+	return nil
+}
+
+func (q *duplicateDeliveryQueue) Retry(context.Context, queue.TaskClaim, time.Duration) error {
+	return nil
+}
+
+func (q *duplicateDeliveryQueue) DeadLetter(context.Context, queue.TaskClaim, string) error {
+	return nil
+}
+
+func (q *duplicateDeliveryQueue) RecoverStale(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+func (q *duplicateDeliveryQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+func runWorkerForTest(worker *Worker, ctx context.Context) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- worker.Run(ctx)
+	}()
+	return errCh
+}
+
+func assertWorkerRunCanceled(t *testing.T, errCh <-chan error) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Worker.Run error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Worker.Run did not stop after context cancellation")
+	}
+}
+
+func waitForTestSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration, description string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+func recordMaxActive(maxActive *int32, current int32) {
+	for {
+		previous := atomic.LoadInt32(maxActive)
+		if current <= previous || atomic.CompareAndSwapInt32(maxActive, previous, current) {
+			return
+		}
+	}
+}
+
+func containsStatus(statuses []string, target string) bool {
+	for _, status := range statuses {
+		if status == target {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeProviderRuntime func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error)

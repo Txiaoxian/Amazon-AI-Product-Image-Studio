@@ -88,6 +88,7 @@ func main() {
 		RetryBackoff:     cfg.Queue.RetryBackoff,
 		RecoveryInterval: cfg.Queue.RecoveryInterval,
 		RecoveryBatch:    100,
+		Concurrency:      cfg.Worker.Concurrency,
 	})
 
 	healthcheckFile := workerHealthcheckFile()
@@ -103,7 +104,7 @@ func main() {
 	}
 	defer cleanupReadyFile()
 
-	log.Info("worker starting", slog.String("name", cfg.Worker.Name))
+	log.Info("worker starting", slog.String("name", cfg.Worker.Name), slog.Int("concurrency", cfg.Worker.Concurrency))
 	log.Info("worker healthy", slog.String("name", cfg.Worker.Name), slog.String("healthcheck_file", healthcheckFile))
 
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

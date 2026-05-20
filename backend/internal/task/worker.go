@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
@@ -26,6 +27,8 @@ const (
 	claimActionNone
 
 	defaultRecoveryBatchSize = 100
+	defaultWorkerConcurrency = 1
+	maxWorkerConcurrency     = 256
 )
 
 type claimAction int
@@ -41,6 +44,7 @@ type WorkerOptions struct {
 	RetryBackoff     time.Duration
 	RecoveryInterval time.Duration
 	RecoveryBatch    int
+	Concurrency      int
 }
 
 type WorkerProcessorOptions struct {
@@ -124,6 +128,12 @@ func NewWorker(taskQueue queue.ReliableTaskQueue, processor *WorkerProcessor, lo
 	if options.RecoveryBatch <= 0 {
 		options.RecoveryBatch = defaultRecoveryBatchSize
 	}
+	if options.Concurrency <= 0 {
+		options.Concurrency = defaultWorkerConcurrency
+	}
+	if options.Concurrency > maxWorkerConcurrency {
+		options.Concurrency = maxWorkerConcurrency
+	}
 	return &Worker{queue: taskQueue, processor: processor, log: log, options: options}
 }
 
@@ -187,6 +197,62 @@ func (w *Worker) Run(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	loopCount := w.options.Concurrency
+	workerCount := loopCount + 1
+	errCh := make(chan error, workerCount)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- w.runRecoveryLoop(runCtx)
+	}()
+
+	for loopID := 1; loopID <= loopCount; loopID++ {
+		loopID := loopID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- w.runProcessingLoop(runCtx, loopID)
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	var runErr error
+	for remaining := workerCount; remaining > 0; remaining-- {
+		select {
+		case err := <-errCh:
+			if err != nil && runErr == nil {
+				runErr = err
+			}
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				cancel()
+				<-done
+				return err
+			}
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		}
+	}
+
+	<-done
+	if runErr != nil {
+		return runErr
+	}
+	return ctx.Err()
+}
+
+func (w *Worker) runRecoveryLoop(ctx context.Context) error {
 	recoveryTicker := time.NewTicker(w.options.RecoveryInterval)
 	defer recoveryTicker.Stop()
 
@@ -196,18 +262,27 @@ func (w *Worker) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-recoveryTicker.C:
 			if err := w.processor.Recover(ctx, w.queue, w.options.RecoveryBatch); err != nil && !errors.Is(err, context.Canceled) {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				w.log.Warn("worker recovery failed", slog.String("error", err.Error()))
 			}
-		default:
 		}
+	}
+}
 
+func (w *Worker) runProcessingLoop(ctx context.Context, loopID int) error {
+	for {
 		claim, err := w.queue.Claim(ctx)
 		if errors.Is(err, queue.ErrNoTask) {
 			continue
 		}
 		if errors.Is(err, queue.ErrDeadLettered) {
 			if markErr := w.processor.MarkDeadLettered(ctx, claim.TaskID); markErr != nil {
-				w.log.Warn("dead-letter task mark failed", slog.String("task_id", claim.TaskID), slog.String("error", markErr.Error()))
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				w.log.Warn("dead-letter task mark failed", slog.Int("worker_loop", loopID), slog.String("task_id", claim.TaskID), slog.String("error", markErr.Error()))
 			}
 			continue
 		}
@@ -215,17 +290,23 @@ func (w *Worker) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			w.log.Warn("task claim failed", slog.String("error", err.Error()))
+			w.log.Warn("task claim failed", slog.Int("worker_loop", loopID), slog.String("error", err.Error()))
 			continue
 		}
 
 		result, err := w.processor.Process(ctx, claim)
 		if err != nil {
-			w.log.Warn("task processing failed", slog.String("task_id", claim.TaskID), slog.String("error", err.Error()))
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			w.log.Warn("task processing failed", slog.Int("worker_loop", loopID), slog.String("task_id", claim.TaskID), slog.String("error", err.Error()))
 			result = ProcessResult{Action: claimActionRetry, RetryDelay: w.options.RetryBackoff}
 		}
 		if err := w.applyResult(ctx, claim, result); err != nil {
-			w.log.Warn("task claim finalization failed", slog.String("task_id", claim.TaskID), slog.String("error", err.Error()))
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			w.log.Warn("task claim finalization failed", slog.Int("worker_loop", loopID), slog.String("task_id", claim.TaskID), slog.String("error", err.Error()))
 		}
 	}
 }
