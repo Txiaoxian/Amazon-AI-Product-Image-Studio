@@ -13,7 +13,6 @@ The current `main` branch has completed and passed R8 verification for the P8 fr
 
 Remaining P9 review risks:
 
-- Unreachable legacy display components and old IndexedDB helper files may still exist. They must remain outside the production import graph and should be deleted or explicitly quarantined in P9.
 - Generic frontend `422` handling currently treats validation errors broadly as stale model/capability failures; a narrower backend error contract is a P9 hardening candidate.
 - Frontend history currently joins separately paged task and asset lists; a backend history query would reduce pagination edge cases.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
@@ -34,6 +33,7 @@ Resolved transition item:
 - P9 production startup hardening now rejects placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup can proceed in production, while keeping non-production defaults available.
 - P9 runtime settings now expose only tenant upload policy and enforce it in backend asset upload validation. Deferred settings are absent from responses and rejected on writes until their runtime consumers exist.
 - P9 frontend admin observability/settings UI now consumes only backend admin contracts, gates sections by `usage:read`, `audit:read`, and `system:settings:manage`, keeps lists paginated, PATCHes settings with CSRF through the shared API client, and does not persist Provider keys, auth tokens, log metadata, or system settings payloads in browser storage.
+- P9 security regression added targeted tests for SSRF, redaction, tenant/object authorization, upload validation, task/SSE replay visibility, production secret guards, frontend production import safety, and deleted the unreachable legacy history display/storage helpers identified during P8/R8.
 
 P5 review hardening backlog:
 

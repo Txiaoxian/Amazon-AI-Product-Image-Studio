@@ -17,15 +17,15 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after P5
+## Current state after P9 security regression
 
-The repository has a Docker Compose topology and buildable frontend/backend images from the P3 runtime fix. P5 project and asset features should still use the shared local development services for routine verification unless the task explicitly requires Compose deployment validation.
+The repository has a Docker Compose topology and buildable frontend/backend images from the P3 runtime fix. P5-P9 platform features should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
 
 Current verified state:
 
 - `docker compose -f deploy/docker-compose.yml config` passes.
-- Frontend local lint, type-check, tests, and build pass after P5.
-- Backend `go test`, race tests, `go vet`, API build, and worker build pass after P5.
+- Frontend local lint, type-check, tests, and build pass after P9 security regression.
+- Backend `go test`, race tests, `go vet`, API build, and worker build pass after P9 security regression.
 - Shared local `dev-mysql8`, `dev-redis`, and `dev-minio` are the expected routine validation services and were verified reachable in R5.
 
 Known runtime notes:
@@ -34,7 +34,7 @@ Known runtime notes:
 - Frontend container must continue to proxy `/api/` only to `backend-api:8080`.
 - Frontend Nginx must not proxy AI Provider traffic.
 - P5 asset storage expects MinIO buckets to be created or verified by environment bootstrap before real upload tests.
-- Later Provider/task/SSE phases must re-run Compose build/up validation after adding runtime dependencies.
+- `P9-DEPLOY-RELEASE-VALIDATION` must re-run Compose config/build/up/healthcheck after Provider, task, SSE, admin, settings, and security-regression work.
 
 ## Services
 
@@ -167,3 +167,27 @@ After local deployment verification, remove the project-specific containers and 
 ```bash
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
+
+## P9 release validation expectations
+
+`P9-DEPLOY-RELEASE-VALIDATION` is deployment-specific, so it may start the project Compose stack even though ordinary feature validation uses the shared local development services. It must clean the stack up afterwards unless the user explicitly asks to keep it.
+
+Required checks:
+
+- `docker compose -f deploy/docker-compose.yml config`
+- `docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend`
+- `docker compose -f deploy/docker-compose.yml up -d`
+- `docker compose -f deploy/docker-compose.yml ps`
+- API health from the published or internal route, depending on Compose topology.
+- Frontend serves the built app and proxies `/api/` only to `backend-api`.
+- Worker process stays running and reports the configured health/readiness signal.
+- MySQL, Redis, and MinIO services are healthy.
+- MinIO required buckets are created or the runbook clearly documents the bootstrap step.
+- SSE route preserves streaming headers and is not buffered by the frontend/reverse proxy path.
+- Production placeholder secrets are not used in deployment examples.
+
+Documentation outputs:
+
+- Update `.env.example` only with placeholders, never real local credentials.
+- Update this deployment plan with actual P9 validation results and remaining operational notes.
+- Add or update a release runbook if one does not exist yet, including initialization admin flow, bucket/bootstrap notes, backup/restore notes, and cleanup commands.

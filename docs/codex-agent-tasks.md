@@ -2829,8 +2829,8 @@ P9 must not run as one broad worktree. Start serially with backend read APIs, th
 2. `P9-BE-PRODUCTION-SECRET-GUARD` - completed and merged. Rejects production placeholder secrets before API or Worker startup can proceed.
 3. `P9-BE-RUNTIME-SETTINGS-CONTRACT` - completed and merged. Implemented only the first runtime-backed settings slice: tenant upload policy consumed by backend asset validation.
 4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` - completed and merged. Added frontend admin views for usage/logs/settings using only merged backend contracts.
-5. `P9-SECURITY-REGRESSION` - next, serial. Add targeted security regression tests and residual legacy cleanup/quarantine.
-6. `P9-DEPLOY-RELEASE-VALIDATION` - final. Run Compose build/up/healthcheck and update deployment/release docs.
+5. `P9-SECURITY-REGRESSION` - completed and merged. Added targeted security regression tests and residual legacy helper cleanup.
+6. `P9-DEPLOY-RELEASE-VALIDATION` - next, serial. Run Compose build/up/healthcheck and update deployment/release docs.
 
 First batch completed: `P9-BE-AUDIT-USAGE-READS` merged after review-driven redaction fixes.
 
@@ -2845,7 +2845,9 @@ Third batch completed: `P9-BE-RUNTIME-SETTINGS-CONTRACT` exposed only tenant upl
 
 Fourth batch completed: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` merged after review. The accepted frontend UI consumes paginated usage/audit reads and only the narrow `uploadPolicy` system setting, keeps Provider/model admin intact, and adds tests for permission gating, deferred-setting absence, browser-storage safety, and admin API contracts.
 
-Fifth batch decision: `P9-SECURITY-REGRESSION` starts from latest `main` and remains serial. It is a targeted regression-and-cleanup task, not a broad rewrite. It should add missing high-value tests and delete or explicitly quarantine residual legacy production-confusing files only when the static import graph proves they are unreachable. If a new test exposes a real security bug requiring a wide production-code change, the child agent must stop and report the required scope instead of quietly widening the task.
+Fifth batch completed: `P9-SECURITY-REGRESSION` merged after review. The accepted changes added targeted SSRF, redaction, tenant/object authorization, upload validation, SSE replay, task permission, production frontend static-safety tests, and deleted unreachable legacy history display/storage helpers.
+
+Sixth batch decision: `P9-DEPLOY-RELEASE-VALIDATION` starts from latest `main` and remains serial. This is the deployment-specific exception to the shared-local-services rule: the child agent may start the project Compose stack to validate release topology, but must clean it up afterwards unless the user explicitly asks to keep it. This task should not add product features or change API contracts.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3348,6 +3350,10 @@ git diff --check
 
 P9-SECURITY-REGRESSION - 安全回归、残余 legacy 清理和发布前硬化
 
+### 状态
+
+Completed and merged into `main`. Review found no blockers. The merged changes added targeted regression coverage for Provider SSRF, redaction, tenant/object authorization, upload validation, task/SSE visibility, frontend production import safety, and removed the unreachable `LegacyHistoryItem`, `LegacyHistoryPanel`, and `useStorageUsage` helpers.
+
 ### 推荐执行信息
 
 - 推荐线程名：`P9-SECURITY-REGRESSION`
@@ -3492,14 +3498,148 @@ git diff --check
 
 P9-DEPLOY-RELEASE-VALIDATION - Docker Compose 全链路和发布文档
 
+### 推荐执行信息
+
+- 推荐线程名：`P9-DEPLOY-RELEASE-VALIDATION`
+- 推荐分支名：`codex/p9-deploy-release-validation`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务是 P9 最后一段发布验证；不要并行启动新的业务开发任务。
+
 ### 目标
 
 执行 Docker Compose build/up/healthcheck，验证 API、worker、frontend、MySQL、Redis、MinIO 组合可运行，更新部署文档、环境变量说明、初始化管理员、数据卷、备份/恢复和安全注意事项。
 
-### 关键约束
+### 允许修改文件
 
-- 功能开发验证继续优先使用 `docs/local-development.md` 的全局本地环境。
-- 如启动项目 Compose 栈做发布验证，验证后必须清理，除非用户明确要求保留。
+- `deploy/**`
+- `backend/Dockerfile`
+- `frontend/Dockerfile`
+- `frontend/nginx.conf` 或 `frontend/nginx/**`
+- `.env.example`
+- `docs/deployment.md`
+- `docs/development-plan.md` 仅限记录部署验证实际结果与遗留风险
+- `docs/local-development.md` 仅限引用共享环境规则，不得复制真实本机凭据
+- `docs/release-runbook.md` 或 `docs/operations-runbook.md` 如需要新增发布/运维说明
+- `backend/internal/health/**`、`backend/cmd/**` 仅限修复 Compose health/readiness 所需的最小问题
+- `frontend/**` 仅限修复 container build、Nginx `/api` proxy、static serving、SPA fallback 所需的最小问题
+
+### 禁止修改文件
+
+- `AGENTS.md`
+- `agent-instructions/**`
+- `docs/api-contract.md`
+- `docs/sse-contract.md`
+- `docs/rbac.md`
+- `docs/provider-adapter.md`
+- `docs/task-queue.md`
+- `docs/storage.md`
+- `docs/security.md`，除非发现 deployment-only 安全文档错误并先报告
+- 后端业务 API、Provider Adapter runtime、task state machine、worker claim/complete/cancel 语义、RBAC 权限模型
+- 前端工作台、Provider/model/admin UI、task/SSE client 业务行为，除非 container build 暴露编译错误且修复很小
+- 任何真实本机或生产 secret、真实数据库密码、真实 MinIO key、真实 Provider API key
+
+### 前置依赖
+
+- `P9-SECURITY-REGRESSION` completed and merged.
+- Frontend and backend local quality gates pass on `main`.
+- P3 runtime Compose skeleton exists.
+- `docs/local-development.md` remains the routine development environment reference.
+
+### 必须保持的现有行为
+
+- Routine feature validation still uses shared local services; Compose is used here only for deployment topology validation.
+- Frontend container proxies `/api/` only to `backend-api:8080`; it must not proxy AI Providers.
+- SSE paths must preserve streaming behavior and avoid proxy buffering.
+- API and Worker must reject production placeholder secrets.
+- MySQL remains the task/status source of truth, Redis remains queue/cache/lock/limit temporary infrastructure, MinIO stores images.
+- Existing frontend/backend tests remain green.
+
+### 允许的中间态
+
+- Compose validation may use placeholder non-production secrets from `.env.example` only when `APP_ENV` is not production.
+- If Compose cannot fully pass because a host dependency or port is unavailable, document the exact blocker, cleanup state, and minimal follow-up.
+- Deployment docs may record manual bootstrap requirements such as MinIO bucket creation if the code intentionally does not create buckets.
+
+### 禁止的半迁移状态
+
+- Do not leave project-specific Compose containers, networks, or volumes running after validation unless the user explicitly asks to keep them.
+- Do not change runtime code to bypass production secret guards just to make Compose easier.
+- Do not add AI Provider relay routes to Nginx or frontend config.
+- Do not commit generated local `.env` files, real credentials, database dumps, object data, or logs containing secrets.
+- Do not mark deployment validation complete if health checks are failing or unverified.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| Compose config | `docker compose config` with `.env.example`-compatible placeholders | valid config with no unresolved variables needed for local deployment validation |
+| Image build | backend API, backend worker, frontend images build from clean context | build succeeds without relying on host-only files |
+| Startup health | `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, `frontend` start | services become healthy/running or blocker is documented precisely |
+| API health | frontend/API published route and internal API route are checked | `/healthz` succeeds and does not expose secrets |
+| Frontend proxy | `/api/` goes to backend-api and SSE path is not buffered | API requests work; SSE response keeps streaming headers |
+| Forbidden proxy | OpenAI/Gemini/custom Provider paths are attempted or config-scanned | frontend does not proxy Provider traffic |
+| Secrets | production placeholders with `APP_ENV=production` | API/Worker fail fast; docs warn operators to replace placeholders |
+| MinIO buckets | bucket bootstrap is required | buckets are created by deployment setup or documented as a required preflight |
+| Cleanup | validation ends | `docker compose down -v --remove-orphans` is run unless user asks to keep stack |
+
+### 必须新增或更新的回归/验证材料
+
+- Update deployment docs with exact commands run and observed results.
+- Update `.env.example` comments/placeholders if required for current services, without real credentials.
+- Add or update release runbook with initialization admin flow, MinIO bucket bootstrap, backup/restore outline, health checks, log/secret cautions, and cleanup commands.
+- If Nginx/proxy config changes, add a static config check or documented manual verification showing `/api/` only proxies backend API and does not proxy AI Providers.
+
+### 具体开发内容
+
+- Inspect current `deploy/docker-compose.yml`, Dockerfiles, frontend Nginx config, `.env.example`, and health endpoints.
+- Run Compose config/build/up/ps/log/health checks from repository root.
+- Verify frontend static service, API `/healthz`, Worker process/readiness, MySQL, Redis, MinIO health, and `/api/` proxy path.
+- Verify SSE route is not buffered by the frontend/reverse-proxy path where practical.
+- Verify production placeholder secret guards still fail fast when `APP_ENV=production`.
+- Update deployment documentation and release runbook with actual results and any remaining operational notes.
+- Clean up Compose stack and volumes after validation unless the user explicitly asks to keep it.
+
+### 安全要求
+
+- Never write real secrets to repo files, logs, docs, screenshots, or final output.
+- Use placeholder values only in `.env.example`.
+- Do not weaken production secret guard, SSRF protections, upload validation, tenant isolation, RBAC, task/SSE security, or frontend no-provider-direct-call guarantees.
+- If logs are quoted in handoff, redact credentials, cookies, Authorization headers, and Provider/API keys.
+
+### 验收标准
+
+- Compose config/build/up/health validation is executed and documented.
+- Frontend, backend API, backend worker, MySQL, Redis, and MinIO are validated in the Compose topology.
+- `/api/` proxy works and AI Provider proxying remains absent.
+- Release/deployment docs explain required env vars, startup, initialization admin flow, MinIO bucket bootstrap, backup/restore basics, health checks, and cleanup.
+- Project Compose stack is cleaned up after validation unless explicitly kept.
+- Existing frontend/backend quality gates remain green.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs --tail=120 backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+git diff --check
+```
+
 
 ## 子 agent 交付格式
 
