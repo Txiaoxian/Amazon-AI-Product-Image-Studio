@@ -52,9 +52,9 @@
 - `deploy/docker-compose.yml` 只用于部署骨架或部署回归验证；如需启动项目 Compose 栈，验证后必须清理，除非用户明确要求保留。
 - 不得把全局本地环境中的真实密码复制到项目文档、源码、测试或日志中。
 
-## P8/P9 起强制执行的任务包标准
+## P8 及后续任务强制执行的任务包标准
 
-从后续 P8/P9 任务开始，任务包必须是“实现合同”，不能只写功能清单。除原有字段外，每个新 worktree 任务包还必须包含：
+从 P8 及后续任务开始，任务包必须是“实现合同”，不能只写功能清单。除原有字段外，每个新 worktree 任务包还必须包含：
 
 1. `必须保持的现有行为`
 2. `允许的中间态`
@@ -3637,6 +3637,148 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 docker compose -f deploy/docker-compose.yml logs --tail=120 backend-api backend-worker frontend
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+git diff --check
+```
+
+## 子任务 32：P10 Worker 并发池
+
+### 任务名称
+
+P10-BE-WORKER-POOL - 让 Worker 并发配置成为真实处理池
+
+### 推荐执行信息
+
+- 推荐线程名：`P10-BE-WORKER-POOL`
+- 推荐分支名：`codex/p10-backend-worker-pool`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务触碰 Worker runtime，不要与 SSE lifecycle、Provider/model lifecycle 或前端 admin hardening 并行。
+
+### 目标
+
+把 Worker 从单个处理 loop 升级为可配置的 worker pool，使一个 Worker 进程可以按 `WORKER_CONCURRENCY` 并行 claim/process 任务，同时保持 Redis 队列语义、MySQL 状态权威、任务幂等、取消/重试/超时、dead-letter、输出资产去重和全局/租户/用户/Provider/模型并发限制。
+
+### 允许修改文件
+
+- `backend/internal/task/**`
+- `backend/cmd/worker/**`
+- `backend/internal/config/**`
+- `backend/internal/queue/**` 仅限测试 helper 或为 Worker pool 暴露必要的窄接口；不得重写 reliable queue 语义
+- `.env.example`
+- `deploy/docker-compose.yml` 仅限传递 `WORKER_CONCURRENCY`
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `backend/internal/api/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/provider/**`
+- `backend/internal/asset/**`
+- `backend/internal/storage/**`
+- `backend/internal/sse/**`
+- Provider request/response contracts
+- Task event names, status names, SSE replay cursor semantics
+- Redis reliable queue payload contract, unless先报告主 agent
+
+### 前置依赖
+
+- `P9-DEPLOY-RELEASE-VALIDATION` completed, reviewed, and merged into `main`.
+- Existing Worker reliable queue, Provider runtime execution, MinIO output persistence, usage/API call logs, and SSE wakeup paths are already merged.
+- Current known carry-forward risk: Worker process still runs one processing loop even though operator-facing concurrency settings exist.
+
+### 必须保持的现有行为
+
+- Queue payload remains task ID only.
+- Worker reloads every task from MySQL before state transition and does not trust Redis payload data beyond task ID.
+- MySQL remains the final task status and task event source of truth.
+- Redis reliable queue claim/ack/retry/dead-letter/stale recovery behavior remains compatible with existing tests.
+- Existing global/tenant/user/Provider/model concurrency limiters still gate actual task execution.
+- Cancellation, retry, timeout, stale claim recovery, dead-letter marking, duplicate delivery idempotency, output asset de-duplication, usage record de-duplication, API call logging, and terminal event de-duplication must remain intact.
+- `WORKER_CONCURRENCY=1` or missing config must preserve current single-loop effective behavior.
+
+### 允许的中间态
+
+- A Worker process may use one recovery goroutine/ticker plus N processing goroutines.
+- Recovery may remain single-owner per process; it does not need to run once per worker goroutine.
+- The task can add `WORKER_CONCURRENCY` config parsing and Compose/env documentation through `.env.example` and `deploy/docker-compose.yml`.
+- If a worker goroutine sees transient claim/process/finalization errors, it may log and continue as the current loop does, provided cancellation and unrecoverable setup errors still stop cleanly.
+
+### 禁止的半迁移状态
+
+- Do not create N Worker processes in Compose as a substitute for an in-process worker pool.
+- Do not conflate `WORKER_CONCURRENCY` with global/tenant/user/Provider/model concurrency limits.
+- Do not let concurrent loops run duplicate recovery transitions or duplicate timeout work.
+- Do not ack/retry/dead-letter a claim from more than one goroutine.
+- Do not let context cancellation convert an in-flight cancelled Provider call into a successful task.
+- Do not create duplicate output assets, `task_outputs`, `usage_records`, `api_call_logs`, or terminal task events under duplicate delivery or parallel execution.
+- Do not change frontend task behavior, SSE client behavior, Provider Adapter runtime contracts, or admin UI.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| Config | `WORKER_CONCURRENCY` missing, `1`, `2+`, `0`, negative, or non-integer | missing/`1` preserves single-loop behavior; positive values configure pool size; invalid values fail config load |
+| Pool startup | Worker starts with concurrency N | exactly N processing loops can claim/process work; recovery remains single-owner |
+| Parallel processing | two or more queued tasks are available and limits permit | tasks can process concurrently inside one Worker process |
+| Global limit | pool size exceeds `TASK_GLOBAL_CONCURRENCY` | limiter prevents more than configured active executions |
+| Dimension limits | tenant/user/Provider/model limits are lower than pool size | limiter enforces those dimensions without losing claims |
+| Duplicate delivery | same task is claimed again after completion or during stale recovery | no duplicate outputs, usage, API call logs, or terminal events |
+| Cancellation | context cancellation or user cancellation occurs while tasks are in flight | Worker exits cleanly; cancelled tasks do not become `SUCCEEDED` because of late output |
+| Retry/failure | processor returns retryable error in one goroutine | only that claim is retried/failed; other goroutines continue |
+| Dead-letter | queue returns `ErrDeadLettered` for a claim | task is marked dead-lettered once; other goroutines continue |
+| Shutdown | parent context is cancelled | all worker goroutines stop, ready file cleanup in `cmd/worker` still happens, and `Run` returns `context.Canceled` or equivalent cancellation error |
+| Finalization failure | ack/retry/dead-letter finalization fails | existing queue-failure handling remains intact and does not crash unrelated workers |
+
+### 必须新增或更新的回归测试
+
+- Config tests for valid and invalid `WORKER_CONCURRENCY`.
+- Worker unit test proving configured pool size can process multiple claims concurrently.
+- Worker test proving recovery runs once per process, not once per processing goroutine.
+- Worker test proving shutdown cancels all processing loops without goroutine leaks or hung `Run`.
+- Worker/processor regression proving duplicate delivery under parallel execution does not duplicate outputs/events/usage/API-call records.
+- Existing cancellation/timeout/retry/dead-letter tests must remain green.
+
+### 具体开发内容
+
+- Add `Worker.Concurrency` config parsing if it does not already exist, using `WORKER_CONCURRENCY` as the env var.
+- Pass configured worker concurrency from `backend/cmd/worker/main.go` into `task.NewWorker`.
+- Extend `task.WorkerOptions` with a bounded positive concurrency setting.
+- Refactor `Worker.Run` to coordinate N processing loops plus one recovery loop under the parent context.
+- Keep claim processing and `applyResult` behavior scoped to the goroutine that owns the claim.
+- Ensure logs include enough worker-loop identity to debug concurrent execution without logging secrets.
+- Update `.env.example` and `deploy/docker-compose.yml` to expose `WORKER_CONCURRENCY` as Worker process loop count.
+- Add focused tests before broad regression.
+
+### 安全要求
+
+- Do not log API keys, Authorization headers, Cookies, Provider raw responses, image base64, or raw image bytes.
+- Do not weaken tenant isolation, object authorization, Provider SSRF, upload validation, recursive redaction, task event visibility, or production secret guards.
+- Do not bypass Redis concurrency limits or MySQL task-state checks for speed.
+- Treat all Redis queue payload data except task ID as untrusted.
+
+### 验收标准
+
+- `WORKER_CONCURRENCY` is documented in `.env.example` and passed by Compose to `backend-worker`.
+- Worker process can process multiple tasks concurrently when configured and when runtime limits allow.
+- Existing queue, task, Provider runtime, SSE wakeup, and persistence behavior remains compatible.
+- Recovery remains single-owner per process or explicitly guarded.
+- Tests cover the named failure modes or explicitly defer cases outside scope with a precise reason.
+- No docs or frontend files are modified by the child agent.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/config ./internal/task ./cmd/worker -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
 

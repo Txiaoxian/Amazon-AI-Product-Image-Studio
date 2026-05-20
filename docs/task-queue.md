@@ -101,6 +101,14 @@ P7 Provider runtime result:
 - Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
 - The remaining Worker carry-forward items are still separate concerns: `WORKER_CONCURRENCY` is not yet a pool, and API Redis subscription lifecycle should later be tied to server shutdown.
 
+P10 Worker pool plan:
+
+- `P10-BE-WORKER-POOL` is the next runtime hardening task after P9 release validation.
+- Worker process concurrency is distinct from global/tenant/user/Provider/model execution limits. Worker loop count controls how many queue claims can be processed in parallel by one worker process; Redis concurrency limits still decide whether a claimed task may run.
+- The worker pool must preserve the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens exactly once per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
+- Recovery should remain single-owner per worker process, or be explicitly guarded, so multiple processing loops do not duplicate timeout/recovery work.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` remains a separate follow-up for binding the API Redis event subscriber to API server shutdown.
+
 ## Cancellation
 
 Cancellation request:

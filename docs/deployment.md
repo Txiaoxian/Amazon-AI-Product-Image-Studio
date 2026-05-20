@@ -17,15 +17,18 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after P9 security regression
+## Current state after P9 deployment release validation
 
-The repository has a Docker Compose topology and buildable frontend/backend images from the P3 runtime fix. P5-P9 platform features should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
+The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. P5-P10 platform features should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
 
 Current verified state:
 
 - `docker compose -f deploy/docker-compose.yml config` passes.
-- Frontend local lint, type-check, tests, and build pass after P9 security regression.
-- Backend `go test`, race tests, `go vet`, API build, and worker build pass after P9 security regression.
+- `docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend` passes.
+- `docker compose -f deploy/docker-compose.yml up -d` reaches healthy states for `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, and `frontend`.
+- Frontend `/api/` proxy reaches `backend-api:8080`, and the frontend Nginx config contains no AI Provider or relay proxy.
+- Frontend local lint, type-check, tests, and build pass after P9 deployment validation.
+- Backend `go test`, race tests, `go vet`, API build, and worker build pass after P9 deployment validation.
 - Shared local `dev-mysql8`, `dev-redis`, and `dev-minio` are the expected routine validation services and were verified reachable in R5.
 
 Known runtime notes:
@@ -33,8 +36,8 @@ Known runtime notes:
 - Compose remains the deployment topology, not the default routine development environment.
 - Frontend container must continue to proxy `/api/` only to `backend-api:8080`.
 - Frontend Nginx must not proxy AI Provider traffic.
-- P5 asset storage expects MinIO buckets to be created or verified by environment bootstrap before real upload tests.
-- `P9-DEPLOY-RELEASE-VALIDATION` must re-run Compose config/build/up/healthcheck after Provider, task, SSE, admin, settings, and security-regression work.
+- The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
+- Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
 
 ## Services
 

@@ -491,7 +491,7 @@ P8 intentionally does not resolve:
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
-Status: completed through deployment release validation. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, `P9-BE-RUNTIME-SETTINGS-CONTRACT`, `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`, `P9-SECURITY-REGRESSION`, and `P9-DEPLOY-RELEASE-VALIDATION` have been reviewed or locally validated as appropriate. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope.
+Status: completed and merged through deployment release validation. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, `P9-BE-RUNTIME-SETTINGS-CONTRACT`, `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`, `P9-SECURITY-REGRESSION`, and `P9-DEPLOY-RELEASE-VALIDATION` have been reviewed, locally validated, and merged into `main` as appropriate. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope.
 
 P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
 
@@ -500,7 +500,7 @@ P9 must be split into small serial tasks rather than one broad worktree. The fir
 3. `P9-BE-RUNTIME-SETTINGS-CONTRACT`: completed and merged. Backend system settings now expose only the first honest runtime-backed slice: tenant upload policy consumed by asset upload validation. Default Provider/model selection, tenant concurrency, storage quota, and log retention remain deferred until their runtime consumers are deliberately in scope.
 4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: completed and merged. Frontend admin UI now consumes paginated usage/audit reads and the narrow runtime-backed `uploadPolicy` settings contract without exposing deferred settings.
 5. `P9-SECURITY-REGRESSION`: completed and merged. Added targeted security regression tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, production secret guards, frontend static regressions, and residual legacy helper deletion.
-6. `P9-DEPLOY-RELEASE-VALIDATION`: completed locally. Docker Compose config/build/up/healthcheck passed; frontend, backend API, backend Worker, MySQL, Redis, and MinIO were validated in the Compose topology; release documentation and runbook were updated.
+6. `P9-DEPLOY-RELEASE-VALIDATION`: completed, reviewed, and merged. Docker Compose config/build/up/healthcheck passed; frontend, backend API, backend Worker, MySQL, Redis, and MinIO were validated in the Compose topology; release documentation and runbook were updated.
 
 P9 deployment validation result:
 
@@ -526,6 +526,26 @@ P9 carry-forward risks:
 - Admin observability UI is intentionally acceptable as one component for this slice, but should be split after security regression if it becomes a maintenance hotspot.
 - API call log detail UI has no stale-request guard; a slower detail response can overwrite a newer click for the same admin user. This is a display correctness issue, not a security blocker, and should be considered for a follow-up frontend hardening task.
 - Redis 7.4 may emit go-redis `maintnotifications` fallback warnings during API/Worker operation. P9 validation confirmed these warnings are non-blocking, but operators may want to revisit Redis/client compatibility if log noise becomes a concern.
+
+## P10: Runtime hardening and operator-grade follow-ups
+
+Status: planned. P10 starts after P9 release validation has been merged. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+
+P10 priorities:
+
+1. `P10-BE-WORKER-POOL`: next. Make configured Worker concurrency real by running multiple task-processing loops under one Worker process while preserving MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits.
+2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: later. Tie the API Redis task-event subscriber lifecycle to API server shutdown instead of a background context, without changing SSE replay semantics.
+3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: later. Decide and implement Provider soft-delete behavior for linked models, such as block deletion, hide linked models, or cascade-disable linked models.
+4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: later. Split the large admin observability/settings UI if needed and add stale-request protection for API call log details.
+5. `P10-BE-HISTORY-QUERY`: optional later. Add a backend history query if frontend-assembled task/asset pagination becomes a correctness issue.
+
+P10 worker-pool boundaries:
+
+- The first P10 task must not change Provider Adapter request/response contracts, task event names, SSE replay cursor semantics, or frontend task behavior.
+- `WORKER_CONCURRENCY` may be restored as the worker-loop count if the implementation chooses that env name, but global/tenant/user/Provider/model concurrency limits remain separate runtime limiters and must not be conflated with worker goroutine count.
+- A multi-loop Worker must still treat Redis payloads as task IDs only and reload every task from MySQL before state transitions.
+- Recovery should remain single-owner per process or otherwise be guarded so concurrent loops do not run duplicate recovery work.
+- The task must include tests proving parallel execution happens when configured, shutdown cancels all loops cleanly, duplicate claims do not duplicate outputs/events, and queue finalization still happens exactly once per claim.
 
 ## Phase boundaries
 
