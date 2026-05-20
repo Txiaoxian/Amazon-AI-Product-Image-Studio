@@ -19,6 +19,8 @@ const (
 	defaultAPIShutdownTimeout      = 10 * time.Second
 	defaultWorkerName              = "backend-worker"
 	defaultWorkerShutdownTimeout   = 10 * time.Second
+	defaultWorkerConcurrency       = 1
+	maxWorkerConcurrency           = 256
 	defaultMySQLHost               = "127.0.0.1"
 	defaultMySQLPort               = 3306
 	defaultMySQLDatabase           = "amazon_ai_image_studio"
@@ -94,6 +96,7 @@ type APIConfig struct {
 type WorkerConfig struct {
 	Name            string
 	ShutdownTimeout time.Duration
+	Concurrency     int
 }
 
 type DatabaseConfig struct {
@@ -225,6 +228,11 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	workerConcurrency, err := boundedPositiveIntFromEnv(lookup, "WORKER_CONCURRENCY", defaultWorkerConcurrency, maxWorkerConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+
 	database, err := databaseConfigFromEnv(lookup)
 	if err != nil {
 		return Config{}, err
@@ -273,6 +281,7 @@ func load(lookup lookupFunc) (Config, error) {
 		Worker: WorkerConfig{
 			Name:            stringFromEnv(lookup, "WORKER_NAME", defaultWorkerName),
 			ShutdownTimeout: workerShutdownTimeout,
+			Concurrency:     workerConcurrency,
 		},
 		Database: database,
 		Auth:     auth,
@@ -490,6 +499,17 @@ func positiveIntFromEnv(lookup lookupFunc, key string, fallback int) (int, error
 		return 0, fmt.Errorf("invalid %s: must be positive", key)
 	}
 
+	return value, nil
+}
+
+func boundedPositiveIntFromEnv(lookup lookupFunc, key string, fallback int, max int) (int, error) {
+	value, err := positiveIntFromEnv(lookup, key, fallback)
+	if err != nil {
+		return 0, err
+	}
+	if value > max {
+		return 0, fmt.Errorf("invalid %s: must be <= %d", key, max)
+	}
 	return value, nil
 }
 

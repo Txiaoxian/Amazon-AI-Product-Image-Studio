@@ -38,6 +38,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Worker.Name != "backend-worker" {
 		t.Fatalf("Worker.Name = %q, want backend-worker", cfg.Worker.Name)
 	}
+	if cfg.Worker.Concurrency != 1 {
+		t.Fatalf("Worker.Concurrency = %d, want 1", cfg.Worker.Concurrency)
+	}
 	if cfg.Database.Host != "127.0.0.1" {
 		t.Fatalf("Database.Host = %q, want 127.0.0.1", cfg.Database.Host)
 	}
@@ -163,6 +166,7 @@ func TestLoadOverrides(t *testing.T) {
 		"API_SHUTDOWN_TIMEOUT":         "5s",
 		"WORKER_NAME":                  "image-worker",
 		"WORKER_SHUTDOWN_TIMEOUT":      "6s",
+		"WORKER_CONCURRENCY":           "3",
 		"MYSQL_HOST":                   "mysql",
 		"MYSQL_PORT":                   "3307",
 		"MYSQL_DATABASE":               "studio_test",
@@ -257,6 +261,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Worker.ShutdownTimeout != 6*time.Second {
 		t.Fatalf("Worker.ShutdownTimeout = %s, want 6s", cfg.Worker.ShutdownTimeout)
+	}
+	if cfg.Worker.Concurrency != 3 {
+		t.Fatalf("Worker.Concurrency = %d, want 3", cfg.Worker.Concurrency)
 	}
 	if cfg.Database.Host != "mysql" {
 		t.Fatalf("Database.Host = %q, want mysql", cfg.Database.Host)
@@ -466,6 +473,65 @@ func TestLoadAllowsPlaceholderSecretsOutsideProduction(t *testing.T) {
 	}
 	if cfg.Provider.APIKeyEncryptionKey != defaultAPIKeyEncryptionKey {
 		t.Fatal("Provider.APIKeyEncryptionKey default was not preserved outside production")
+	}
+}
+
+func TestLoadWorkerConcurrency(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "missing", want: 1},
+		{name: "one", raw: "1", want: 1},
+		{name: "pool", raw: "4", want: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := load(func(key string) (string, bool) {
+				if key == "WORKER_CONCURRENCY" && tt.raw != "" {
+					return tt.raw, true
+				}
+				return "", false
+			})
+			if err != nil {
+				t.Fatalf("load returned error: %v", err)
+			}
+			if cfg.Worker.Concurrency != tt.want {
+				t.Fatalf("Worker.Concurrency = %d, want %d", cfg.Worker.Concurrency, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidWorkerConcurrency(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "zero", raw: "0", want: "invalid WORKER_CONCURRENCY: must be positive"},
+		{name: "negative", raw: "-1", want: "invalid WORKER_CONCURRENCY: must be positive"},
+		{name: "non-integer", raw: "many", want: "invalid WORKER_CONCURRENCY: must be an integer"},
+		{name: "too-large", raw: "257", want: "invalid WORKER_CONCURRENCY: must be <= 256"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(func(key string) (string, bool) {
+				if key == "WORKER_CONCURRENCY" {
+					return tt.raw, true
+				}
+				return "", false
+			})
+			if err == nil {
+				t.Fatal("load returned nil error for invalid worker concurrency")
+			}
+			if got := err.Error(); got != tt.want {
+				t.Fatalf("load error = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
