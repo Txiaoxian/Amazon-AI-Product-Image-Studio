@@ -240,6 +240,54 @@ func TestTaskRoutesEnforceTenantAndProjectAuthorization(t *testing.T) {
 	}
 }
 
+func TestTaskRoutesRejectUnauthorizedCancelRetryWithoutSideEffects(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Task Object Permission Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "object-permission", provider.StatusEnabled, model.StatusEnabled, true, false, false, false, 1)
+
+	createResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Object-level permission test",
+		"providerId": providerID,
+		"modelId":    modelID,
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create task status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	taskID := stringField(t, decodeData(t, createResponse), "id")
+
+	seedActiveUser(t, db, adminSession.tenantID, "viewer-task", "viewer-task@example.com", "Viewer Task", "viewer-task-password-123")
+	assignRole(t, db, adminSession.tenantID, "viewer-task", "viewer")
+	addMember(t, router, adminSession, projectID, "viewer-task", project.RoleViewer)
+	viewerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "viewer-task@example.com", "viewer-task-password-123")
+
+	for _, path := range []string{"/api/v1/tasks/" + taskID + "/cancel", "/api/v1/tasks/" + taskID + "/retry"} {
+		response := performJSON(router, http.MethodPost, path, nil, viewerSession.cookies, viewerSession.csrfHeader())
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d, want %d: %s", path, response.Code, http.StatusForbidden, response.Body.String())
+		}
+		var record database.GenerationTask
+		if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, taskID).First(&record).Error; err != nil {
+			t.Fatalf("reload task after forbidden action: %v", err)
+		}
+		if record.Status != task.StatusQueued || record.Attempt != 1 {
+			t.Fatalf("forbidden action changed task state: %#v", record)
+		}
+	}
+	if len(enqueuer.taskIDs) != 1 {
+		t.Fatalf("forbidden cancel/retry enqueued extra tasks: %#v", enqueuer.taskIDs)
+	}
+
+	seedOtherTenantTask(t, db)
+	for _, path := range []string{"/api/v1/tasks/task-tenant-b/cancel", "/api/v1/tasks/task-tenant-b/retry"} {
+		response := performJSON(router, http.MethodPost, path, nil, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s cross-tenant status = %d, want %d: %s", path, response.Code, http.StatusNotFound, response.Body.String())
+		}
+	}
+}
+
 func TestTaskRoutesValidateProviderModelCapabilitiesAndServerOwnedFields(t *testing.T) {
 	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
 	projectID := createTaskTestProject(t, router, adminSession, "Capability Project")

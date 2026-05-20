@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -76,15 +76,35 @@ describe('legacy frontend retirement', () => {
     expect([...productionModules].some((file) => file.includes('/src/providers/'))).toBe(false)
     expect([...productionModules].some((file) => file.endsWith('/src/db/historyRepository.ts'))).toBe(false)
     expect([...productionModules].some((file) => file.endsWith('/src/db/imageRepository.ts'))).toBe(false)
+    expect([...productionModules].some((file) => file.endsWith('/src/hooks/useStorageUsage.ts'))).toBe(false)
+    expect([...productionModules].some((file) => file.endsWith('/src/components/history/LegacyHistoryPanel.tsx'))).toBe(false)
+    expect([...productionModules].some((file) => file.endsWith('/src/components/history/LegacyHistoryItem.tsx'))).toBe(false)
+
+    const dbModules = [...productionModules].filter((file) => file.includes('/src/db/')).map((file) => file.slice(file.indexOf('/src/db/')))
+    expect(dbModules.sort()).toEqual(['/src/db/dexie.ts', '/src/db/promptTemplateRepository.ts'])
+  })
+
+  it('keeps deleted legacy display and storage helpers from returning as source files', () => {
+    for (const relativePath of [
+      'src/components/history/LegacyHistoryPanel.tsx',
+      'src/components/history/LegacyHistoryItem.tsx',
+      'src/hooks/useStorageUsage.ts',
+    ]) {
+      expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false)
+    }
   })
 
   it('keeps sensitive storage, Provider authorization, and polling out of the production graph', () => {
     const source = readProductionSources(resolve(process.cwd(), 'src/App.tsx'))
 
     expect(source).not.toMatch(/\blocalStorage\b|\bsessionStorage\b/)
-    expect(source).not.toContain('Authorization')
+    expect(source).not.toMatch(/\bindexedDB\b/)
+    expect(source).not.toMatch(/(?:localStorage|sessionStorage)\s*\.[\s\S]{0,120}(?:apiKey|apiUrl|provider)/i)
+    expect(source).not.toMatch(/Authorization\s*:\s*['"`]Bearer|headers\s*:\s*{[^}]*Authorization/i)
     expect(source).not.toMatch(/\bsetInterval\b|\bsetTimeout\b/)
-    expect(source).not.toMatch(/api\.openai\.com|api\.tutujin\.(?:app|com)|api\.flymux\.com/)
+    expect(source).not.toMatch(/api\.openai\.com|generativelanguage\.googleapis\.com|api\.tutujin\.(?:app|com)|api\.flymux\.com/)
+    expect(source).not.toMatch(/\bminio\b|\bs3[.-]|X-Amz-Signature|objectKey|bucketOriginals/i)
+    expect(source).not.toMatch(/defaultProviderId|defaultModelId|tenantConcurrency|storageQuotaBytes|logRetentionDays|allowedMimeTypes/)
   })
 
   it('does not expose the retired ordinary settings or legacy history entry points', async () => {

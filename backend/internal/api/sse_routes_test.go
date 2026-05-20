@@ -49,6 +49,34 @@ func TestTaskSSELastEventIDQueryFallbackMatchesHeaderReplay(t *testing.T) {
 	assertSSETaskEventFrame(t, frame, second)
 }
 
+func TestTaskSSEReplayOrderingAndCursorAfterLatestHeartbeat(t *testing.T) {
+	router, server, db, _, adminSession := newSSERouteTestServer(t, 5*time.Millisecond)
+	projectID := createTaskTestProject(t, router, adminSession, "SSE Ordered Replay Project")
+	seedSSETask(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-ordered-replay")
+	first := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-ordered-replay", task.EventTaskQueued)
+	second := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-ordered-replay", "TASK_PROGRESS")
+	third := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-ordered-replay", task.EventTaskCompleted)
+
+	response, cancel := openTaskSSE(t, server, "/api/v1/events/tasks?lastEventId=evt_00000000000000000000", adminSession.cookies, nil)
+	reader := bufio.NewReader(response.Body)
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), first)
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), second)
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), third)
+	closeSSE(response, cancel)
+
+	afterLatest, afterLatestCancel := openTaskSSE(t, server, "/api/v1/events/tasks?lastEventId="+third.ID, adminSession.cookies, nil)
+	defer closeSSE(afterLatest, afterLatestCancel)
+	frame := readSSEFrame(t, bufio.NewReader(afterLatest.Body))
+	if !strings.Contains(frame, "event: HEARTBEAT\n") {
+		t.Fatalf("cursor after latest frame = %q, want heartbeat/no replay", frame)
+	}
+	for _, forbidden := range []string{first.ID, second.ID, third.ID, "task-ordered-replay"} {
+		if strings.Contains(frame, forbidden) {
+			t.Fatalf("cursor after latest replayed %q: %q", forbidden, frame)
+		}
+	}
+}
+
 func TestTaskSSERejectsMalformedEventIDWithSanitizedValidationError(t *testing.T) {
 	router, _, _, _, adminSession := newSSERouteTestServer(t, 200*time.Millisecond)
 
@@ -62,6 +90,24 @@ func TestTaskSSERejectsMalformedEventIDWithSanitizedValidationError(t *testing.T
 	body := strings.ToLower(response.Body.String())
 	if !strings.Contains(body, "invalid request") || strings.Contains(body, "not-an-event-id") {
 		t.Fatalf("malformed cursor response not sanitized: %s", response.Body.String())
+	}
+}
+
+func TestTaskSSERejectsExplicitCrossTenantTaskFilterBeforeOpeningStream(t *testing.T) {
+	router, _, db, _, adminSession := newSSERouteTestServer(t, 200*time.Millisecond)
+	seedOtherTenantTask(t, db)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/events/tasks?taskId=task-tenant-b", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant task filter status = %d, want %d: %s", response.Code, http.StatusNotFound, response.Body.String())
+	}
+	if strings.Contains(response.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("cross-tenant task filter opened stream: content-type=%q", response.Header().Get("Content-Type"))
+	}
+	for _, forbidden := range []string{"tenant-b", "task-tenant-b", "project-tenant-b"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("cross-tenant task filter leaked %q: %s", forbidden, response.Body.String())
+		}
 	}
 }
 
