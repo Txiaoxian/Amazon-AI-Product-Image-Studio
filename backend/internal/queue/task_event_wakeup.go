@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -13,6 +14,10 @@ import (
 
 type TaskEventSink interface {
 	PublishTaskEvent(ctx context.Context, event database.TaskEvent)
+}
+
+type TaskEventSubscriber interface {
+	Run(ctx context.Context, sink TaskEventSink, log *slog.Logger) error
 }
 
 type taskEventWakeup struct {
@@ -95,28 +100,42 @@ func (s *RedisTaskEventSubscriber) Run(ctx context.Context, sink TaskEventSink, 
 			if !ok {
 				return nil
 			}
-			var wakeup taskEventWakeup
-			if err := json.Unmarshal([]byte(message.Payload), &wakeup); err != nil {
-				if log != nil {
-					log.Warn("ignored malformed task event wakeup")
-				}
-				continue
-			}
-			if wakeup.Sequence == 0 {
-				continue
-			}
-			sink.PublishTaskEvent(ctx, database.TaskEvent{Sequence: wakeup.Sequence})
+			publishTaskEventWakeup(ctx, message.Payload, sink, log)
 		}
 	}
 }
 
-func StartTaskEventSubscriber(ctx context.Context, subscriber *RedisTaskEventSubscriber, sink TaskEventSink, log *slog.Logger) {
-	if subscriber == nil || sink == nil {
+func publishTaskEventWakeup(ctx context.Context, payload string, sink TaskEventSink, log *slog.Logger) {
+	if sink == nil {
 		return
 	}
+	var wakeup taskEventWakeup
+	if err := json.Unmarshal([]byte(payload), &wakeup); err != nil {
+		if log != nil {
+			log.Warn("ignored malformed task event wakeup")
+		}
+		return
+	}
+	if wakeup.Sequence == 0 {
+		return
+	}
+	sink.PublishTaskEvent(ctx, database.TaskEvent{Sequence: wakeup.Sequence})
+}
+
+func StartTaskEventSubscriber(ctx context.Context, subscriber TaskEventSubscriber, sink TaskEventSink, log *slog.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	if subscriber == nil || sink == nil {
+		close(done)
+		return done
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	go func() {
-		if err := subscriber.Run(ctx, sink, log); err != nil && ctx.Err() == nil && log != nil {
+		defer close(done)
+		if err := subscriber.Run(ctx, sink, log); err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && log != nil {
 			log.Warn("task event wakeup subscriber stopped", slog.String("error", err.Error()))
 		}
 	}()
+	return done
 }

@@ -54,16 +54,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := newRouter(cfg, log, db, healthChecks...)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	router := newRouter(ctx, cfg, log, db, healthChecks...)
 	server := &http.Server{
 		Addr:         cfg.API.Addr,
 		Handler:      router,
 		ReadTimeout:  cfg.API.ReadTimeout,
 		WriteTimeout: cfg.API.WriteTimeout,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		<-ctx.Done()
@@ -88,12 +88,13 @@ func loadStartupConfig() (config.Config, error) {
 	return config.Load()
 }
 
-func newRouter(cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ...health.DependencyChecker) *gin.Engine {
+func newRouter(ctx context.Context, cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ...health.DependencyChecker) *gin.Engine {
 	return api.NewRouter(api.RouterOptions{
-		Config:       cfg,
-		Logger:       log,
-		HealthChecks: healthChecks,
-		Database:     db,
+		Config:           cfg,
+		Logger:           log,
+		HealthChecks:     healthChecks,
+		Database:         db,
+		LifecycleContext: ctx,
 	})
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 
 func TestNewRouterServesHealthRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := newRouter(config.Config{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil)
+	router := newRouter(context.Background(), config.Config{AppEnv: "test"}, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil)
 
 	for _, path := range []string{"/healthz", "/api/v1/healthz"} {
 		response := httptest.NewRecorder()
