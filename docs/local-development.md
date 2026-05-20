@@ -190,3 +190,15 @@ docker compose -f deploy/docker-compose.yml build backend-api backend-worker fro
 ```
 
 Only run `docker compose -f deploy/docker-compose.yml up -d` for deployment-specific validation, and clean it up after the check unless instructed otherwise.
+
+## P9 deployment validation note
+
+`P9-DEPLOY-RELEASE-VALIDATION` is the deployment-specific exception to the shared-service rule. It may start the project Compose stack to validate release topology, including the one-shot `minio-bootstrap` service that creates or verifies the required MinIO buckets idempotently.
+
+After validation, clean all project-specific resources:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+```
+
+Do not copy shared local service credentials into `.env`, `.env.example`, Compose files, documentation, logs, or final handoff notes.
