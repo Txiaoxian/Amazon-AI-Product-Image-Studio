@@ -212,6 +212,61 @@ func TestProviderRoutesRejectSSRFBaseURLs(t *testing.T) {
 	}
 }
 
+func TestProviderRoutesRevalidateBaseURLOnSaveUpdateAndTest(t *testing.T) {
+	resolver := &mutableProviderRouteResolver{}
+	resolver.set("api.openai.com", "93.184.216.34")
+	resolver.set("rebind.example.com", "93.184.216.34")
+	resolver.set("private.example.com", "10.0.0.5")
+	router, db, fakeProbe, adminSession := newProviderRouteTestRouterWithResolver(t, resolver)
+
+	createBlocked := performJSON(router, http.MethodPost, "/api/v1/providers", map[string]any{
+		"type":    provider.TypeOpenAICompatible,
+		"name":    "Private DNS",
+		"baseUrl": "https://private.example.com/v1",
+		"apiKey":  "fake-secret-for-ssrf-test",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if createBlocked.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create private DNS status = %d, want %d: %s", createBlocked.Code, http.StatusUnprocessableEntity, createBlocked.Body.String())
+	}
+
+	createGood := performJSON(router, http.MethodPost, "/api/v1/providers", map[string]any{
+		"type":    provider.TypeOpenAICompatible,
+		"name":    "Rebinding Relay",
+		"baseUrl": "https://rebind.example.com/v1",
+		"apiKey":  "fake-secret-for-ssrf-test",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if createGood.Code != http.StatusCreated {
+		t.Fatalf("create public provider status = %d, want %d: %s", createGood.Code, http.StatusCreated, createGood.Body.String())
+	}
+	providerID := stringField(t, decodeData(t, createGood), "id")
+
+	updateBlocked := performJSON(router, http.MethodPatch, "/api/v1/providers/"+providerID, map[string]string{
+		"baseUrl": "https://private.example.com/v1",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if updateBlocked.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("update private DNS status = %d, want %d: %s", updateBlocked.Code, http.StatusUnprocessableEntity, updateBlocked.Body.String())
+	}
+
+	resolver.set("rebind.example.com", "127.0.0.1")
+	testBlocked := performJSON(router, http.MethodPost, "/api/v1/providers/"+providerID+"/test", nil, adminSession.cookies, adminSession.csrfHeader())
+	if testBlocked.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("test rebinding provider status = %d, want %d: %s", testBlocked.Code, http.StatusUnprocessableEntity, testBlocked.Body.String())
+	}
+	if fakeProbe.lastAPIKey != "" {
+		t.Fatalf("probe was called after runtime URL revalidation failed")
+	}
+	assertResponseExcludes(t, testBlocked.Body.String(), "fake-secret-for-ssrf-test", "rebind.example.com", "127.0.0.1")
+
+	var record database.AIProvider
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, providerID).First(&record).Error; err != nil {
+		t.Fatalf("load revalidated provider: %v", err)
+	}
+	if record.LastTestStatus != provider.TestStatusFailure || record.LastTestError == "" {
+		t.Fatalf("blocked test did not persist sanitized failure status: %#v", record)
+	}
+	assertProviderOperationLogs(t, db, []string{"provider.create", "provider.test"})
+}
+
 func TestProviderTestResponseAndAuditAreRedactedOnProbeFailure(t *testing.T) {
 	router, db, fakeProbe, adminSession := newProviderRouteTestRouter(t)
 	fakeProbe.result = provider.ProbeResult{
@@ -277,7 +332,37 @@ func (r providerRouteResolver) LookupIPAddr(_ context.Context, host string) ([]n
 	return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
 }
 
+type mutableProviderRouteResolver struct {
+	addresses map[string][]net.IPAddr
+}
+
+func (r *mutableProviderRouteResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr, error) {
+	if addresses, ok := r.addresses[host]; ok {
+		return addresses, nil
+	}
+	return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+}
+
+func (r *mutableProviderRouteResolver) set(host string, ips ...string) {
+	if r.addresses == nil {
+		r.addresses = map[string][]net.IPAddr{}
+	}
+	addresses := make([]net.IPAddr, 0, len(ips))
+	for _, raw := range ips {
+		addresses = append(addresses, net.IPAddr{IP: net.ParseIP(raw)})
+	}
+	r.addresses[host] = addresses
+}
+
 func newProviderRouteTestRouter(t *testing.T) (http.Handler, *gorm.DB, *fakeProviderProber, providerRouteSession) {
+	t.Helper()
+
+	return newProviderRouteTestRouterWithResolver(t, providerRouteResolver{
+		"api.openai.com": {{IP: net.ParseIP("93.184.216.34")}},
+	})
+}
+
+func newProviderRouteTestRouterWithResolver(t *testing.T, resolver provider.Resolver) (http.Handler, *gorm.DB, *fakeProviderProber, providerRouteSession) {
 	t.Helper()
 
 	db := newAuthRouteTestDB(t)
@@ -287,9 +372,7 @@ func newProviderRouteTestRouter(t *testing.T) (http.Handler, *gorm.DB, *fakeProv
 		Logger:   discardLogger(),
 		Database: db,
 		ProviderOpts: []provider.Option{
-			provider.WithURLValidator(provider.NewURLValidator(providerRouteResolver{
-				"api.openai.com": {{IP: net.ParseIP("93.184.216.34")}},
-			})),
+			provider.WithURLValidator(provider.NewURLValidator(resolver)),
 			provider.WithProber(fakeProbe),
 		},
 	})

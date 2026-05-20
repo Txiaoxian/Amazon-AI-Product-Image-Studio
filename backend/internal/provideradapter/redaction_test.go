@@ -93,3 +93,44 @@ func TestDefaultRedactionPatternsStillRemoveLegacySensitiveValues(t *testing.T) 
 		}
 	}
 }
+
+func TestRuntimeRedactionDropsNestedSecretsHeadersAndImagePayloadsTogether(t *testing.T) {
+	apiKey := "fake-secret-for-redaction-test"
+	redactor := NewRedactor(apiKey)
+
+	metadata := redactor.SanitizeMetadata(map[string]any{
+		"safe": "keep",
+		"nested": map[string]any{
+			apiKey:                 "secret key name must be dropped",
+			"error_body_" + apiKey: "secret key fragment must be dropped",
+			"safe":                 "keep nested",
+		},
+		"headers": map[string]any{
+			"Authorization": "Bearer " + apiKey,
+			"Cookie":        "studio_auth=" + apiKey,
+		},
+		"images": []any{
+			map[string]any{"b64_json": "data:image/png;base64,AAAA"},
+			map[string]any{"inline_data": map[string]any{"mime_type": "image/png", "data": "AAAA"}},
+		},
+		"message": "provider echoed " + apiKey,
+	})
+
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	lower := strings.ToLower(string(encoded))
+	for _, forbidden := range []string{strings.ToLower(apiKey), "authorization", "cookie", "b64_json", "inline_data", "data:image", "base64"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("runtime metadata leaked %q: %s", forbidden, encoded)
+		}
+	}
+	nested, ok := metadata["nested"].(map[string]any)
+	if !ok || len(nested) != 1 || nested["safe"] != "keep nested" {
+		t.Fatalf("nested metadata = %#v, want only safe entry", metadata["nested"])
+	}
+	if metadata["safe"] != "keep" {
+		t.Fatalf("safe metadata was removed: %#v", metadata)
+	}
+}

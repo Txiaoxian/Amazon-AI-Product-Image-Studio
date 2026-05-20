@@ -3,9 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"mime/multipart"
@@ -236,6 +238,58 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	}
 }
 
+func TestAssetRoutesCrossTenantObjectActionsAreInvisibleAndSideEffectFree(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+	seedOtherTenantProject(t, db)
+	now := time.Now().UTC()
+	record := database.ImageAsset{
+		ID:        "asset-tenant-b",
+		TenantID:  "tenant-b",
+		ProjectID: "project-tenant-b",
+		Kind:      asset.KindReference,
+		Category:  "reference",
+		Filename:  "tenant-b.png",
+		ObjectKey: "tenants/tenant-b/projects/project-tenant-b/assets/asset-tenant-b/original.png",
+		MimeType:  "image/png",
+		SizeBytes: 1,
+		Width:     1,
+		Height:    1,
+		SHA256:    strings.Repeat("0", 64),
+		CreatedBy: "user-tenant-b",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatalf("seed tenant B asset: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{name: "detail", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b"},
+		{name: "download", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b/download"},
+		{name: "update", method: http.MethodPatch, path: "/api/v1/assets/asset-tenant-b", body: map[string]string{"category": "stolen"}},
+		{name: "favorite", method: http.MethodPost, path: "/api/v1/assets/asset-tenant-b/favorite"},
+		{name: "unfavorite", method: http.MethodDelete, path: "/api/v1/assets/asset-tenant-b/favorite"},
+		{name: "delete", method: http.MethodDelete, path: "/api/v1/assets/asset-tenant-b"},
+	} {
+		response := performJSON(router, tc.method, tc.path, tc.body, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s cross-tenant status = %d, want %d: %s", tc.name, response.Code, http.StatusNotFound, response.Body.String())
+		}
+		var tenantBAsset database.ImageAsset
+		if err := db.Unscoped().Where("tenant_id = ? AND id = ?", "tenant-b", "asset-tenant-b").First(&tenantBAsset).Error; err != nil {
+			t.Fatalf("reload tenant B asset after %s: %v", tc.name, err)
+		}
+		if tenantBAsset.DeletedAt.Valid || tenantBAsset.Category != "reference" || tenantBAsset.IsFavorite {
+			t.Fatalf("%s changed cross-tenant asset: %#v", tc.name, tenantBAsset)
+		}
+	}
+}
+
 func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -297,6 +351,40 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 			t.Fatal("database failure should attempt object cleanup")
 		}
 	})
+}
+
+func TestAssetUploadAcceptsAllowedImageTypesWithinPolicy(t *testing.T) {
+	router, _, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+	projectID := createAssetTestProject(t, router, adminSession, "Allowed Upload Project")
+
+	for _, tc := range []struct {
+		name        string
+		filename    string
+		contentType string
+		body        []byte
+		wantWidth   float64
+		wantHeight  float64
+	}{
+		{name: "png", filename: "allowed.png", contentType: "image/png", body: validPNG(t, 2, 2), wantWidth: 2, wantHeight: 2},
+		{name: "jpeg", filename: "allowed.jpg", contentType: "image/jpeg", body: validJPEG(t, 3, 2), wantWidth: 3, wantHeight: 2},
+		{name: "webp", filename: "allowed.webp", contentType: "image/webp", body: validWebP(t), wantWidth: 1, wantHeight: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", tc.filename, tc.contentType, tc.body, nil, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusCreated {
+				t.Fatalf("allowed %s upload status = %d, want %d: %s", tc.name, response.Code, http.StatusCreated, response.Body.String())
+			}
+			data := decodeData(t, response)
+			if stringField(t, data, "mimeType") != tc.contentType {
+				t.Fatalf("%s mimeType = %q, want %q", tc.name, stringField(t, data, "mimeType"), tc.contentType)
+			}
+			assertFloatField(t, data, "width", tc.wantWidth)
+			assertFloatField(t, data, "height", tc.wantHeight)
+		})
+	}
+	if store.count() != 3 {
+		t.Fatalf("stored allowed upload object count = %d, want 3", store.count())
+	}
 }
 
 type fakeObjectStore struct {
@@ -481,6 +569,32 @@ func validPNG(t *testing.T, width int, height int) []byte {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func validJPEG(t *testing.T, width int, height int) []byte {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(40 + x), G: uint8(80 + y), B: 180, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func validWebP(t *testing.T) []byte {
+	t.Helper()
+
+	data, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AA/vuUAAA=")
+	if err != nil {
+		t.Fatalf("decode webp fixture: %v", err)
+	}
+	return data
 }
 
 func assertNoAssetRows(t *testing.T, db *gorm.DB, tenantID string) {
