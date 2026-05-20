@@ -25,16 +25,18 @@ import (
 )
 
 type RouterOptions struct {
-	Config            config.Config
-	Logger            *slog.Logger
-	HealthChecks      []health.DependencyChecker
-	Database          *gorm.DB
-	ObjectStore       storage.ObjectStore
-	ProviderOpts      []provider.Option
-	AuditReadRedactor *redaction.Redactor
-	TaskEnqueuer      queue.TaskEnqueuer
-	SSEBroker         *sse.Broker
-	SSEHeartbeat      time.Duration
+	Config              config.Config
+	Logger              *slog.Logger
+	HealthChecks        []health.DependencyChecker
+	Database            *gorm.DB
+	ObjectStore         storage.ObjectStore
+	ProviderOpts        []provider.Option
+	AuditReadRedactor   *redaction.Redactor
+	TaskEnqueuer        queue.TaskEnqueuer
+	SSEBroker           *sse.Broker
+	SSEHeartbeat        time.Duration
+	LifecycleContext    context.Context
+	TaskEventSubscriber queue.TaskEventSubscriber
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -62,7 +64,11 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	if shouldStartRedisTaskEventBridge(options.Config) {
 		redisEventPublisher := queue.NewRedisTaskEventPublisher(options.Config.Queue)
 		eventPublisher = task.MultiEventPublisher(eventBroker, redisEventPublisher)
-		queue.StartTaskEventSubscriber(context.Background(), queue.NewRedisTaskEventSubscriber(options.Config.Queue), eventBroker, options.Logger)
+		taskEventSubscriber := options.TaskEventSubscriber
+		if taskEventSubscriber == nil {
+			taskEventSubscriber = queue.NewRedisTaskEventSubscriber(options.Config.Queue)
+		}
+		startTaskEventSubscriber(options.LifecycleContext, taskEventSubscriber, eventBroker, options.Logger)
 	}
 	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventPublisher))
 	settingsService := settings.NewService(options.Database, options.Logger, options.Config.Upload)
@@ -139,4 +145,14 @@ func taskEnqueuer(options RouterOptions) queue.TaskEnqueuer {
 
 func shouldStartRedisTaskEventBridge(cfg config.Config) bool {
 	return !strings.EqualFold(strings.TrimSpace(cfg.AppEnv), "test")
+}
+
+func startTaskEventSubscriber(ctx context.Context, subscriber queue.TaskEventSubscriber, sink queue.TaskEventSink, log *slog.Logger) {
+	if ctx == nil {
+		if log != nil {
+			log.Warn("task event wakeup subscriber not started", slog.String("reason", "missing lifecycle context"))
+		}
+		return
+	}
+	queue.StartTaskEventSubscriber(ctx, subscriber, sink, log)
 }
