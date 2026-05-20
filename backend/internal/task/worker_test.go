@@ -897,6 +897,88 @@ func TestWorkerRunParallelDuplicateDeliveryDoesNotDuplicatePersistence(t *testin
 	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventImageOutput, EventUsageRecorded, EventTaskCompleted})
 }
 
+func TestWorkerRunFinalizationFailureDoesNotStopOtherProcessingLoops(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	retryTaskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-finalization-retry-fails", Status: StatusQueued})
+	successTaskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-finalization-success", Status: StatusQueued})
+
+	retryStarted := make(chan struct{})
+	successStarted := make(chan struct{})
+	var retryStartedOnce sync.Once
+	var successStartedOnce sync.Once
+	publisher := newTaskEventSignalPublisher(retryTaskID, EventTaskFailed)
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		EventPublisher: publisher,
+		Executor: executorFunc(func(ctx context.Context, execution ExecutionContext) ExecutionResult {
+			switch execution.Task.ID {
+			case retryTaskID:
+				retryStartedOnce.Do(func() {
+					close(retryStarted)
+				})
+				select {
+				case <-successStarted:
+				case <-ctx.Done():
+				}
+				return ExecutionResult{
+					ErrorCode:    "PROVIDER_TEMPORARY",
+					ErrorMessage: "Provider temporary failure.",
+					Retryable:    true,
+				}
+			case successTaskID:
+				successStartedOnce.Do(func() {
+					close(successStarted)
+				})
+				select {
+				case <-publisher.signal:
+				case <-ctx.Done():
+				}
+				return ExecutionResult{}
+			default:
+				return ExecutionResult{ErrorCode: "UNEXPECTED_TASK", ErrorMessage: "Unexpected task."}
+			}
+		}),
+	})
+	taskQueue := newRetryFinalizationFailureQueue([]queue.TaskClaim{
+		{TaskID: retryTaskID, DeliveryCount: 1},
+		{TaskID: successTaskID, DeliveryCount: 1},
+	}, retryTaskID)
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      2,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, retryStarted, time.Second, "retry task to start processing")
+	waitForTestSignal(t, successStarted, time.Second, "success task to start on another processing loop")
+	waitForTestSignal(t, taskQueue.retryFailed, time.Second, "retry finalization to fail")
+	waitForTestSignal(t, publisher.signal, time.Second, "retry finalization failure to mark task failed")
+	waitForTestSignal(t, taskQueue.ackDone, time.Second, "unrelated success claim to ack after retry finalization failure")
+
+	if got := atomic.LoadInt32(&taskQueue.retryErrors); got != 1 {
+		t.Fatalf("retry finalization errors = %d, want 1", got)
+	}
+	retryRecord := loadWorkerTask(t, db, retryTaskID)
+	if retryRecord.Status != StatusFailed || retryRecord.ErrorCode != "QUEUE_RETRY_FAILED" {
+		t.Fatalf("retry finalization failure task = %#v, want FAILED QUEUE_RETRY_FAILED", retryRecord)
+	}
+	successRecord := loadWorkerTask(t, db, successTaskID)
+	if successRecord.Status != StatusSucceeded {
+		t.Fatalf("unrelated task status = %q, want SUCCEEDED", successRecord.Status)
+	}
+
+	select {
+	case err := <-runErr:
+		t.Fatalf("Worker.Run returned before parent context cancellation: %v", err)
+	default:
+	}
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+}
+
 type executorFunc func(context.Context, ExecutionContext) ExecutionResult
 
 func (f executorFunc) Execute(ctx context.Context, execution ExecutionContext) ExecutionResult {
@@ -909,6 +991,29 @@ type recordingPublisher struct {
 
 func (p *recordingPublisher) PublishTaskEvent(_ context.Context, event database.TaskEvent) {
 	p.events = append(p.events, event)
+}
+
+type taskEventSignalPublisher struct {
+	taskID    string
+	eventType string
+	signal    chan struct{}
+	once      sync.Once
+}
+
+func newTaskEventSignalPublisher(taskID string, eventType string) *taskEventSignalPublisher {
+	return &taskEventSignalPublisher{
+		taskID:    taskID,
+		eventType: eventType,
+		signal:    make(chan struct{}),
+	}
+}
+
+func (p *taskEventSignalPublisher) PublishTaskEvent(_ context.Context, event database.TaskEvent) {
+	if event.TaskID == p.taskID && event.EventType == p.eventType {
+		p.once.Do(func() {
+			close(p.signal)
+		})
+	}
 }
 
 type recordingLimiter struct {
@@ -1096,6 +1201,73 @@ func (q *claimListQueue) RecoverStale(context.Context, time.Time, int) ([]string
 }
 
 func (q *claimListQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+type retryFinalizationFailureQueue struct {
+	mu           sync.Mutex
+	claims       []queue.TaskClaim
+	failRetryFor string
+	ackDone      chan struct{}
+	retryFailed  chan struct{}
+	ackOnce      sync.Once
+	retryOnce    sync.Once
+	retryErrors  int32
+}
+
+func newRetryFinalizationFailureQueue(claims []queue.TaskClaim, failRetryFor string) *retryFinalizationFailureQueue {
+	return &retryFinalizationFailureQueue{
+		claims:       append([]queue.TaskClaim(nil), claims...),
+		failRetryFor: failRetryFor,
+		ackDone:      make(chan struct{}),
+		retryFailed:  make(chan struct{}),
+	}
+}
+
+func (q *retryFinalizationFailureQueue) EnqueueTask(context.Context, string) error {
+	return nil
+}
+
+func (q *retryFinalizationFailureQueue) Claim(ctx context.Context) (queue.TaskClaim, error) {
+	q.mu.Lock()
+	if len(q.claims) > 0 {
+		claim := q.claims[0]
+		q.claims = q.claims[1:]
+		q.mu.Unlock()
+		return claim, nil
+	}
+	q.mu.Unlock()
+	<-ctx.Done()
+	return queue.TaskClaim{}, ctx.Err()
+}
+
+func (q *retryFinalizationFailureQueue) Ack(_ context.Context, claim queue.TaskClaim) error {
+	q.ackOnce.Do(func() {
+		close(q.ackDone)
+	})
+	return nil
+}
+
+func (q *retryFinalizationFailureQueue) Retry(_ context.Context, claim queue.TaskClaim, _ time.Duration) error {
+	if claim.TaskID == q.failRetryFor {
+		atomic.AddInt32(&q.retryErrors, 1)
+		q.retryOnce.Do(func() {
+			close(q.retryFailed)
+		})
+		return errors.New("test retry finalization failed")
+	}
+	return nil
+}
+
+func (q *retryFinalizationFailureQueue) DeadLetter(context.Context, queue.TaskClaim, string) error {
+	return nil
+}
+
+func (q *retryFinalizationFailureQueue) RecoverStale(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+func (q *retryFinalizationFailureQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	return nil, nil
 }
 
