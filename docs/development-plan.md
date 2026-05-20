@@ -388,7 +388,7 @@ P7 Worker queue result:
 - Worker consumes task IDs only, reloads task state from MySQL, transitions eligible tasks to `RUNNING`, writes task events, and uses fake/stub execution until Provider Adapter runtime is implemented.
 - Redis wakeups now notify API SSE streams after persisted task events. Wakeups carry only minimal sequence/task metadata; SSE still reloads visible events from MySQL.
 - Concurrency limits are implemented for global, tenant, user, Provider, and model dimensions with stale lock cleanup.
-- Non-blocking carry-forward risks: Worker currently runs a single processing loop and does not yet apply `WORKER_CONCURRENCY` as a worker pool; the API Redis event subscriber uses a background context that should be tied to server lifecycle later.
+- Non-blocking carry-forward risks after P10 worker-pool merge: the API Redis event subscriber uses a background context that should be tied to server lifecycle later.
 - Real Provider execution, output asset creation, usage records, and API call logs are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
 
 P7 Provider Adapter runtime result:
@@ -418,7 +418,7 @@ P7 R7 review result:
 P7 residual risks and carry-forward items after R9:
 
 - Completed in P8/P9: legacy browser Provider adapters, localStorage Provider API key persistence, IndexedDB-backed production history, and unreachable legacy display/storage helpers were removed or isolated from production paths.
-- Open for P10: Worker still runs a single processing loop instead of honoring `WORKER_CONCURRENCY` as a worker pool.
+- Completed in P10: Worker now honors `WORKER_CONCURRENCY` as an in-process processing pool.
 - Open for P10: API Redis event subscription lifecycle still uses a background context and should later be tied to API server shutdown.
 - Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
 - Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
@@ -490,7 +490,7 @@ P8 acceptance gates:
 
 P8 intentionally does not resolve:
 
-- Worker pool implementation for `WORKER_CONCURRENCY`.
+- Worker pool implementation for `WORKER_CONCURRENCY` was completed in P10.
 - API Redis subscription lifecycle binding to server shutdown.
 - General redaction of unknown secrets outside known-secret and heuristic rules.
 - Provider soft-delete linked-model backend policy or optional model-name uniqueness hardening; these remain P9/admin lifecycle concerns.
@@ -535,23 +535,31 @@ P9 carry-forward risks:
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: ready to start after R9. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+Status: in progress after `P10-BE-WORKER-POOL` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
 
 P10 priorities:
 
-1. `P10-BE-WORKER-POOL`: first task. Make configured Worker concurrency real by running multiple task-processing loops under one Worker process while preserving MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits.
-2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: later. Tie the API Redis task-event subscriber lifecycle to API server shutdown instead of a background context, without changing SSE replay semantics.
+1. `P10-BE-WORKER-POOL`: completed and merged. Configured Worker concurrency is now a real in-process processing pool while MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits remain intact.
+2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: next. Tie the API Redis task-event subscriber lifecycle to API server shutdown instead of a background context, without changing SSE replay semantics.
 3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: later. Decide and implement Provider soft-delete behavior for linked models, such as block deletion, hide linked models, or cascade-disable linked models.
 4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: later. Split the large admin observability/settings UI if needed and add stale-request protection for API call log details.
 5. `P10-BE-HISTORY-QUERY`: optional later. Add a backend history query if frontend-assembled task/asset pagination becomes a correctness issue.
 
-P10 worker-pool boundaries:
+P10 worker-pool result:
 
-- The first P10 task must not change Provider Adapter request/response contracts, task event names, SSE replay cursor semantics, or frontend task behavior.
-- `WORKER_CONCURRENCY` may be restored as the worker-loop count if the implementation chooses that env name, but global/tenant/user/Provider/model concurrency limits remain separate runtime limiters and must not be conflated with worker goroutine count.
-- A multi-loop Worker must still treat Redis payloads as task IDs only and reload every task from MySQL before state transitions.
-- Recovery should remain single-owner per process or otherwise be guarded so concurrent loops do not run duplicate recovery work.
-- The task must include tests proving parallel execution happens when configured, shutdown cancels all loops cleanly, duplicate claims do not duplicate outputs/events, and queue finalization still happens exactly once per claim.
+- `WORKER_CONCURRENCY` is now parsed from config, documented in `.env.example`, and passed by Docker Compose to `backend-worker`.
+- Worker `Run` uses one recovery loop plus the configured number of processing loops.
+- Worker process concurrency remains separate from global/tenant/user/Provider/model runtime limiters.
+- Redis queue payloads remain task IDs only, and Worker still reloads task state from MySQL before transitions.
+- Tests cover valid/invalid worker concurrency, parallel processing, global limiter below pool size, single-owner recovery, shutdown cancellation, duplicate delivery de-duplication, and retry finalization failure isolation.
+
+P10 SSE bridge lifecycle boundaries:
+
+- The next task must not change task event names, task statuses, SSE frame format, `Last-Event-ID`, replay cursor semantics, or frontend EventSource behavior.
+- MySQL remains the only replay source. Redis task-event pub/sub remains a wakeup mechanism only.
+- The API Redis event subscriber must be tied to the API process lifecycle and stop when API shutdown begins.
+- Router tests should not leave background Redis subscriber goroutines behind.
+- The task should add tests proving subscriber startup uses the API lifecycle context and cancellation closes the subscriber path cleanly.
 
 ## Phase boundaries
 

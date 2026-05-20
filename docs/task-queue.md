@@ -92,22 +92,23 @@ P7 Worker queue result:
 - Redis payloads contain task ID only; Worker reloads tenant, project, Provider, model, prompt, and task parameters from MySQL.
 - Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events.
 - Concurrency limits exist for global, tenant, user, Provider, and model dimensions, with stale lock cleanup.
-- Non-blocking carry-forward risks: Worker uses a single processing loop despite `WORKER_CONCURRENCY`; API Redis subscription lifecycle should later be tied to server shutdown.
+- Non-blocking carry-forward risks after P10 worker-pool merge: API Redis subscription lifecycle should later be tied to server shutdown.
 
 P7 Provider runtime result:
 
 - Real Provider execution is now merged behind the Worker state machine.
 - Successful runs create MinIO objects, generated/edited assets, `task_outputs`, `usage_records`, and `api_call_logs`, then emit `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal events through the existing persisted-event flow.
 - Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
-- The remaining Worker carry-forward items are still separate concerns: `WORKER_CONCURRENCY` is not yet a pool, and API Redis subscription lifecycle should later be tied to server shutdown.
+- The remaining runtime carry-forward item after P10 worker-pool merge is API Redis subscription lifecycle binding to server shutdown.
 
-P10 Worker pool plan:
+P10 Worker pool result:
 
-- `P10-BE-WORKER-POOL` is the next runtime hardening task after P9 release validation.
+- `P10-BE-WORKER-POOL` is merged.
+- `WORKER_CONCURRENCY` controls the number of in-process Worker processing loops.
 - Worker process concurrency is distinct from global/tenant/user/Provider/model execution limits. Worker loop count controls how many queue claims can be processed in parallel by one worker process; Redis concurrency limits still decide whether a claimed task may run.
-- The worker pool must preserve the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens exactly once per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
-- Recovery should remain single-owner per worker process, or be explicitly guarded, so multiple processing loops do not duplicate timeout/recovery work.
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` remains a separate follow-up for binding the API Redis event subscriber to API server shutdown.
+- The worker pool preserves the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
+- Recovery remains a single loop per Worker process so multiple processing loops do not duplicate timeout/recovery work.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` is the next follow-up for binding the API Redis event subscriber to API server shutdown.
 
 ## Cancellation
 
@@ -152,3 +153,10 @@ P7 SSE boundary:
 - Replay must use `task_events.sequence` as the cursor and emit `task_events.id` as the SSE `id`.
 - MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.
 - The merged SSE implementation uses an API-process in-process broker plus Redis cross-process wakeups. The SSE API must still reload events from MySQL before sending them.
+
+P10 SSE bridge lifecycle plan:
+
+- Redis task-event pub/sub must remain a wakeup channel carrying only event sequence IDs.
+- The API subscriber must stop with the API server lifecycle instead of using an unbounded background context.
+- Subscriber shutdown must close the Redis pub/sub path and must not leave goroutines alive in router/API tests.
+- SSE replay semantics, heartbeat, `Last-Event-ID`, and frontend EventSource behavior must not change.

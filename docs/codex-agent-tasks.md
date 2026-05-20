@@ -1766,7 +1766,7 @@ P7 Worker queue actual result:
 - Worker consumes task ID payloads only, reloads task state from MySQL, writes `TASK_STARTED`, `TASK_PROGRESS`, terminal events, and uses fake/stub execution until Provider Adapter runtime is implemented.
 - Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events without Redis becoming the event source of truth.
 - Global, tenant, user, Provider, and model concurrency limits are implemented with stale lock cleanup.
-- Non-blocking carry-forward risks: Worker currently runs a single processing loop and does not yet use `WORKER_CONCURRENCY` as a pool; API Redis event subscription uses a background context that should later be tied to server lifecycle.
+- Non-blocking carry-forward risks after P10 worker-pool merge: API Redis event subscription uses a background context that should later be tied to server lifecycle.
 - Real Provider calls, MinIO output assets, `task_outputs`, `usage_records`, and `api_call_logs` are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
 
 P7 Provider Adapter runtime actual result:
@@ -2235,7 +2235,7 @@ git diff --check
 ### R7 非阻塞遗留 after R9
 
 - 已在 P8/P9 处理：旧前端 Provider 直连、localStorage API Key、IndexedDB 本地历史主路径和 unreachable legacy display/storage helpers 已从生产路径移除或隔离。
-- P10 继续处理：Worker 仍是单 processing loop，尚未把 `WORKER_CONCURRENCY` 实现为 worker pool。
+- 已在 P10 处理：Worker now honors `WORKER_CONCURRENCY` as an in-process processing pool.
 - P10 后续处理：API Redis event subscription 仍使用 background context，后续应绑定 server shutdown 生命周期。
 - 当前 runtime 对已知 Provider API Key 已覆盖 value/key 两类脱敏；未知且不命中启发式规则的 secret 仍无法自动识别。
 - 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
@@ -3655,7 +3655,7 @@ P10-BE-WORKER-POOL - 让 Worker 并发配置成为真实处理池
 - 推荐线程名：`P10-BE-WORKER-POOL`
 - 推荐分支名：`codex/p10-backend-worker-pool`
 - 起始分支：最新 `main`
-- 开发顺序：串行执行。该任务触碰 Worker runtime，不要与 SSE lifecycle、Provider/model lifecycle 或前端 admin hardening 并行。
+- 开发顺序：completed and merged. 该任务触碰 Worker runtime，不要与 SSE lifecycle、Provider/model lifecycle 或前端 admin hardening 并行。
 
 ### 目标
 
@@ -3777,6 +3777,153 @@ P10-BE-WORKER-POOL - 让 Worker 并发配置成为真实处理池
 ```bash
 cd backend
 go test ./internal/config ./internal/task ./cmd/worker -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+### 完成状态
+
+- `P10-BE-WORKER-POOL` completed, reviewed, and merged into `main`.
+- Worker now runs one recovery loop plus `WORKER_CONCURRENCY` processing loops inside a single Worker process.
+- `WORKER_CONCURRENCY` is parsed by backend config, documented in `.env.example`, and passed to `backend-worker` by Compose.
+- Tests cover valid/invalid config, pool concurrency, global limiter below pool size, single-owner recovery, shutdown cancellation, duplicate delivery de-duplication, and retry finalization failure isolation.
+
+## 子任务 33：P10 SSE bridge 生命周期
+
+### 任务名称
+
+P10-BE-SSE-BRIDGE-LIFECYCLE - 绑定 API Redis 任务事件订阅到 API 生命周期
+
+### 推荐执行信息
+
+- 推荐线程名：`P10-BE-SSE-BRIDGE-LIFECYCLE`
+- 推荐分支名：`codex/p10-backend-sse-bridge-lifecycle`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务触碰 API startup/router 和 Redis task-event wakeup bridge，不要与 Provider/model lifecycle、frontend admin hardening 或 history query 并行。
+
+### 目标
+
+把 API 进程中的 Redis task-event subscriber 从 `context.Background()` 改为绑定 API server lifecycle。API 收到 shutdown 信号后，Redis wakeup subscriber 必须随 API shutdown context 停止并关闭 pub/sub，不留下长期 goroutine，同时保持 SSE replay、heartbeat、`Last-Event-ID`、MySQL replay source 和 Redis wakeup-only 语义不变。
+
+### 允许修改文件
+
+- `backend/cmd/api/**`
+- `backend/internal/api/router.go`
+- `backend/internal/api/*_test.go` 仅限 router/API startup/SSE bridge lifecycle 测试
+- `backend/internal/queue/task_event_wakeup.go`
+- `backend/internal/queue/task_event_wakeup_test.go`
+- `backend/internal/queue/**` 仅限 task-event wakeup subscriber 接口/测试 helper 的窄改动
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `backend/internal/task/**`
+- `backend/internal/sse/**`，除非先报告主 agent 并说明为什么 lifecycle 无法只在 API/queue 边界解决
+- `backend/internal/provideradapter/**`
+- `backend/internal/provider/**`
+- `backend/internal/asset/**`
+- `backend/internal/storage/**`
+- `deploy/**`
+- `.env.example`
+- Task event names, task statuses, SSE frame format, `Last-Event-ID` parsing, replay cursor semantics, Redis wakeup payload schema, and frontend EventSource behavior
+
+### 前置依赖
+
+- `P10-BE-WORKER-POOL` completed, reviewed, and merged into `main`.
+- Existing P7/P8/P9 SSE contracts are stable: MySQL is replay source, Redis pub/sub is wakeup-only, frontend consumes EventSource/SSE only.
+- Current known carry-forward risk: `backend/internal/api/router.go` starts Redis task-event subscriber with `context.Background()`, so it is not tied to API server shutdown.
+
+### 必须保持的现有行为
+
+- SSE replay continues to read `task_events` from MySQL and filter by tenant/project/task visibility.
+- `Last-Event-ID` header and `lastEventId` query fallback keep the same behavior.
+- Heartbeat frames keep the same behavior and must not contain task metadata.
+- Redis task-event wakeup payload remains sequence-only and must not include tenant, task, project, event payload, Authorization, Cookie, API key, or base64 data.
+- Redis pub/sub remains an acceleration/wakeup mechanism only; it must not become the event source of truth.
+- API task service still publishes both in-process broker events and Redis wakeups when Redis bridge is enabled.
+- Tests using `APP_ENV=test` or explicit router options must not unexpectedly start real Redis subscribers.
+- Existing task/SSE route tests and queue wakeup tests must remain green.
+
+### 允许的中间态
+
+- `RouterOptions` may gain a lifecycle context and/or injectable task-event subscriber for tests.
+- `queue.StartTaskEventSubscriber` may return a done channel or cancellation result if useful for tests and shutdown observation.
+- API `main` may create the signal context before router construction so the router can use that context for background bridge work.
+- Test-only fake subscribers may be introduced inside test files.
+
+### 禁止的半迁移状态
+
+- Do not continue using `context.Background()` in the production API path that starts the Redis task-event subscriber.
+- Do not remove Redis wakeups or make live SSE depend only on in-process broker.
+- Do not make SSE handlers read directly from Redis pub/sub as a source of event details.
+- Do not alter SSE event IDs, event names, payload shape, heartbeat cadence contract, or replay ordering.
+- Do not leak Redis subscriber errors or internal shutdown details to API clients.
+- Do not leave goroutines running after router/API lifecycle tests cancel their context.
+- Do not introduce real Redis/MySQL/MinIO dependency into unit tests that can use fakes.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| API startup | Redis task-event bridge enabled outside test env | subscriber starts with API lifecycle context, not `context.Background()` |
+| API shutdown | lifecycle context is cancelled | subscriber exits and closes pub/sub path cleanly |
+| Router tests | router is built in test env | no real Redis subscriber starts unless explicitly injected/enabled |
+| Subscriber error | subscriber returns an error before context cancellation | error is logged without crashing router construction |
+| Context cancellation | subscriber returns `context.Canceled` after lifecycle cancellation | no warning/error log is emitted as an unexpected failure |
+| Wakeup payload | Redis wakeup contains only `sequence` | no tenant/task/project/payload/secret/base64 fields are published |
+| Malformed wakeup | subscriber receives invalid JSON or zero sequence | message is ignored and subscriber continues |
+| SSE replay | live wakeup publishes sequence only | SSE service reloads visible events from MySQL and keeps tenant/object filtering |
+| Contract preservation | existing SSE route tests run | `Last-Event-ID`, heartbeat, replay ordering, and visibility behavior remain unchanged |
+
+### 必须新增或更新的回归测试
+
+- API/router or cmd/api test proving production bridge startup receives a cancellable lifecycle context instead of an unbounded background context.
+- Test proving lifecycle cancellation stops the task-event subscriber and does not log an unexpected error for `context.Canceled`.
+- Test proving router construction in test env does not start a real Redis subscriber by default.
+- Queue wakeup tests must continue to prove sequence-only payload, malformed payload ignore, zero sequence ignore, and channel naming.
+- Existing SSE route tests must remain green.
+
+### 具体开发内容
+
+- Inspect `backend/internal/api/router.go`, `backend/cmd/api/main.go`, and `backend/internal/queue/task_event_wakeup.go`.
+- Introduce the smallest lifecycle hook needed for API startup to pass its signal/shutdown context into Redis task-event subscriber startup.
+- If needed, define a narrow subscriber interface in `queue` so tests can inject a fake subscriber without Redis.
+- Ensure `StartTaskEventSubscriber` or equivalent startup helper has observable cancellation behavior in tests.
+- Move API signal context creation before router construction if required, and pass it through `newRouter`/`RouterOptions`.
+- Preserve `shouldStartRedisTaskEventBridge` behavior unless a test-only override is needed.
+- Do not change task service event publishing semantics.
+- Add focused tests before running broad regression.
+
+### 安全要求
+
+- Do not log Authorization headers, Cookies, API keys, Provider raw responses, image base64, or raw event payload JSON.
+- Redis wakeup payload must remain sequence-only.
+- Do not weaken tenant isolation, object authorization, SSE visibility filtering, CSRF/auth middleware, Provider SSRF, upload validation, recursive redaction, or production secret guards.
+- Treat Redis pub/sub messages as untrusted input and ignore malformed data.
+
+### 验收标准
+
+- Production API path no longer starts the Redis task-event subscriber with `context.Background()`.
+- API lifecycle cancellation stops the Redis task-event subscriber.
+- Router/API tests can prove no background subscriber leak remains.
+- Existing SSE replay and heartbeat behavior is unchanged.
+- Redis wakeup payload remains sequence-only.
+- No frontend, docs, deploy, Provider, asset, storage, or task runtime files are modified.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/queue ./internal/api ./cmd/api -count=1
 go test ./...
 go test -race ./...
 go vet ./...
