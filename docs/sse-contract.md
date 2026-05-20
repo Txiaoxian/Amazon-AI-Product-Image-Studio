@@ -20,6 +20,12 @@ P7 implementation scope:
 - `P7-BE-WORKER-QUEUE` has added Redis-based cross-process Worker-to-API wakeups after Worker persists task events. Redis carries only a minimal wakeup; MySQL remains the replay source.
 - `P7-FE-TASK-CLIENT-SSE` is merged with frontend SSE client types, `lastEventId` fallback handling, heartbeat handling, and reducer utilities. It does not replace the main generation workbench flow; P8 owns workbench backendization.
 
+P10 lifecycle update:
+
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. The API Redis task-event subscriber is started with the API lifecycle context and stops on API shutdown.
+- Redis task-event wakeups remain sequence-only. They do not carry tenant IDs, task IDs, project IDs, full event payloads, Authorization headers, Cookies, Provider/API keys, or image base64.
+- Redis remains a wakeup path only. The SSE service still reloads visible events from MySQL before writing frames.
+
 ## Browser rules
 
 - Frontend must use EventSource or an equivalent SSE client.

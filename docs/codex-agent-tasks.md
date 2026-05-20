@@ -1766,7 +1766,7 @@ P7 Worker queue actual result:
 - Worker consumes task ID payloads only, reloads task state from MySQL, writes `TASK_STARTED`, `TASK_PROGRESS`, terminal events, and uses fake/stub execution until Provider Adapter runtime is implemented.
 - Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events without Redis becoming the event source of truth.
 - Global, tenant, user, Provider, and model concurrency limits are implemented with stale lock cleanup.
-- Non-blocking carry-forward risks after P10 worker-pool merge: API Redis event subscription uses a background context that should later be tied to server lifecycle.
+- Completed in P10: API Redis event subscription is tied to API server lifecycle and no longer starts from an unbounded background context in the production API path.
 - Real Provider calls, MinIO output assets, `task_outputs`, `usage_records`, and `api_call_logs` are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
 
 P7 Provider Adapter runtime actual result:
@@ -2236,10 +2236,10 @@ git diff --check
 
 - 已在 P8/P9 处理：旧前端 Provider 直连、localStorage API Key、IndexedDB 本地历史主路径和 unreachable legacy display/storage helpers 已从生产路径移除或隔离。
 - 已在 P10 处理：Worker now honors `WORKER_CONCURRENCY` as an in-process processing pool.
-- P10 后续处理：API Redis event subscription 仍使用 background context，后续应绑定 server shutdown 生命周期。
+- 已在 P10 处理：API Redis event subscription 绑定 API server lifecycle，不再由 production API path 使用 unbounded background context 启动。
 - 当前 runtime 对已知 Provider API Key 已覆盖 value/key 两类脱敏；未知且不命中启发式规则的 secret 仍无法自动识别。
 - 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
-- P10 后续处理：Provider soft delete 后的 linked-model 行为仍需确定。
+- P10 后续处理：Provider soft delete 后的 linked-model 行为已确定为“存在同租户未软删除模型时阻止删除”，下一任务负责实现。
 
 ## 第八批串行开发
 
@@ -2851,7 +2851,7 @@ Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This 
 
 R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
 
-P10 starts serially after R9. The first task is `P10-BE-WORKER-POOL`; do not start SSE bridge lifecycle, Provider/model lifecycle, frontend admin hardening, or history query work in parallel.
+P10 starts serially after R9. `P10-BE-WORKER-POOL` and `P10-BE-SSE-BRIDGE-LIFECYCLE` are completed and merged. The next task is `P10-BE-PROVIDER-MODEL-LIFECYCLE`; do not start frontend admin hardening or history query work in parallel.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3800,6 +3800,10 @@ git diff --check
 
 P10-BE-SSE-BRIDGE-LIFECYCLE - 绑定 API Redis 任务事件订阅到 API 生命周期
 
+### 状态
+
+Completed, reviewed, and merged into `main`. The accepted implementation passes the API lifecycle context into router startup, injects a narrow task-event subscriber interface for tests, returns an observable subscriber done channel, preserves sequence-only Redis wakeups, and keeps MySQL as the SSE replay source.
+
 ### 推荐执行信息
 
 - 推荐线程名：`P10-BE-SSE-BRIDGE-LIFECYCLE`
@@ -3924,6 +3928,147 @@ P10-BE-SSE-BRIDGE-LIFECYCLE - 绑定 API Redis 任务事件订阅到 API 生命�
 ```bash
 cd backend
 go test ./internal/queue ./internal/api ./cmd/api -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 子任务 34：P10 Provider/model 生命周期
+
+### 任务名称
+
+P10-BE-PROVIDER-MODEL-LIFECYCLE - 明确 Provider 删除与关联模型生命周期策略
+
+### 推荐执行信息
+
+- 推荐线程名：`P10-BE-PROVIDER-MODEL-LIFECYCLE`
+- 推荐分支名：`codex/p10-backend-provider-model-lifecycle`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务触碰 Provider/model 管理合同和后端 API，不要与 frontend admin hardening、history query 或其他 Provider/model 合同任务并行。
+
+### 目标
+
+实现 P10 已确认的 Provider/model 生命周期策略：`DELETE /providers/{providerId}` 在同租户存在任何未软删除的关联模型时必须失败，返回 conflict-style API 错误；管理员需要先显式软删除关联模型，才能删除 Provider。Provider disable 仍然允许且不级联修改模型，任务创建继续通过现有 Provider/model enabled 校验拒绝不可用配置。
+
+### 允许修改文件
+
+- `backend/internal/provider/**`
+- `backend/internal/model/**` 仅限必要的测试 helper 或确认现有模型删除/查询行为；不得重写模型能力合同
+- `backend/internal/api/provider_routes_test.go`
+- `backend/internal/api/model_routes_test.go` 仅限与 Provider/model lifecycle 相关的回归测试
+- `backend/internal/api/*_test.go` 仅限复用测试 helper 所需的窄改动
+- `backend/internal/database/**` 仅限必要的只读查询 helper 或测试 schema 支持；不得新增迁移，除非先报告主 agent
+- `backend/internal/httpx/**` 仅限复用/补充标准 conflict 错误响应 helper，优先在 provider service 内映射错误
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `.env.example`
+- `backend/internal/task/**`
+- `backend/internal/sse/**`
+- `backend/internal/queue/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/storage/**`
+- Provider API key encryption/decryption behavior、SSRF validator、Provider test/probe outbound behavior、model capability schema、task creation/status/SSE/Worker runtime
+
+### 前置依赖
+
+- `P10-BE-WORKER-POOL` completed, reviewed, and merged.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` completed, reviewed, and merged.
+- Main agent has updated public contracts in `docs/api-contract.md` and `docs/provider-adapter.md` to define Provider deletion with linked models as a conflict.
+
+### 必须保持的现有行为
+
+- Provider list/detail/create/update/enable/disable/test behavior remains unchanged except for delete conflict when linked models exist.
+- Provider responses still never return full API keys, encrypted API key values, Authorization headers, Cookies, raw Provider responses, or unredacted probe errors.
+- Provider create/update/test still run existing SSRF validation and timeout behavior.
+- Provider object APIs still filter by `tenant_id`; cross-tenant Provider IDs remain non-revealing.
+- Model create/update still require same-tenant Provider ownership.
+- Model delete remains a soft delete and keeps existing RBAC, tenant filtering, operation log, and normal list/detail exclusion behavior.
+- Task creation continues to be the final runtime validator for Provider/model enabled state, same-tenant ownership, capabilities, and asset ownership.
+- Provider disable remains allowed even with linked models and must not cascade-disable or cascade-delete models.
+
+### 允许的中间态
+
+- A new provider repository helper may count non-deleted linked models in the same tenant.
+- Provider service may add a new conflict error sentinel and map it to HTTP `409` with a standard error envelope.
+- Provider delete audit metadata may include a sanitized linked-model count only if an operation log is written; it must not include model names, prompts, Provider secrets, or cross-tenant IDs.
+- Existing frontend admin UI may display the backend conflict through its current error surface; this task does not need frontend changes.
+
+### 禁止的半迁移状态
+
+- Do not soft-delete a Provider while non-deleted same-tenant models still reference it.
+- Do not silently cascade-delete or cascade-disable linked models.
+- Do not hide linked-model conflicts behind `200 OK`, `204`, or a generic internal error.
+- Do not allow cross-tenant model rows to block or reveal another tenant's Provider deletion.
+- Do not make disabled linked models block differently from enabled linked models; all non-deleted linked models block deletion.
+- Do not alter Provider disable semantics or task creation validation as a shortcut.
+- Do not add new active writable settings or frontend behavior.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| Provider delete | same-tenant enabled linked model exists | `409 CONFLICT`, Provider not deleted, model not modified |
+| Provider delete | same-tenant disabled linked model exists | `409 CONFLICT`, Provider not deleted, model not modified |
+| Provider delete | only soft-deleted linked models exist | Provider soft-delete succeeds |
+| Provider delete | linked model exists in another tenant only | current tenant Provider deletion is not blocked and does not reveal cross-tenant data |
+| Provider delete | non-admin or missing `provider:manage` | existing forbidden behavior remains |
+| Provider delete | unknown or cross-tenant Provider ID | existing non-revealing not-found behavior remains |
+| Provider disable | linked models exist | Provider disable succeeds; linked models are unchanged |
+| Model delete | linked model is soft-deleted before Provider delete | model delete succeeds; subsequent Provider delete succeeds |
+| Audit/logging | blocked deletion or successful deletion | no Provider secrets, model names, Authorization headers, Cookies, or raw request payloads are logged |
+| Regression | task creation with disabled Provider | existing validation failure remains unchanged |
+
+### 必须新增或更新的回归测试
+
+- API test proving Provider delete returns `409` when an enabled linked model exists and leaves Provider/model rows unchanged.
+- API test proving Provider delete returns `409` when a disabled linked model exists and leaves Provider/model rows unchanged.
+- API test proving Provider delete succeeds after linked models are soft-deleted.
+- API test proving cross-tenant models do not block or reveal Provider deletion.
+- API test proving Provider disable still succeeds with linked models and does not mutate models.
+- Existing Provider/model RBAC, tenant-scope, SSRF, secret masking, operation-log, and model capability tests must remain green.
+
+### 具体开发内容
+
+- Inspect `backend/internal/provider/service.go`, `backend/internal/provider/repository.go`, `backend/internal/provider/types.go`, `backend/internal/model/repository.go`, and existing API route tests.
+- Add the narrowest repository helper needed to count non-deleted models by `tenant_id` and `provider_id`.
+- In Provider delete transaction, check linked model count before `SoftDeleteProvider`.
+- Add a conflict error mapping that returns HTTP `409` and a stable non-sensitive error code such as `PROVIDER_HAS_LINKED_MODELS`.
+- Keep the existing successful Provider delete operation log behavior. If adding a blocked-operation log, keep metadata sanitized and do not make it required for frontend behavior.
+- Add focused tests before running broad regression.
+
+### 安全要求
+
+- All linked-model checks must include `tenant_id`.
+- Conflict responses must not include model names, prompts, API keys, encrypted key material, Authorization headers, Cookies, base64, or raw request payloads.
+- Do not weaken SSRF validation, API key encryption, Provider test redaction, RBAC, tenant isolation, CSRF/auth middleware, task validation, or SSE contracts.
+- Use only backend-owned state; do not trust client-provided tenant IDs or linked counts.
+
+### 验收标准
+
+- Provider deletion is blocked with HTTP `409` while any non-deleted same-tenant linked model exists.
+- Provider deletion succeeds after all same-tenant linked models are soft-deleted.
+- Cross-tenant linked models do not block or leak through the response.
+- Provider disable behavior remains unchanged and does not cascade to models.
+- No frontend, docs, deploy, task runtime, SSE, queue, storage, or Provider Adapter runtime files are modified.
+- Regression tests map every failure-mode row above to concrete test names in the child-agent handoff.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/provider ./internal/model ./internal/api -count=1
+go test -race ./internal/provider ./internal/model ./internal/api -count=1
 go test ./...
 go test -race ./...
 go vet ./...

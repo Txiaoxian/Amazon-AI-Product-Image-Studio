@@ -92,14 +92,14 @@ P7 Worker queue result:
 - Redis payloads contain task ID only; Worker reloads tenant, project, Provider, model, prompt, and task parameters from MySQL.
 - Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events.
 - Concurrency limits exist for global, tenant, user, Provider, and model dimensions, with stale lock cleanup.
-- Non-blocking carry-forward risks after P10 worker-pool merge: API Redis subscription lifecycle should later be tied to server shutdown.
+- P10 SSE bridge lifecycle follow-up is merged: API Redis subscription lifecycle is tied to API server shutdown instead of an unbounded background context.
 
 P7 Provider runtime result:
 
 - Real Provider execution is now merged behind the Worker state machine.
 - Successful runs create MinIO objects, generated/edited assets, `task_outputs`, `usage_records`, and `api_call_logs`, then emit `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal events through the existing persisted-event flow.
 - Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
-- The remaining runtime carry-forward item after P10 worker-pool merge is API Redis subscription lifecycle binding to server shutdown.
+- The previous runtime carry-forward item after P10 worker-pool merge is resolved: API Redis subscription lifecycle is now bound to API server shutdown.
 
 P10 Worker pool result:
 
@@ -108,7 +108,7 @@ P10 Worker pool result:
 - Worker process concurrency is distinct from global/tenant/user/Provider/model execution limits. Worker loop count controls how many queue claims can be processed in parallel by one worker process; Redis concurrency limits still decide whether a claimed task may run.
 - The worker pool preserves the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
 - Recovery remains a single loop per Worker process so multiple processing loops do not duplicate timeout/recovery work.
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` is the next follow-up for binding the API Redis event subscriber to API server shutdown.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. The next P10 follow-up is Provider/model lifecycle policy for Provider deletion with linked models.
 
 ## Cancellation
 
@@ -156,7 +156,15 @@ P7 SSE boundary:
 
 P10 SSE bridge lifecycle plan:
 
-- Redis task-event pub/sub must remain a wakeup channel carrying only event sequence IDs.
-- The API subscriber must stop with the API server lifecycle instead of using an unbounded background context.
-- Subscriber shutdown must close the Redis pub/sub path and must not leave goroutines alive in router/API tests.
-- SSE replay semantics, heartbeat, `Last-Event-ID`, and frontend EventSource behavior must not change.
+- Completed and merged.
+- Redis task-event pub/sub remains a wakeup channel carrying only event sequence IDs.
+- The API subscriber stops with the API server lifecycle instead of using an unbounded background context.
+- Subscriber shutdown closes the Redis pub/sub path and router/API tests prove the subscriber can stop without logging `context.Canceled` as an unexpected failure.
+- SSE replay semantics, heartbeat, `Last-Event-ID`, and frontend EventSource behavior did not change.
+
+P10 Provider/model lifecycle plan:
+
+- Provider deletion must be blocked while any non-deleted linked models exist in the same tenant.
+- Provider disable remains allowed and does not cascade to linked models; task creation already rejects disabled Providers.
+- Soft-deleted models no longer block Provider deletion.
+- Cross-tenant models must not block or reveal another tenant's Provider deletion.

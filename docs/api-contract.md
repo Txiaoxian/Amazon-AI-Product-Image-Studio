@@ -254,6 +254,15 @@ Current P6 Provider backend implementation status:
 - Provider test is backend-only and does not create tasks, assets, or usage records.
 - Frontend Provider/model management is implemented and merged. The UI sends Provider API keys only as immediate form submissions, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
 
+P10 Provider lifecycle policy:
+
+- `DELETE /providers/{providerId}` must fail with `409 CONFLICT` when any non-deleted model in the same tenant still references the Provider.
+- The response must use the standard error envelope with a non-sensitive code such as `PROVIDER_HAS_LINKED_MODELS`; it may include a linked-model count but must not leak model names from another tenant.
+- Soft-deleted models do not block Provider deletion.
+- Cross-tenant models must never block or reveal another tenant's Provider deletion.
+- `POST /providers/{providerId}/disable` remains allowed and does not cascade to linked models; task creation continues to reject disabled Providers.
+- Provider deletion must not cascade-delete or cascade-disable models in this phase.
+
 ## Model APIs
 
 - `GET /models`
@@ -287,7 +296,7 @@ Current P6 model backend implementation status:
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
 - Current P7 task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the runtime path. A later admin/data-integrity decision may still tighten that invariant.
-- P8/P9 must decide how linked models behave when their Provider is soft-deleted.
+- P10 decides linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first. Same-Provider `model_name` uniqueness remains deferred.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 

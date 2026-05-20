@@ -388,7 +388,7 @@ P7 Worker queue result:
 - Worker consumes task IDs only, reloads task state from MySQL, transitions eligible tasks to `RUNNING`, writes task events, and uses fake/stub execution until Provider Adapter runtime is implemented.
 - Redis wakeups now notify API SSE streams after persisted task events. Wakeups carry only minimal sequence/task metadata; SSE still reloads visible events from MySQL.
 - Concurrency limits are implemented for global, tenant, user, Provider, and model dimensions with stale lock cleanup.
-- Non-blocking carry-forward risks after P10 worker-pool merge: the API Redis event subscriber uses a background context that should be tied to server lifecycle later.
+- Completed in P10: the API Redis event subscriber is now bound to the API lifecycle context and exits on API shutdown instead of using an unbounded background context.
 - Real Provider execution, output asset creation, usage records, and API call logs are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
 
 P7 Provider Adapter runtime result:
@@ -419,7 +419,7 @@ P7 residual risks and carry-forward items after R9:
 
 - Completed in P8/P9: legacy browser Provider adapters, localStorage Provider API key persistence, IndexedDB-backed production history, and unreachable legacy display/storage helpers were removed or isolated from production paths.
 - Completed in P10: Worker now honors `WORKER_CONCURRENCY` as an in-process processing pool.
-- Open for P10: API Redis event subscription lifecycle still uses a background context and should later be tied to API server shutdown.
+- Completed in P10: API Redis event subscription lifecycle is tied to API server shutdown.
 - Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
 - Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
 - Open for P10: Provider soft-delete behavior for linked models remains unresolved.
@@ -488,10 +488,10 @@ P8 acceptance gates:
 - Generated/edited assets and task history come from backend APIs/authorized downloads; IndexedDB is not the primary history/image source.
 - Existing upload, prompt, parameter, result, history, download, and edit concepts remain available in backend-backed form.
 
-P8 intentionally does not resolve:
+P8 intentionally did not resolve:
 
 - Worker pool implementation for `WORKER_CONCURRENCY` was completed in P10.
-- API Redis subscription lifecycle binding to server shutdown.
+- API Redis subscription lifecycle binding to server shutdown was completed in P10.
 - General redaction of unknown secrets outside known-secret and heuristic rules.
 - Provider soft-delete linked-model backend policy or optional model-name uniqueness hardening; these remain P9/admin lifecycle concerns.
 
@@ -535,13 +535,13 @@ P9 carry-forward risks:
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: in progress after `P10-BE-WORKER-POOL` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+Status: in progress after `P10-BE-WORKER-POOL` and `P10-BE-SSE-BRIDGE-LIFECYCLE` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
 
 P10 priorities:
 
 1. `P10-BE-WORKER-POOL`: completed and merged. Configured Worker concurrency is now a real in-process processing pool while MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits remain intact.
-2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: next. Tie the API Redis task-event subscriber lifecycle to API server shutdown instead of a background context, without changing SSE replay semantics.
-3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: later. Decide and implement Provider soft-delete behavior for linked models, such as block deletion, hide linked models, or cascade-disable linked models.
+2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: completed and merged. API Redis task-event subscriber startup now receives the API lifecycle context, test env still avoids real subscriber startup, and Redis remains sequence-only wakeup while MySQL remains the replay source.
+3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: next. Implement the chosen Provider/model lifecycle policy: Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
 4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: later. Split the large admin observability/settings UI if needed and add stale-request protection for API call log details.
 5. `P10-BE-HISTORY-QUERY`: optional later. Add a backend history query if frontend-assembled task/asset pagination becomes a correctness issue.
 
@@ -555,11 +555,19 @@ P10 worker-pool result:
 
 P10 SSE bridge lifecycle boundaries:
 
-- The next task must not change task event names, task statuses, SSE frame format, `Last-Event-ID`, replay cursor semantics, or frontend EventSource behavior.
-- MySQL remains the only replay source. Redis task-event pub/sub remains a wakeup mechanism only.
-- The API Redis event subscriber must be tied to the API process lifecycle and stop when API shutdown begins.
-- Router tests should not leave background Redis subscriber goroutines behind.
-- The task should add tests proving subscriber startup uses the API lifecycle context and cancellation closes the subscriber path cleanly.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` completed and merged without changing task event names, task statuses, SSE frame format, `Last-Event-ID`, replay cursor semantics, or frontend EventSource behavior.
+- MySQL remains the only replay source. Redis task-event pub/sub remains a sequence-only wakeup mechanism.
+- The API Redis event subscriber is tied to the API process lifecycle and stops when API shutdown begins.
+- Router/queue tests cover lifecycle context startup, cancellation shutdown, `context.Canceled` log handling, test-env no real subscriber startup, malformed wakeup ignore, zero sequence ignore, and sequence-only payload.
+
+P10 Provider/model lifecycle decision:
+
+- Provider deletion must fail with a conflict-style API error when any non-deleted model in the same tenant still references that Provider.
+- Soft-deleted models do not block Provider deletion.
+- Cross-tenant models must never block or reveal Provider deletion in another tenant.
+- Provider disable remains allowed and does not cascade to linked models; task creation already rejects disabled Providers.
+- Model deletion remains a soft delete and is the explicit cleanup step before Provider deletion.
+- The implementation must not cascade-delete or cascade-disable models, because that would silently alter model availability and frontend workbench choices.
 
 ## Phase boundaries
 
