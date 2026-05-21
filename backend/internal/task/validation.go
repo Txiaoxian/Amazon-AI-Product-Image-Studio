@@ -160,6 +160,25 @@ func parseListQuery(c *gin.Context) (ListQuery, error) {
 	return ListQuery{PageNum: pageNum, PageSize: pageSize, Status: status, Type: taskType}, nil
 }
 
+func parseHistoryQuery(c *gin.Context) (HistoryQuery, error) {
+	pageNum, err := parseStrictPositiveInt(c.Query("pageNum"), defaultPageNum)
+	if err != nil {
+		return HistoryQuery{}, err
+	}
+	pageSize, err := parseStrictPositiveInt(c.Query("pageSize"), defaultPageSize)
+	if err != nil {
+		return HistoryQuery{}, err
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	kind := cleanEnum(c.Query("kind"))
+	if kind != "" && !validHistoryKind(kind) {
+		return HistoryQuery{}, ErrValidation
+	}
+	return HistoryQuery{PageNum: pageNum, PageSize: pageSize, Kind: kind}, nil
+}
+
 func parsePositiveInt(raw string, fallback int) int {
 	if strings.TrimSpace(raw) == "" {
 		return fallback
@@ -169,6 +188,27 @@ func parsePositiveInt(raw string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func parseStrictPositiveInt(raw string, fallback int) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, ErrValidation
+	}
+	return value, nil
+}
+
+func validHistoryKind(kind string) bool {
+	switch kind {
+	case assetpkg.KindGenerated, assetpkg.KindEdited:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeInputAssetIDs(taskType string, referenceAssetIDs []string, editSourceAssetID string) ([]string, error) {

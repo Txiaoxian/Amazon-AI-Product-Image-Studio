@@ -20,6 +20,11 @@ type EventFilter struct {
 	TaskID    string
 }
 
+type HistoryPair struct {
+	AssetID string
+	TaskID  string
+}
+
 func NewRepository(db *gorm.DB) Repository {
 	return Repository{db: db}
 }
@@ -75,6 +80,102 @@ func (r Repository) ListTasks(ctx context.Context, scope tenant.Scope, projectID
 		return nil, 0, err
 	}
 	return records, total, nil
+}
+
+func (r Repository) ListHistoryPairs(ctx context.Context, scope tenant.Scope, projectID string, options HistoryOptions) ([]HistoryPair, int64, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, 0, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, 0, ErrValidation
+	}
+
+	kinds := []string{"GENERATED", "EDITED"}
+	if options.Kind != "" {
+		kinds = []string{options.Kind}
+	}
+
+	query := db.Table("task_outputs AS task_outputs").
+		Joins("JOIN image_assets AS image_assets ON image_assets.tenant_id = task_outputs.tenant_id AND image_assets.id = task_outputs.asset_id").
+		Joins("JOIN generation_tasks AS generation_tasks ON generation_tasks.tenant_id = task_outputs.tenant_id AND generation_tasks.id = task_outputs.task_id").
+		Where("task_outputs.tenant_id = ? AND image_assets.tenant_id = ? AND generation_tasks.tenant_id = ?", scope.ID(), scope.ID(), scope.ID()).
+		Where("image_assets.project_id = ? AND generation_tasks.project_id = ?", projectID, projectID).
+		Where("image_assets.deleted_at IS NULL").
+		Where("image_assets.kind IN ?", kinds)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var pairs []HistoryPair
+	offset := (options.PageNum - 1) * options.PageSize
+	if err := query.
+		Select("image_assets.id AS asset_id, generation_tasks.id AS task_id").
+		Order("image_assets.created_at DESC, image_assets.id DESC, task_outputs.output_index ASC, task_outputs.id DESC").
+		Limit(options.PageSize).
+		Offset(offset).
+		Scan(&pairs).Error; err != nil {
+		return nil, 0, err
+	}
+	return pairs, total, nil
+}
+
+func (r Repository) FindHistoryAssets(ctx context.Context, scope tenant.Scope, projectID string, assetIDs []string) (map[string]database.ImageAsset, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	assetIDs = uniqueStrings(assetIDs)
+	if projectID == "" {
+		return nil, ErrValidation
+	}
+	if len(assetIDs) == 0 {
+		return map[string]database.ImageAsset{}, nil
+	}
+
+	var records []database.ImageAsset
+	if err := db.Model(&database.ImageAsset{}).
+		Where("tenant_id = ? AND project_id = ? AND id IN ? AND deleted_at IS NULL", scope.ID(), projectID, assetIDs).
+		Where("kind IN ?", []string{"GENERATED", "EDITED"}).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[string]database.ImageAsset, len(records))
+	for _, record := range records {
+		byID[record.ID] = record
+	}
+	return byID, nil
+}
+
+func (r Repository) FindHistoryTasks(ctx context.Context, scope tenant.Scope, projectID string, taskIDs []string) (map[string]database.GenerationTask, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	taskIDs = uniqueStrings(taskIDs)
+	if projectID == "" {
+		return nil, ErrValidation
+	}
+	if len(taskIDs) == 0 {
+		return map[string]database.GenerationTask{}, nil
+	}
+
+	var records []database.GenerationTask
+	if err := db.Model(&database.GenerationTask{}).
+		Where("tenant_id = ? AND project_id = ? AND id IN ?", scope.ID(), projectID, taskIDs).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[string]database.GenerationTask, len(records))
+	for _, record := range records {
+		byID[record.ID] = record
+	}
+	return byID, nil
 }
 
 func (r Repository) FindTask(ctx context.Context, scope tenant.Scope, taskID string) (database.GenerationTask, error) {
@@ -304,6 +405,47 @@ func (r Repository) OutputAssetIDs(ctx context.Context, scope tenant.Scope, task
 	outputs := make([]string, 0, len(records))
 	for _, record := range records {
 		outputs = append(outputs, record.AssetID)
+	}
+	return outputs, nil
+}
+
+func (r Repository) VisibleHistoryOutputAssetIDsByTask(ctx context.Context, scope tenant.Scope, projectID string, taskIDs []string) (map[string][]string, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	taskIDs = uniqueStrings(taskIDs)
+	if projectID == "" {
+		return nil, ErrValidation
+	}
+	outputs := make(map[string][]string, len(taskIDs))
+	for _, taskID := range taskIDs {
+		outputs[taskID] = []string{}
+	}
+	if len(taskIDs) == 0 {
+		return outputs, nil
+	}
+
+	var rows []struct {
+		TaskID  string
+		AssetID string
+	}
+	if err := db.Table("task_outputs AS task_outputs").
+		Select("task_outputs.task_id AS task_id, image_assets.id AS asset_id").
+		Joins("JOIN image_assets AS image_assets ON image_assets.tenant_id = task_outputs.tenant_id AND image_assets.id = task_outputs.asset_id").
+		Joins("JOIN generation_tasks AS generation_tasks ON generation_tasks.tenant_id = task_outputs.tenant_id AND generation_tasks.id = task_outputs.task_id").
+		Where("task_outputs.tenant_id = ? AND image_assets.tenant_id = ? AND generation_tasks.tenant_id = ?", scope.ID(), scope.ID(), scope.ID()).
+		Where("generation_tasks.project_id = ? AND image_assets.project_id = ?", projectID, projectID).
+		Where("task_outputs.task_id IN ?", taskIDs).
+		Where("image_assets.deleted_at IS NULL").
+		Where("image_assets.kind IN ?", []string{"GENERATED", "EDITED"}).
+		Order("task_outputs.task_id ASC, task_outputs.output_index ASC, image_assets.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		outputs[row.TaskID] = append(outputs[row.TaskID], row.AssetID)
 	}
 	return outputs, nil
 }

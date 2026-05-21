@@ -64,6 +64,7 @@ func NewService(db *gorm.DB, log *slog.Logger, enqueuer queue.TaskEnqueuer, opti
 func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/projects/:projectId/tasks", s.CreateTask)
 	group.GET("/projects/:projectId/tasks", s.ListTasks)
+	group.GET("/projects/:projectId/history", s.ListProjectHistory)
 	group.GET("/tasks/:taskId", s.GetTask)
 	group.POST("/tasks/:taskId/cancel", s.CancelTask)
 	group.POST("/tasks/:taskId/retry", s.RetryTask)
@@ -107,6 +108,26 @@ func (s *Service) ListTasks(c *gin.Context) {
 	}
 
 	page, err := s.listTasks(c.Request.Context(), principal, c.Param("projectId"), query)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, page)
+}
+
+func (s *Service) ListProjectHistory(c *gin.Context) {
+	principal, ok := auth.PrincipalFromGin(c)
+	if !ok {
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		return
+	}
+	query, err := parseHistoryQuery(c)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+
+	page, err := s.listProjectHistory(c.Request.Context(), principal, c.Param("projectId"), query)
 	if err != nil {
 		s.respondError(c, err)
 		return
@@ -182,6 +203,62 @@ func (s *Service) listTasks(ctx context.Context, principal auth.Principal, proje
 		responses = append(responses, response)
 	}
 	return Page{Records: responses, Total: total, PageNum: query.PageNum, PageSize: query.PageSize}, nil
+}
+
+func (s *Service) listProjectHistory(ctx context.Context, principal auth.Principal, projectID string, query HistoryQuery) (HistoryPage, error) {
+	projectRecord, err := project.NewAuthorizer(s.db).Authorize(ctx, principal, projectID, PermissionRead, rolesForPermission(PermissionRead)...)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+
+	pairs, total, err := s.repo.ListHistoryPairs(ctx, scope, projectRecord.ID, HistoryOptions(query))
+	if err != nil {
+		return HistoryPage{}, err
+	}
+
+	assetIDs := make([]string, 0, len(pairs))
+	taskIDs := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		assetIDs = append(assetIDs, pair.AssetID)
+		taskIDs = append(taskIDs, pair.TaskID)
+	}
+	assetsByID, err := s.repo.FindHistoryAssets(ctx, scope, projectRecord.ID, assetIDs)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	tasksByID, err := s.repo.FindHistoryTasks(ctx, scope, projectRecord.ID, taskIDs)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	outputAssetIDsByTaskID, err := s.repo.VisibleHistoryOutputAssetIDsByTask(ctx, scope, projectRecord.ID, taskIDs)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+
+	records := make([]HistoryRecord, 0, len(pairs))
+	for _, pair := range pairs {
+		assetRecord, ok := assetsByID[pair.AssetID]
+		if !ok {
+			return HistoryPage{}, ErrNotFound
+		}
+		taskRecord, ok := tasksByID[pair.TaskID]
+		if !ok {
+			return HistoryPage{}, ErrNotFound
+		}
+		taskResponse, err := responseFromRecord(taskRecord, outputAssetIDsByTaskID[taskRecord.ID])
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		records = append(records, HistoryRecord{
+			Asset: assetResponseFromRecord(assetRecord),
+			Task:  taskResponse,
+		})
+	}
+	return HistoryPage{Records: records, Total: total, PageNum: query.PageNum, PageSize: query.PageSize}, nil
 }
 
 func (s *Service) getTask(ctx context.Context, principal auth.Principal, taskID string) (Response, error) {
