@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminObservabilitySettingsPanel } from '../components/admin/AdminObservabilitySettingsPanel'
 import { ApiClientError } from '../api/client'
 import type { AdminApi } from '../api/admin'
+import type { ApiCallLog } from '../types/admin'
 import type { ApiPage } from '../types/api'
 
 const usageSummary = {
@@ -74,7 +75,17 @@ const apiCallLog = {
     result: 'safe',
   },
   createdAt: '2026-05-18T10:00:00Z',
-} as const
+} as ApiCallLog
+
+const secondApiCallLog: ApiCallLog = {
+  ...apiCallLog,
+  id: 'api_log_2',
+  taskId: 'task_2' as ApiCallLog['taskId'],
+  requestId: 'provider_request_2',
+  redactedResponse: {
+    result: 'second-safe',
+  },
+}
 
 const systemSettings = {
   uploadPolicy: {
@@ -186,6 +197,7 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(adminApi.listUsageRecords).toHaveBeenCalledWith(expect.objectContaining({ pageNum: 1, pageSize: 10 }))
     expect(adminApi.listOperationLogs).not.toHaveBeenCalled()
     expect(adminApi.listApiCallLogs).not.toHaveBeenCalled()
+    expect(adminApi.getApiCallLog).not.toHaveBeenCalled()
   })
 
   it('shows usage errors and preserves paginated navigation state', async () => {
@@ -279,6 +291,179 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(await screen.findByText('API 调用详情：api_log_1')).toBeInTheDocument()
     expect(screen.getByText(/内容已截断/)).toBeInTheDocument()
     expect(adminApi.getApiCallLog).toHaveBeenCalledWith('api_log_1')
+  })
+
+  it('keeps the latest API call detail when older detail responses resolve later', async () => {
+    const user = userEvent.setup()
+    const firstDetail = deferred<ApiCallLog>()
+    const secondDetail = deferred<ApiCallLog>()
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi.fn().mockResolvedValue(page([apiCallLog, secondApiCallLog])),
+      getApiCallLog: vi.fn((id) => (id === 'api_log_1' ? firstDetail.promise : secondDetail.promise)),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    expect(await screen.findByText('api_log_2')).toBeInTheDocument()
+    await user.click(within(screen.getByText('api_log_1').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+    await user.click(within(screen.getByText('api_log_2').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+    expect(adminApi.getApiCallLog).toHaveBeenCalledTimes(2)
+
+    secondDetail.resolve(secondApiCallLog)
+    expect(await screen.findByText('API 调用详情：api_log_2')).toBeInTheDocument()
+    firstDetail.resolve(apiCallLog)
+
+    await waitFor(() => expect(screen.getByText('API 调用详情：api_log_2')).toBeInTheDocument())
+    expect(screen.queryByText('API 调用详情：api_log_1')).not.toBeInTheDocument()
+  })
+
+  it('keeps the latest API call detail failure when an older detail success resolves later', async () => {
+    const user = userEvent.setup()
+    const firstDetail = deferred<ApiCallLog>()
+    const secondDetail = deferred<ApiCallLog>()
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi.fn().mockResolvedValue(page([apiCallLog, secondApiCallLog])),
+      getApiCallLog: vi.fn((id) => (id === 'api_log_1' ? firstDetail.promise : secondDetail.promise)),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    expect(await screen.findByText('api_log_2')).toBeInTheDocument()
+    await user.click(within(screen.getByText('api_log_1').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+    await user.click(within(screen.getByText('api_log_2').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+
+    secondDetail.reject(
+      new ApiClientError({
+        code: 'NOT_FOUND',
+        message: 'Missing.',
+        status: 404,
+      }),
+    )
+    expect(await screen.findByText('记录不存在或已不可见。')).toBeInTheDocument()
+    expect(within(screen.getByText('api_log_2').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' })).toBeEnabled()
+    firstDetail.resolve(apiCallLog)
+
+    await waitFor(() => expect(screen.getByText('记录不存在或已不可见。')).toBeInTheDocument())
+    expect(screen.queryByText('API 调用详情：api_log_1')).not.toBeInTheDocument()
+    expect(screen.queryByText('API 调用详情：api_log_2')).not.toBeInTheDocument()
+  })
+
+  it('ignores in-flight API call detail responses after the panel closes and reopens cleanly', async () => {
+    const user = userEvent.setup()
+    const detail = deferred<ApiCallLog>()
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi.fn().mockResolvedValue(page([apiCallLog])),
+      getApiCallLog: vi.fn().mockReturnValue(detail.promise),
+    })
+    const { rerender } = render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    expect(await screen.findByText('api_log_1')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+
+    rerender(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen={false}
+        onClose={() => undefined}
+      />,
+    )
+    detail.resolve({
+      ...apiCallLog,
+      redactedResponse: {
+        result: 'stale-after-close',
+      },
+    })
+
+    rerender(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(await screen.findByText('api_log_1')).toBeInTheDocument()
+    expect(screen.queryByText('API 调用详情：api_log_1')).not.toBeInTheDocument()
+    expect(screen.queryByText('stale-after-close')).not.toBeInTheDocument()
+  })
+
+  it('clears and guards in-flight API call details when the API call logs page changes', async () => {
+    const user = userEvent.setup()
+    const detail = deferred<ApiCallLog>()
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi
+        .fn()
+        .mockResolvedValueOnce(page([apiCallLog], { total: 11, pageNum: 1 }))
+        .mockResolvedValueOnce(page([secondApiCallLog], { total: 11, pageNum: 2 })),
+      getApiCallLog: vi.fn().mockReturnValue(detail.promise),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    expect(await screen.findByText('api_log_1')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    await user.click(within(screen.getByLabelText('API 调用日志分页')).getByRole('button', { name: '下一页' }))
+    expect(await screen.findByText('api_log_2')).toBeInTheDocument()
+    detail.resolve(apiCallLog)
+
+    await waitFor(() => expect(screen.getByText('api_log_2')).toBeInTheDocument())
+    expect(screen.queryByText('API 调用详情：api_log_1')).not.toBeInTheDocument()
   })
 
   it('renders and PATCHes only uploadPolicy settings while preserving invalid input on backend validation errors', async () => {

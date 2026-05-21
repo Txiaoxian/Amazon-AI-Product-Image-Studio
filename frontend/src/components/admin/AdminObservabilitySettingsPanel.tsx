@@ -3,13 +3,12 @@ import {
   BarChart3,
   CheckCircle2,
   ClipboardList,
-  FileClock,
   Loader2,
   RefreshCw,
   Save,
   Settings2,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { adminApi as defaultAdminApi, type AdminApi } from '../../api/admin'
 import { isApiClientError } from '../../api/client'
 import type {
@@ -21,6 +20,7 @@ import type {
   UsageSummaryDimension,
 } from '../../types/admin'
 import type { ApiPage } from '../../types/api'
+import { AdminApiCallLogsView } from './AdminApiCallLogsView'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 
@@ -52,7 +52,6 @@ interface UploadPolicyDraft {
 
 const PAGE_SIZE = 10
 const METADATA_PREVIEW_LIMIT = 1200
-const METADATA_DETAIL_LIMIT = 5000
 
 const usageDimensions: Array<{ value: UsageSummaryDimension; label: string }> = [
   { value: 'provider', label: 'Provider' },
@@ -70,6 +69,7 @@ export function AdminObservabilitySettingsPanel({
   onClose,
   adminApi = defaultAdminApi,
 }: AdminObservabilitySettingsPanelProps) {
+  const apiCallDetailRequestSeqRef = useRef(0)
   const availableTabs = useMemo(
     () => getAvailableTabs({ canManageSystemSettings, canReadAudit, canReadUsage }),
     [canManageSystemSettings, canReadAudit, canReadUsage],
@@ -96,22 +96,30 @@ export function AdminObservabilitySettingsPanel({
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null)
   const [settingsDraft, setSettingsDraft] = useState<UploadPolicyDraft>(() => emptyUploadPolicyDraft())
   const [isSavingSettings, setSavingSettings] = useState(false)
+  const [selectedApiCallLogId, setSelectedApiCallLogId] = useState<ApiCallLog['id'] | null>(null)
   const [selectedApiCallLog, setSelectedApiCallLog] = useState<ApiCallLog | null>(null)
   const [apiCallDetailError, setApiCallDetailError] = useState<string | null>(null)
-  const [isLoadingApiCallDetail, setLoadingApiCallDetail] = useState(false)
+  const [loadingApiCallDetailId, setLoadingApiCallDetailId] = useState<ApiCallLog['id'] | null>(null)
+
+  const resetApiCallDetail = useCallback(() => {
+    apiCallDetailRequestSeqRef.current += 1
+    setSelectedApiCallLogId(null)
+    setSelectedApiCallLog(null)
+    setApiCallDetailError(null)
+    setLoadingApiCallDetailId(null)
+  }, [])
 
   useEffect(() => {
     if (!isOpen) {
       setSettingsNotice(null)
-      setApiCallDetailError(null)
-      setSelectedApiCallLog(null)
+      resetApiCallDetail()
       return
     }
 
     if (!availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0] ?? 'usage')
     }
-  }, [activeTab, availableTabs, isOpen])
+  }, [activeTab, availableTabs, isOpen, resetApiCallDetail])
 
   const loadUsage = useCallback(async () => {
     if (!canReadUsage) {
@@ -237,15 +245,31 @@ export function AdminObservabilitySettingsPanel({
   }, [activeTab, canManageSystemSettings, isOpen, loadSettings])
 
   const loadApiCallDetail = async (id: ApiCallLog['id']) => {
-    setLoadingApiCallDetail(true)
+    if (!isOpen || !canReadAudit) {
+      return
+    }
+
+    const requestSeq = apiCallDetailRequestSeqRef.current + 1
+    apiCallDetailRequestSeqRef.current = requestSeq
+    setSelectedApiCallLogId(id)
+    setSelectedApiCallLog(null)
     setApiCallDetailError(null)
+    setLoadingApiCallDetailId(id)
     try {
       const detail = await adminApi.getApiCallLog(id)
+      if (apiCallDetailRequestSeqRef.current !== requestSeq || detail.id !== id) {
+        return
+      }
       setSelectedApiCallLog(detail)
     } catch (error) {
+      if (apiCallDetailRequestSeqRef.current !== requestSeq) {
+        return
+      }
       setApiCallDetailError(formatAdminError(error))
     } finally {
-      setLoadingApiCallDetail(false)
+      if (apiCallDetailRequestSeqRef.current === requestSeq) {
+        setLoadingApiCallDetailId(null)
+      }
     }
   }
 
@@ -343,15 +367,19 @@ export function AdminObservabilitySettingsPanel({
         ) : null}
 
         {activeTab === 'apiCalls' ? (
-          <ApiCallLogsView
+          <AdminApiCallLogsView
             detail={selectedApiCallLog}
             detailError={apiCallDetailError}
             isLoading={isLoadingApiCallLogs}
-            isLoadingDetail={isLoadingApiCallDetail}
+            loadingDetailId={loadingApiCallDetailId}
             error={apiCallLogsError}
             onLoadDetail={(id) => void loadApiCallDetail(id)}
-            onPageChange={setApiCallLogsPageNum}
+            onPageChange={(pageNum) => {
+              resetApiCallDetail()
+              setApiCallLogsPageNum(pageNum)
+            }}
             page={apiCallLogsPage}
+            selectedDetailId={selectedApiCallLogId}
           />
         ) : null}
 
@@ -556,111 +584,6 @@ function OperationLogsView({ page, isLoading, error, onPageChange }: OperationLo
   )
 }
 
-interface ApiCallLogsViewProps {
-  page: PageViewState<ApiCallLog>
-  detail: ApiCallLog | null
-  isLoading: boolean
-  isLoadingDetail: boolean
-  error: string | null
-  detailError: string | null
-  onPageChange: (pageNum: number) => void
-  onLoadDetail: (id: ApiCallLog['id']) => void
-}
-
-function ApiCallLogsView({
-  page,
-  detail,
-  isLoading,
-  isLoadingDetail,
-  error,
-  detailError,
-  onPageChange,
-  onLoadDetail,
-}: ApiCallLogsViewProps) {
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center gap-2">
-        <FileClock className="h-4 w-4 text-ink-500" />
-        <h3 className="text-sm font-semibold text-ink-900">API 调用日志</h3>
-      </div>
-      <StatusMessage message={error} tone="error" />
-      {isLoading ? <LoadingState text="正在加载 API 调用日志..." /> : null}
-      {!isLoading && !error && page.records.length === 0 ? <EmptyState body="后端返回空分页，当前没有 api call logs。" title="暂无 API 调用日志" /> : null}
-      {!isLoading && page.records.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-ink-200">
-          <table className="min-w-full divide-y divide-ink-200 text-left text-sm">
-            <thead className="bg-ink-50 text-xs font-semibold text-ink-500">
-              <tr>
-                <th className="px-3 py-2">调用</th>
-                <th className="px-3 py-2">任务</th>
-                <th className="px-3 py-2">状态</th>
-                <th className="px-3 py-2">错误</th>
-                <th className="px-3 py-2">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ink-100 bg-white">
-              {page.records.map((record) => (
-                <tr key={record.id}>
-                  <td className="max-w-[200px] px-3 py-2 align-top">
-                    <p className="truncate font-semibold text-ink-900">{record.id}</p>
-                    <p className="text-xs text-ink-400">{formatDateTime(record.createdAt)}</p>
-                  </td>
-                  <td className="max-w-[220px] px-3 py-2 align-top text-xs text-ink-600">
-                    <p className="truncate">{record.taskId}</p>
-                    <p className="truncate">{record.providerId} / {record.modelId}</p>
-                  </td>
-                  <td className="px-3 py-2 align-top">
-                    <span className={statusPillClassName(record.status)}>{record.status}</span>
-                    <p className="mt-1 text-xs text-ink-400">{record.httpStatus ?? 'no-http'} · {record.durationMs}ms</p>
-                  </td>
-                  <td className="max-w-[260px] px-3 py-2 align-top text-xs text-ink-600">
-                    <p className="truncate">{record.errorCode || '无'}</p>
-                    <p className="truncate">{record.errorMessage || '无错误信息'}</p>
-                  </td>
-                  <td className="px-3 py-2 align-top">
-                    <Button disabled={isLoadingDetail} onClick={() => onLoadDetail(record.id)} variant="secondary">
-                      查看详情
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      <PaginationControls isLoading={isLoading} label="API 调用日志分页" onPageChange={onPageChange} page={page} />
-      <StatusMessage message={detailError} tone="error" />
-      {isLoadingDetail ? <LoadingState text="正在加载 API 调用详情..." /> : null}
-      {detail ? <ApiCallDetail detail={detail} /> : null}
-    </section>
-  )
-}
-
-function ApiCallDetail({ detail }: { detail: ApiCallLog }) {
-  return (
-    <article className="rounded-lg border border-ink-200 bg-ink-50 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-ink-900">API 调用详情：{detail.id}</h3>
-          <p className="mt-1 text-xs text-ink-500">{detail.requestId} · {formatDateTime(detail.createdAt)}</p>
-        </div>
-        <span className={statusPillClassName(detail.status)}>{detail.status}</span>
-      </div>
-      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-600 md:grid-cols-4">
-        <Metric label="任务" value={detail.taskId} />
-        <Metric label="HTTP" value={String(detail.httpStatus ?? 'N/A')} />
-        <Metric label="耗时" value={`${detail.durationMs}ms`} />
-        <Metric label="错误码" value={detail.errorCode || '无'} />
-      </dl>
-      {detail.errorMessage ? <p className="mt-3 rounded-md bg-white px-3 py-2 text-xs leading-6 text-ink-600">{detail.errorMessage}</p> : null}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <BoundedMetadataBlock title="Redacted request" value={detail.redactedRequest} />
-        <BoundedMetadataBlock title="Redacted response" value={detail.redactedResponse} />
-      </div>
-    </article>
-  )
-}
-
 interface SystemSettingsViewProps {
   settings: SystemSettings | null
   draft: UploadPolicyDraft
@@ -800,17 +723,6 @@ function MetadataPreview({ value }: { value: unknown }) {
     <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md bg-ink-50 px-3 py-2 text-xs leading-5 text-ink-600">
       {formatRedactedJson(value, METADATA_PREVIEW_LIMIT)}
     </pre>
-  )
-}
-
-function BoundedMetadataBlock({ title, value }: { title: string; value: unknown }) {
-  return (
-    <div className="min-w-0 rounded-lg border border-ink-200 bg-white p-3">
-      <h4 className="text-xs font-semibold uppercase tracking-normal text-ink-500">{title}</h4>
-      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-ink-700">
-        {formatRedactedJson(value, METADATA_DETAIL_LIMIT)}
-      </pre>
-    </div>
   )
 }
 
@@ -967,12 +879,6 @@ function tabLabel(tab: AdminObservabilityTab): string {
 function tabClassName(active: boolean): string {
   return `rounded px-3 py-1.5 text-sm font-semibold transition ${
     active ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-900'
-  }`
-}
-
-function statusPillClassName(status: ApiCallLog['status']): string {
-  return `rounded-md px-2 py-1 text-xs font-semibold ${
-    status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
   }`
 }
 
