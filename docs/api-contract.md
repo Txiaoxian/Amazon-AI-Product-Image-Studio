@@ -84,9 +84,21 @@ Error:
 - `GET /users/{userId}`
 - `PATCH /users/{userId}`
 - `POST /users/{userId}/disable`
+- `POST /users/{userId}/enable`
 - `POST /users/{userId}/roles`
 
 All user APIs require tenant scope and appropriate RBAC permissions.
+
+P11 backend implementation status:
+
+- `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
+- User responses include safe public fields only: `id`, `tenantId`, `email`, `displayName`, `status`, `lastLoginAt`, timestamps, and role summaries. They must not include `passwordHash`, JWT, CSRF token, Cookie, Authorization header, or internal sensitive fields.
+- `POST /users` requires `user:create`; assigning any `roleIds` during create also requires tenant admin access or `role:manage`.
+- `PATCH /users/{userId}` may update safe fields such as `displayName`; changing `status` additionally requires tenant admin access or `user:disable`.
+- `/disable` and `/enable` require tenant admin access or `user:disable`.
+- `POST /users/{userId}/roles` requires tenant admin access or `role:manage`, validates all role IDs are active roles in the caller tenant, and replaces roles transactionally.
+- The backend rejects self-disable and any operation that would remove the last active admin in a tenant.
+- User creation, update, disable/enable, and role replacement write redacted operation logs.
 
 ## RBAC APIs
 

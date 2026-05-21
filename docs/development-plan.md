@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After R10
+## Current State After P11 Backend User Admin
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -33,14 +33,16 @@ Completed phases:
 | P8 | Complete | Frontend generation/edit/history production flow moved to backend tasks, SSE, assets, and models. |
 | P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
+| P11 | In progress | Backend tenant user administration, role/permission reads, role assignment, and safety guards are merged. Frontend admin UI is next. |
 
-R10 found no blocking issues. Full frontend validation, backend validation, API/Worker builds, Docker Compose config, and static security scans passed.
+R10 found no blocking issues. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. Backend validation, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks passed for the P11 backend task.
 
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
 
 - Authenticated multi-user access with tenant context and RBAC enforcement.
+- Backend tenant user administration: list, create, detail, update safe fields, disable/enable, role assignment, role reads, and permission reads.
 - Project and project-member management foundations.
 - MinIO-backed reference/generated/edited image assets with backend authorization.
 - Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
@@ -82,10 +84,10 @@ Suggested order:
 
 1. `P11-BE-USER-ROLE-ADMIN`
    - Backend tenant user CRUD, disable/enable, role assignment, role/permission reads.
-   - Must preserve existing auth/session/RBAC behavior.
+   - Completed and merged. It preserves existing auth/session/RBAC behavior, blocks self-disable and last-active-admin loss, and requires `role:manage` for role assignment and `user:disable` for status changes.
 2. `P11-FE-USER-ROLE-ADMIN`
    - Admin UI for users, roles, permissions, status changes, and role assignment.
-   - Must not expose password hashes, JWTs, CSRF tokens, or tenant internals.
+   - Next task. Must consume the merged backend contracts without exposing password hashes, JWTs, CSRF tokens, or tenant internals.
 3. `R11`
    - Review and regression for tenant isolation, RBAC, auth edge cases, and frontend admin UX.
 
@@ -218,4 +220,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start P11 with `P11-BE-USER-ROLE-ADMIN`. Do not start P12 frontend history or P13 settings until P11 backend contracts are reviewed and merged, unless the user explicitly chooses a different sequence.
+Continue P11 with `P11-FE-USER-ROLE-ADMIN`. Do not start P12 frontend history or P13 settings until P11 frontend integration and R11 review are complete, unless the user explicitly chooses a different sequence.

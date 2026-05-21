@@ -56,6 +56,18 @@ User and role:
 - `role:read`
 - `role:manage`
 
+P11 backend user-admin role mapping:
+
+- User list/detail require tenant admin access or `user:read`.
+- User create requires tenant admin access or `user:create`.
+- Creating a user with one or more `roleIds` also requires tenant admin access or `role:manage`.
+- User safe-field update requires tenant admin access or `user:update`.
+- Changing user `status` through PATCH, `/disable`, or `/enable` requires tenant admin access or `user:disable`.
+- Role replacement requires tenant admin access or `role:manage`.
+- Role and permission reads require tenant admin access or `role:read`.
+- User-admin object APIs must always filter by `tenant_id`; cross-tenant user and role IDs must not leak existence.
+- The backend must reject self-disable and any update that would remove the tenant's last active admin.
+
 Project:
 
 - `project:read`
@@ -153,6 +165,7 @@ Record operation logs for:
 
 - Role and permission changes.
 - User creation, disable, and role assignment.
+- User safe-field update and enable.
 - Provider and model changes.
 - Project member changes.
 - Asset deletion and downloads when required by policy.
