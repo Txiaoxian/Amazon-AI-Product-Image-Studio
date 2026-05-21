@@ -569,6 +569,10 @@ func normalizeEmail(email string) (string, error) {
 	return email, nil
 }
 
+func NormalizeEmail(email string) (string, error) {
+	return normalizeEmail(email)
+}
+
 func cleanDisplayValue(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if len(value) > limit {
