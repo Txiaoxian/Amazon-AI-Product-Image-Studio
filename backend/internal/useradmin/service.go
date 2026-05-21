@@ -258,6 +258,9 @@ func (s *Service) createUser(ctx context.Context, principal auth.Principal, inpu
 	if !hasPermissionOrAdmin(principal, PermissionUserCreate) {
 		return UserResponse{}, ErrForbidden
 	}
+	if len(input.RoleIDs) > 0 && !hasPermissionOrAdmin(principal, PermissionRoleManage) {
+		return UserResponse{}, ErrForbidden
+	}
 	if s.db == nil {
 		return UserResponse{}, database.ErrNilDB
 	}
@@ -347,6 +350,9 @@ func (s *Service) getUser(ctx context.Context, principal auth.Principal, userID 
 
 func (s *Service) updateUser(ctx context.Context, principal auth.Principal, userID string, input UpdateInput, changedFields []string, ip string, userAgent string) (UserResponse, error) {
 	if !hasPermissionOrAdmin(principal, PermissionUserUpdate) {
+		return UserResponse{}, ErrForbidden
+	}
+	if input.Status != nil && !hasPermissionOrAdmin(principal, PermissionUserDisable) {
 		return UserResponse{}, ErrForbidden
 	}
 	if s.db == nil {

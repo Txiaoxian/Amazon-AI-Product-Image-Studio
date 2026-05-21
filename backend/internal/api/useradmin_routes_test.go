@@ -377,6 +377,83 @@ func TestUserAdminRolesPermissionsAndUserEndpointsRequireRBAC(t *testing.T) {
 	}
 }
 
+func TestUserAdminCreateAndStatusChangeRequireSpecificPermissions(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	sellerRoleID := roleIDByCode(t, db, adminSession.tenantID, "seller")
+
+	userCreatorRoleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-user-creator", "user-creator", auth.RoleStatusActive, []string{"user:create"})
+	seedActiveUser(t, db, adminSession.tenantID, "user-creator-user", "user-creator@example.com", "User Creator", "user-creator-password-123")
+	assignUserAdminRole(t, db, adminSession.tenantID, "user-creator-user", userCreatorRoleID, "user-creator")
+	userCreatorSession := loginProjectRouteUser(t, router, adminSession.tenantID, "user-creator@example.com", "user-creator-password-123")
+
+	createWithRoleResponse := performJSON(router, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":       "creator-with-role@example.com",
+		"displayName": "Creator With Role",
+		"password":    "creator-with-role-password-123",
+		"roleIds":     []string{sellerRoleID},
+	}, userCreatorSession.cookies, userCreatorSession.csrfHeader())
+	if createWithRoleResponse.Code != http.StatusForbidden {
+		t.Fatalf("user:create-only create with role status = %d, want %d", createWithRoleResponse.Code, http.StatusForbidden)
+	}
+	if userEmailExists(t, db, adminSession.tenantID, "creator-with-role@example.com") {
+		t.Fatal("user:create-only caller created a user with roles")
+	}
+
+	createWithoutRoleResponse := performJSON(router, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":       "creator-no-role@example.com",
+		"displayName": "Creator No Role",
+		"password":    "creator-no-role-password-123",
+	}, userCreatorSession.cookies, userCreatorSession.csrfHeader())
+	if createWithoutRoleResponse.Code != http.StatusCreated {
+		t.Fatalf("user:create-only create without role status = %d, want %d: %s", createWithoutRoleResponse.Code, http.StatusCreated, createWithoutRoleResponse.Body.String())
+	}
+	createdUserID := stringField(t, decodeData(t, createWithoutRoleResponse), "id")
+	if roleCount := countUserRoles(t, db, adminSession.tenantID, createdUserID); roleCount != 0 {
+		t.Fatalf("user:create-only create without role assigned %d roles, want 0", roleCount)
+	}
+
+	targetUserID := createManagedUser(t, router, adminSession, "status-target@example.com", "Status Target", "status-target-password-123", nil)
+	userUpdaterRoleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-user-updater", "user-updater", auth.RoleStatusActive, []string{"user:update"})
+	seedActiveUser(t, db, adminSession.tenantID, "user-updater-user", "user-updater@example.com", "User Updater", "user-updater-password-123")
+	assignUserAdminRole(t, db, adminSession.tenantID, "user-updater-user", userUpdaterRoleID, "user-updater")
+	userUpdaterSession := loginProjectRouteUser(t, router, adminSession.tenantID, "user-updater@example.com", "user-updater-password-123")
+
+	updateStatusResponse := performJSON(router, http.MethodPatch, "/api/v1/users/"+targetUserID, map[string]any{
+		"status": "DISABLED",
+	}, userUpdaterSession.cookies, userUpdaterSession.csrfHeader())
+	if updateStatusResponse.Code != http.StatusForbidden {
+		t.Fatalf("user:update-only patch status = %d, want %d", updateStatusResponse.Code, http.StatusForbidden)
+	}
+	var target database.User
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, targetUserID).First(&target).Error; err != nil {
+		t.Fatalf("load target after rejected status patch: %v", err)
+	}
+	if target.Status != auth.UserStatusActive {
+		t.Fatalf("target status changed through user:update-only PATCH: %q", target.Status)
+	}
+
+	updateNameResponse := performJSON(router, http.MethodPatch, "/api/v1/users/"+targetUserID, map[string]any{
+		"displayName": "Status Target Updated",
+	}, userUpdaterSession.cookies, userUpdaterSession.csrfHeader())
+	if updateNameResponse.Code != http.StatusOK {
+		t.Fatalf("user:update-only patch displayName status = %d, want %d: %s", updateNameResponse.Code, http.StatusOK, updateNameResponse.Body.String())
+	}
+
+	userDisablerRoleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-user-disabler", "user-disabler", auth.RoleStatusActive, []string{"user:disable"})
+	seedActiveUser(t, db, adminSession.tenantID, "user-disabler-user", "user-disabler@example.com", "User Disabler", "user-disabler-password-123")
+	assignUserAdminRole(t, db, adminSession.tenantID, "user-disabler-user", userDisablerRoleID, "user-disabler")
+	userDisablerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "user-disabler@example.com", "user-disabler-password-123")
+
+	disableResponse := performJSON(router, http.MethodPost, "/api/v1/users/"+targetUserID+"/disable", nil, userDisablerSession.cookies, userDisablerSession.csrfHeader())
+	if disableResponse.Code != http.StatusOK {
+		t.Fatalf("user:disable disable status = %d, want %d: %s", disableResponse.Code, http.StatusOK, disableResponse.Body.String())
+	}
+	enableResponse := performJSON(router, http.MethodPost, "/api/v1/users/"+targetUserID+"/enable", nil, userDisablerSession.cookies, userDisablerSession.csrfHeader())
+	if enableResponse.Code != http.StatusOK {
+		t.Fatalf("user:disable enable status = %d, want %d: %s", enableResponse.Code, http.StatusOK, enableResponse.Body.String())
+	}
+}
+
 func createManagedUser(t *testing.T, router http.Handler, session projectRouteSession, email string, displayName string, password string, roleIDs []string) string {
 	t.Helper()
 	response := performJSON(router, http.MethodPost, "/api/v1/users", map[string]any{
