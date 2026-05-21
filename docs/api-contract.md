@@ -239,7 +239,7 @@ History API requirements:
 - Sorting must be deterministic, newest output asset first, with a stable tie-breaker such as asset ID.
 - Orphaned generated/edited assets without a same-tenant visible task/output link must not appear in the history feed.
 - This endpoint does not create tasks, does not touch Redis/SSE, does not read or write MinIO objects, and does not expose operation/API call log metadata.
-- P10 backend history query is backend-only. Frontend migration to consume it must be a later task after the endpoint is reviewed and merged.
+- P10 backend history query is implemented and merged. Frontend migration to consume it must be a later task; until then the existing frontend task/assets join remains the production consumer.
 
 ## Provider APIs
 

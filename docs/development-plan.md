@@ -535,7 +535,7 @@ P9 carry-forward risks:
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: in progress after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, and `P10-FE-ADMIN-OBSERVABILITY-HARDENING` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, admin UI correctness, and history pagination correctness.
+Status: development tasks completed and merged after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, `P10-FE-ADMIN-OBSERVABILITY-HARDENING`, and `P10-BE-HISTORY-QUERY`. P10 started after P9 release validation and R9 review completed, and remained serial because the tasks touched task runtime, shutdown lifecycle, Provider/model lifecycle policy, admin UI correctness, and history pagination correctness.
 
 P10 priorities:
 
@@ -543,7 +543,7 @@ P10 priorities:
 2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: completed and merged. API Redis task-event subscriber startup now receives the API lifecycle context, test env still avoids real subscriber startup, and Redis remains sequence-only wakeup while MySQL remains the replay source.
 3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: completed and merged. Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
 4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: completed and merged. API call log detail responses now ignore stale out-of-order results, panel close and list page changes reset in-flight detail state, and API call log/detail rendering is split into a focused child component.
-5. `P10-BE-HISTORY-QUERY`: next. Add a backend project history query so generated/edited assets and their source tasks are paginated as one tenant-scoped backend result set before the frontend switches away from task/assets client-side joining.
+5. `P10-BE-HISTORY-QUERY`: completed and merged. Backend now exposes a read-only project history query so generated/edited assets and their source tasks can be paginated as one tenant-scoped backend result set before the frontend switches away from task/assets client-side joining.
 
 P10 worker-pool result:
 
@@ -584,12 +584,15 @@ P10 frontend admin hardening result:
 - API call log list/detail rendering was extracted into `AdminApiCallLogsView` without changing backend admin API contracts, task/SSE behavior, Provider/model management, or upload-policy-only settings behavior.
 - Frontend validation for the task passed: `npm run lint`, `npm run type-check`, `npm run test -- adminObservabilitySettingsPanel`, `npm run test`, `npm run build`, and `git diff --check`.
 
-P10 backend history query plan:
+P10 backend history query result:
 
-- Current production history is backend-backed, but the frontend assembles it by separately fetching project tasks plus generated and edited assets, then joining and sorting in the browser.
-- The next backend task should add `GET /api/v1/projects/{projectId}/history` as a read-only, tenant-scoped, project-authorized endpoint returning a single paginated list of `{ asset, task }` records.
-- The endpoint must use backend-owned joins across `image_assets`, `task_outputs`, and `generation_tasks`; it must return only non-deleted `GENERATED` and `EDITED` assets linked to visible same-tenant tasks.
-- The first task is backend-only. Frontend migration to consume this endpoint should be a later task after the backend contract is reviewed and merged.
+- `P10-BE-HISTORY-QUERY` completed and merged after review.
+- `GET /api/v1/projects/{projectId}/history` now returns a standard paginated page of `{ asset, task }` records.
+- The endpoint is read-only, Cookie-authenticated, and uses the same `task:read` plus project member/admin authorization semantics as project task reads.
+- The query is tenant-scoped and project-scoped, uses backend-owned joins across `task_outputs`, `image_assets`, and `generation_tasks`, returns only non-deleted `GENERATED` and `EDITED` output assets, excludes orphan/cross-tenant records, and keeps ordering deterministic.
+- The response uses safe asset/task DTOs and does not expose object keys, MinIO URLs, image bytes, Blob/base64 data, Provider secrets, Authorization headers, Cookies, or API call metadata.
+- Backend validation passed for the task: `go test ./internal/task ./internal/api -count=1`, `go test ./... -count=1`, `go test -race ./...`, non-cached `go test -race ./internal/task ./internal/api -count=1`, `go vet ./...`, `go build ./cmd/api ./cmd/worker`, `docker compose -f deploy/docker-compose.yml config`, and `git diff --check`.
+- Frontend still uses the existing task/assets client-side join until a later frontend migration task consumes the unified history endpoint.
 
 ## Phase boundaries
 

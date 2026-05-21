@@ -2851,7 +2851,7 @@ Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This 
 
 R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
 
-P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, and `P10-FE-ADMIN-OBSERVABILITY-HARDENING` are completed and merged. The next task is `P10-BE-HISTORY-QUERY`; keep it backend-only and do not start frontend history migration until this backend contract is reviewed and merged.
+P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, `P10-FE-ADMIN-OBSERVABILITY-HARDENING`, and `P10-BE-HISTORY-QUERY` are completed, reviewed, and merged. The unified backend history contract is now available, but frontend history migration has not started yet.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -4226,6 +4226,10 @@ git diff --check
 ### 任务名称
 
 P10-BE-HISTORY-QUERY - 增加后端项目历史统一分页查询
+
+### 状态
+
+Completed, reviewed, and merged into `main`. The accepted implementation adds `GET /api/v1/projects/{projectId}/history` as a backend-only, read-only, tenant-scoped project history endpoint returning paginated `{ asset, task }` records. It authorizes with existing `task:read` project access, queries through backend-owned `task_outputs -> image_assets -> generation_tasks` joins, returns only non-deleted generated/edited output assets, excludes orphan/cross-tenant rows, keeps deterministic ordering and bounded pagination, and preserves response safety by excluding object keys, MinIO URLs, image bytes, Provider secrets, auth headers, cookies, and API call metadata.
 
 ### 推荐执行信息
 
