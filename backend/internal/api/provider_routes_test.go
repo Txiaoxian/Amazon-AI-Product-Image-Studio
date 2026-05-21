@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	modelcap "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"gorm.io/gorm"
 )
@@ -164,6 +166,10 @@ func TestProviderRoutesEnforceRBACAndTenantScope(t *testing.T) {
 	if testResponse.Code != http.StatusForbidden {
 		t.Fatalf("seller test provider status = %d, want %d", testResponse.Code, http.StatusForbidden)
 	}
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/"+providerID, nil, sellerSession.cookies, sellerSession.csrfHeader())
+	if deleteResponse.Code != http.StatusForbidden {
+		t.Fatalf("seller delete provider status = %d, want %d", deleteResponse.Code, http.StatusForbidden)
+	}
 
 	seedActiveUser(t, db, adminSession.tenantID, "viewer-provider", "viewer-provider@example.com", "Viewer Provider", "viewer-provider-password-123")
 	assignRole(t, db, adminSession.tenantID, "viewer-provider", "viewer")
@@ -177,6 +183,118 @@ func TestProviderRoutesEnforceRBACAndTenantScope(t *testing.T) {
 	crossTenantResponse := performJSON(router, http.MethodGet, "/api/v1/providers/provider-tenant-b", nil, adminSession.cookies, nil)
 	if crossTenantResponse.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant provider status = %d, want %d", crossTenantResponse.Code, http.StatusNotFound)
+	}
+	crossTenantDeleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/provider-tenant-b", nil, adminSession.cookies, adminSession.csrfHeader())
+	if crossTenantDeleteResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant provider delete status = %d, want %d", crossTenantDeleteResponse.Code, http.StatusNotFound)
+	}
+	unknownDeleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/provider-missing", nil, adminSession.cookies, adminSession.csrfHeader())
+	if unknownDeleteResponse.Code != http.StatusNotFound {
+		t.Fatalf("unknown provider delete status = %d, want %d", unknownDeleteResponse.Code, http.StatusNotFound)
+	}
+}
+
+func TestProviderDeleteRejectsLinkedEnabledModelAndLeavesRowsUnchanged(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-linked-enabled", "Linked Enabled Provider")
+	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-linked-enabled", modelcap.StatusEnabled, "linked-enabled-model", "Linked Enabled Model")
+
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/"+providerID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusConflict {
+		t.Fatalf("delete linked enabled provider status = %d, want %d: %s", deleteResponse.Code, http.StatusConflict, deleteResponse.Body.String())
+	}
+	if code := errorCode(t, deleteResponse); code != "PROVIDER_HAS_LINKED_MODELS" {
+		t.Fatalf("delete linked enabled error code = %q, want PROVIDER_HAS_LINKED_MODELS: %s", code, deleteResponse.Body.String())
+	}
+	assertResponseExcludes(t, deleteResponse.Body.String(), "linked-enabled-model", "Linked Enabled Model", "tenant-b")
+	assertProviderAndModelUnchanged(t, db, adminSession.tenantID, providerID, modelID, modelcap.StatusEnabled)
+	assertNoProviderDeleteOperationLog(t, db, providerID)
+}
+
+func TestProviderDeleteRejectsLinkedDisabledModelAndLeavesRowsUnchanged(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-linked-disabled", "Linked Disabled Provider")
+	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-linked-disabled", modelcap.StatusDisabled, "linked-disabled-model", "Linked Disabled Model")
+
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/"+providerID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusConflict {
+		t.Fatalf("delete linked disabled provider status = %d, want %d: %s", deleteResponse.Code, http.StatusConflict, deleteResponse.Body.String())
+	}
+	if code := errorCode(t, deleteResponse); code != "PROVIDER_HAS_LINKED_MODELS" {
+		t.Fatalf("delete linked disabled error code = %q, want PROVIDER_HAS_LINKED_MODELS: %s", code, deleteResponse.Body.String())
+	}
+	assertResponseExcludes(t, deleteResponse.Body.String(), "linked-disabled-model", "Linked Disabled Model", "tenant-b")
+	assertProviderAndModelUnchanged(t, db, adminSession.tenantID, providerID, modelID, modelcap.StatusDisabled)
+	assertNoProviderDeleteOperationLog(t, db, providerID)
+}
+
+func TestProviderDeleteSucceedsAfterLinkedModelIsSoftDeleted(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-after-model-delete", "After Model Delete Provider")
+	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-before-provider-delete", modelcap.StatusEnabled, "model-before-provider-delete", "Model Before Provider Delete")
+
+	modelDelete := performJSON(router, http.MethodDelete, "/api/v1/models/"+modelID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if modelDelete.Code != http.StatusOK {
+		t.Fatalf("delete linked model status = %d, want %d: %s", modelDelete.Code, http.StatusOK, modelDelete.Body.String())
+	}
+	var deletedModel database.AIModel
+	if err := db.Unscoped().Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).First(&deletedModel).Error; err != nil {
+		t.Fatalf("load soft-deleted model: %v", err)
+	}
+	if !deletedModel.DeletedAt.Valid {
+		t.Fatalf("linked model was not soft-deleted: %#v", deletedModel)
+	}
+
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/"+providerID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete provider after model soft delete status = %d, want %d: %s", deleteResponse.Code, http.StatusOK, deleteResponse.Body.String())
+	}
+	deletedDetail := performJSON(router, http.MethodGet, "/api/v1/providers/"+providerID, nil, adminSession.cookies, nil)
+	if deletedDetail.Code != http.StatusNotFound {
+		t.Fatalf("deleted provider detail status = %d, want %d", deletedDetail.Code, http.StatusNotFound)
+	}
+	assertProviderDeleteOperationLogExcludes(t, db, providerID, "model-before-provider-delete", "Model Before Provider Delete")
+}
+
+func TestProviderDeleteIgnoresCrossTenantLinkedModels(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-cross-tenant-linked", "Cross Tenant Provider")
+	seedCrossTenantModelReferencingProvider(t, db, providerID)
+
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/providers/"+providerID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete provider with cross-tenant linked model status = %d, want %d: %s", deleteResponse.Code, http.StatusOK, deleteResponse.Body.String())
+	}
+	assertResponseExcludes(t, deleteResponse.Body.String(), "tenant-b", "cross-tenant-linked-model", "Cross Tenant Linked Model")
+
+	var crossTenantModel database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", "tenant-b", "model-cross-tenant-provider-id").First(&crossTenantModel).Error; err != nil {
+		t.Fatalf("load cross-tenant linked model: %v", err)
+	}
+	if crossTenantModel.DeletedAt.Valid || crossTenantModel.Status != modelcap.StatusEnabled {
+		t.Fatalf("cross-tenant model was mutated: %#v", crossTenantModel)
+	}
+}
+
+func TestProviderDisableWithLinkedModelsSucceedsAndDoesNotMutateModels(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-disable-linked", "Disable Linked Provider")
+	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-disable-linked", modelcap.StatusEnabled, "disable-linked-model", "Disable Linked Model")
+
+	disableResponse := performJSON(router, http.MethodPost, "/api/v1/providers/"+providerID+"/disable", nil, adminSession.cookies, adminSession.csrfHeader())
+	if disableResponse.Code != http.StatusOK {
+		t.Fatalf("disable linked provider status = %d, want %d: %s", disableResponse.Code, http.StatusOK, disableResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, disableResponse), "status") != provider.StatusDisabled {
+		t.Fatalf("disable provider status response = %s", disableResponse.Body.String())
+	}
+
+	var linkedModel database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).First(&linkedModel).Error; err != nil {
+		t.Fatalf("load linked model after provider disable: %v", err)
+	}
+	if linkedModel.DeletedAt.Valid || linkedModel.Status != modelcap.StatusEnabled {
+		t.Fatalf("linked model was mutated by provider disable: %#v", linkedModel)
 	}
 }
 
@@ -439,6 +557,142 @@ func seedOtherTenantProvider(t *testing.T, db *gorm.DB) {
 	}).Error; err != nil {
 		t.Fatalf("seed tenant B provider: %v", err)
 	}
+}
+
+func seedProviderRouteModel(t *testing.T, db *gorm.DB, tenantID string, userID string, providerID string, modelID string, status string, modelName string, displayName string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	if err := db.Create(&database.AIModel{
+		ID:                         modelID,
+		TenantID:                   tenantID,
+		ProviderID:                 providerID,
+		ModelName:                  modelName,
+		DisplayName:                displayName,
+		SupportsGenerate:           true,
+		SupportsEdit:               true,
+		SupportsMultiReference:     true,
+		SupportsN:                  true,
+		MaxOutputCount:             4,
+		SupportedSizesJSON:         `["1024x1024"]`,
+		SupportedQualitiesJSON:     `["standard"]`,
+		SupportedOutputFormatsJSON: `["png"]`,
+		PricingJSON:                `{"currency":"USD","unitPrices":{"image":0.04}}`,
+		Status:                     status,
+		CreatedBy:                  userID,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+	}).Error; err != nil {
+		t.Fatalf("seed provider route model: %v", err)
+	}
+	return modelID
+}
+
+func seedCrossTenantModelReferencingProvider(t *testing.T, db *gorm.DB, providerID string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	if err := db.Create(&database.Tenant{
+		ID:        "tenant-b",
+		Name:      "Tenant B",
+		Status:    "ACTIVE",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed tenant B: %v", err)
+	}
+	if err := db.Create(&database.User{
+		ID:           "user-tenant-b-linked-provider",
+		TenantID:     "tenant-b",
+		Email:        "tenant-b-linked-provider@example.com",
+		DisplayName:  "Tenant B Linked Provider User",
+		PasswordHash: "hash",
+		Status:       "ACTIVE",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}).Error; err != nil {
+		t.Fatalf("seed tenant B linked provider user: %v", err)
+	}
+	if err := db.Create(&database.AIModel{
+		ID:                         "model-cross-tenant-provider-id",
+		TenantID:                   "tenant-b",
+		ProviderID:                 providerID,
+		ModelName:                  "cross-tenant-linked-model",
+		DisplayName:                "Cross Tenant Linked Model",
+		SupportsGenerate:           true,
+		SupportsEdit:               true,
+		SupportsMultiReference:     true,
+		SupportsN:                  true,
+		MaxOutputCount:             4,
+		SupportedSizesJSON:         `["1024x1024"]`,
+		SupportedQualitiesJSON:     `["standard"]`,
+		SupportedOutputFormatsJSON: `["png"]`,
+		PricingJSON:                `{"currency":"USD","unitPrices":{"image":0.04}}`,
+		Status:                     modelcap.StatusEnabled,
+		CreatedBy:                  "user-tenant-b-linked-provider",
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+	}).Error; err != nil {
+		t.Fatalf("seed cross-tenant linked model: %v", err)
+	}
+}
+
+func assertProviderAndModelUnchanged(t *testing.T, db *gorm.DB, tenantID string, providerID string, modelID string, expectedModelStatus string) {
+	t.Helper()
+
+	var providerRecord database.AIProvider
+	if err := db.Where("tenant_id = ? AND id = ?", tenantID, providerID).First(&providerRecord).Error; err != nil {
+		t.Fatalf("load provider after conflict: %v", err)
+	}
+	if providerRecord.DeletedAt.Valid {
+		t.Fatalf("provider was deleted after conflict: %#v", providerRecord)
+	}
+
+	var modelRecord database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", tenantID, modelID).First(&modelRecord).Error; err != nil {
+		t.Fatalf("load model after conflict: %v", err)
+	}
+	if modelRecord.DeletedAt.Valid || modelRecord.Status != expectedModelStatus {
+		t.Fatalf("linked model changed after conflict: %#v", modelRecord)
+	}
+}
+
+func assertNoProviderDeleteOperationLog(t *testing.T, db *gorm.DB, providerID string) {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&database.OperationLog{}).
+		Where("resource_type = ? AND resource_id = ? AND action = ?", "provider", providerID, "provider.delete").
+		Count(&count).Error; err != nil {
+		t.Fatalf("count provider delete logs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("provider.delete operation log count = %d, want 0", count)
+	}
+}
+
+func assertProviderDeleteOperationLogExcludes(t *testing.T, db *gorm.DB, providerID string, forbidden ...string) {
+	t.Helper()
+
+	var log database.OperationLog
+	if err := db.Where("resource_type = ? AND resource_id = ? AND action = ?", "provider", providerID, "provider.delete").First(&log).Error; err != nil {
+		t.Fatalf("load provider delete operation log: %v", err)
+	}
+	assertResponseExcludes(t, log.MetadataJSON, forbidden...)
+}
+
+func errorCode(t *testing.T, response *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	return payload.Error.Code
 }
 
 func assertProviderResponseHasNoSecret(t *testing.T, body string) {

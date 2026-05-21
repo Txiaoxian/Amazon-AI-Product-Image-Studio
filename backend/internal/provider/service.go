@@ -430,6 +430,13 @@ func (s *Service) deleteProvider(ctx context.Context, principal auth.Principal, 
 		if err != nil {
 			return err
 		}
+		linkedModelCount, err := repo.CountLinkedModels(ctx, scope, record.ID)
+		if err != nil {
+			return err
+		}
+		if linkedModelCount > 0 {
+			return ErrHasLinkedModels
+		}
 		if err := repo.SoftDeleteProvider(ctx, scope, record.ID, s.now()); err != nil {
 			return err
 		}
@@ -850,6 +857,8 @@ func (s *Service) respondError(c *gin.Context, err error) {
 		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
 	case errors.Is(err, ErrNotFound):
 		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+	case errors.Is(err, ErrHasLinkedModels):
+		httpx.AbortWithError(c, http.StatusConflict, "PROVIDER_HAS_LINKED_MODELS", "Provider has linked models.", nil)
 	case errors.Is(err, ErrEncryption), errors.Is(err, ErrProbeUnavailable):
 		s.log.Error("provider security setup failed", slog.String("request_id", httpx.RequestIDFromContext(c)))
 		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
