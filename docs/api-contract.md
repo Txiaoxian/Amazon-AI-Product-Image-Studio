@@ -262,6 +262,7 @@ P10 Provider lifecycle policy:
 - Cross-tenant models must never block or reveal another tenant's Provider deletion.
 - `POST /providers/{providerId}/disable` remains allowed and does not cascade to linked models; task creation continues to reject disabled Providers.
 - Provider deletion must not cascade-delete or cascade-disable models in this phase.
+- Current P10 implementation status: this policy is implemented and merged. The conflict response uses `PROVIDER_HAS_LINKED_MODELS`, Provider disable remains unchanged, and tests cover same-tenant enabled/disabled linked models, soft-deleted linked models, cross-tenant linked models, RBAC/not-found behavior, and non-leaky responses/logs.
 
 ## Model APIs
 
@@ -296,7 +297,7 @@ Current P6 model backend implementation status:
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
 - Current P7 task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the runtime path. A later admin/data-integrity decision may still tighten that invariant.
-- P10 decides linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first. Same-Provider `model_name` uniqueness remains deferred.
+- P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first. Same-Provider `model_name` uniqueness remains deferred.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 

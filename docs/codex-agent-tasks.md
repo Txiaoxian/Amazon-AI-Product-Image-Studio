@@ -2851,7 +2851,7 @@ Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This 
 
 R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
 
-P10 starts serially after R9. `P10-BE-WORKER-POOL` and `P10-BE-SSE-BRIDGE-LIFECYCLE` are completed and merged. The next task is `P10-BE-PROVIDER-MODEL-LIFECYCLE`; do not start frontend admin hardening or history query work in parallel.
+P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, and `P10-BE-PROVIDER-MODEL-LIFECYCLE` are completed and merged. The next task is `P10-FE-ADMIN-OBSERVABILITY-HARDENING`; do not start history query work in parallel.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -3944,6 +3944,10 @@ git diff --check
 
 P10-BE-PROVIDER-MODEL-LIFECYCLE - 明确 Provider 删除与关联模型生命周期策略
 
+### 状态
+
+Completed, reviewed, and merged into `main`. Provider deletion now returns `409 PROVIDER_HAS_LINKED_MODELS` when same-tenant non-deleted linked models exist. Provider disable remains allowed and does not cascade to models. Tests cover enabled/disabled linked models, soft-deleted linked models, cross-tenant non-blocking behavior, RBAC/not-found behavior, no cascade mutation, and non-leaky responses/logs. Non-blocking follow-up: if administrators perform Provider deletion and model create/update concurrently, stronger row-level serialization may be useful later.
+
 ### 推荐执行信息
 
 - 推荐线程名：`P10-BE-PROVIDER-MODEL-LIFECYCLE`
@@ -4076,6 +4080,140 @@ go build ./cmd/api ./cmd/worker
 
 cd ..
 docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 子任务 35：P10 前端 admin observability 硬化
+
+### 任务名称
+
+P10-FE-ADMIN-OBSERVABILITY-HARDENING - 修复 API call detail stale response 并收窄 admin observability 组件
+
+### 推荐执行信息
+
+- 推荐线程名：`P10-FE-ADMIN-OBSERVABILITY-HARDENING`
+- 推荐分支名：`codex/p10-frontend-admin-observability-hardening`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务触碰 admin observability/settings 前端边界，不要与 backend history query、Provider/model frontend 管理改造或系统设置合同任务并行。
+
+### 目标
+
+在不改后端 API 合同、不新增管理功能的前提下，修复 `AdminObservabilitySettingsPanel` 的 API call detail stale-response 风险：当管理员连续点击不同 API call log 的“查看详情”时，较慢返回的旧详情不能覆盖较新选择。同时做最小组件拆分，让 API call logs/detail 或 settings 子视图从大组件中分离，降低后续维护风险。
+
+### 允许修改文件
+
+- `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`
+- `frontend/src/components/admin/**` 仅限新增 admin observability/settings 子组件，例如 `AdminApiCallLogsView.tsx`、`AdminSystemSettingsView.tsx` 或窄 helper 文件
+- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
+- `frontend/src/test/**` 仅限本任务直接需要的 admin observability 回归测试 helper
+- `frontend/src/types/admin.ts` 仅限为拆分组件复用既有类型而做的纯类型导出；不得改 API 字段语义
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/**`
+- `deploy/**`
+- `.env.example`
+- `frontend/src/api/**`，除非发现现有 admin API wrapper 类型阻塞拆分并先报告主 agent
+- `frontend/src/components/admin/ProviderModelAdminPanel.tsx`
+- `frontend/src/components/studio/**`
+- `frontend/src/lib/taskSseClient.ts`
+- `frontend/src/api/tasks.ts`
+- `frontend/src/api/providers.ts`
+- `frontend/src/api/models.ts`
+- 任何 Provider direct-call、Provider key persistence、task polling、SSE contract、backend settings contract 或 workbench behavior
+
+### 前置依赖
+
+- `P10-BE-PROVIDER-MODEL-LIFECYCLE` completed, reviewed, and merged.
+- P9 admin usage/audit/settings backend read contracts are stable.
+- Existing frontend admin observability/settings UI and tests are merged.
+
+### 必须保持的现有行为
+
+- Admin observability entry remains permission-gated from current session permissions.
+- Usage tab still loads usage summary and usage records with bounded pagination.
+- Operation logs tab still loads operation logs with bounded pagination.
+- API call logs tab still loads paginated API call logs and bounded redacted detail metadata.
+- System settings tab still renders and PATCHes only `uploadPolicy`; deferred settings such as `defaultProviderId`, `defaultModelId`, `tenantConcurrency`, `storageQuotaBytes`, and `logRetentionDays` must remain absent from UI and request payloads.
+- Browser storage must remain free of Provider API keys, Provider API URLs, admin settings payloads, and API call raw metadata.
+- Existing component styling, tabs, loading/empty/error states, and Chinese UI labels should remain consistent unless a small label change is needed for clarity.
+
+### 允许的中间态
+
+- Extract API call logs/detail rendering into one or more focused child components while keeping the parent component as the container for data loading.
+- Use a request sequence token, selected ID check, `AbortController`-like pattern, or mounted/current guard to ignore stale detail responses.
+- The UI may clear old detail when a new detail request starts, or may keep old detail visibly tied to its ID while showing the new request loading state; either is acceptable if stale responses cannot overwrite the current selection.
+- Tests may use deferred promises to simulate out-of-order detail responses.
+
+### 禁止的半迁移状态
+
+- Do not let a slower `getApiCallLog(oldId)` response overwrite a newer selected detail.
+- Do not globally disable detail loading forever after one failed request.
+- Do not replace EventSource/SSE, task status logic, workbench behavior, Provider/model management, or backend settings contracts.
+- Do not add polling, `setInterval`, repeated fetch loops, localStorage/sessionStorage/IndexedDB writes, or browser Provider calls.
+- Do not expose deferred settings as active fields or include them in PATCH payloads.
+- Do not render raw unbounded request/response metadata; existing bounded/redacted metadata behavior must remain.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| API call detail | user clicks log A, then log B; B resolves first, A resolves later | B remains selected and rendered; A is ignored |
+| API call detail | latest selected detail request fails after older request succeeds | error belongs to latest selection; old success cannot overwrite latest failure |
+| API call detail | panel closes while detail request is in flight | response is ignored; reopening starts from clean detail/error state |
+| API call detail | current detail metadata is very large | bounded metadata truncation remains |
+| API call logs | list page changes while detail request is in flight | stale detail cannot overwrite current visible detail state |
+| Permissions | user lacks audit permission | no API call log/detail API is called |
+| Settings | backend returns deferred settings fields | UI does not render them and PATCH sends only `uploadPolicy` |
+| Browser storage | admin UI renders and saves settings | no local/session storage keys are written |
+
+### 必须新增或更新的回归测试
+
+- Test with deferred `getApiCallLog` promises proving stale older detail responses cannot overwrite the latest clicked log.
+- Test proving latest detail failure is not overwritten by an older success.
+- Test proving closing the panel clears/guards in-flight detail responses.
+- Preserve or update existing tests for bounded detail metadata, permission gating, uploadPolicy-only settings PATCH, and no browser storage writes.
+- If component extraction occurs, tests should continue to exercise behavior through `AdminObservabilitySettingsPanel` rather than only shallow child-component implementation details.
+
+### 具体开发内容
+
+- Inspect `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx` and `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`.
+- Add a stale-response guard for `loadApiCallDetail`.
+- Keep detail loading state tied to the latest requested API call log ID.
+- Extract the API call logs/detail view, or a similarly narrow subview, into a focused child component if that reduces the parent file without widening scope.
+- Keep all admin API calls in the existing `AdminApi` abstraction; do not add direct fetches in components.
+- Add focused tests before running full frontend validation.
+
+### 安全要求
+
+- Do not add browser Provider calls or Provider Authorization headers.
+- Do not persist API call log detail, raw metadata, system settings, Provider API keys, or Provider URLs to browser storage.
+- Do not render raw unbounded metadata; keep existing bounded display and redacted backend contract.
+- Do not weaken admin permission gating.
+
+### 验收标准
+
+- Out-of-order API call detail responses cannot overwrite the current selected detail.
+- API call detail loading/error state remains understandable and scoped to the current selection.
+- Existing usage, operation logs, API call logs, and uploadPolicy settings behavior remains intact.
+- At least one meaningful admin observability subview is extracted or the parent component is otherwise measurably simplified without broad rewrite.
+- No backend, docs, deploy, workbench, Provider/model management, task, SSE, or API contract files are modified.
+- The child-agent handoff maps every failure-mode row above to concrete test names.
+
+### 测试命令
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test -- adminObservabilitySettingsPanel
+npm run test
+npm run build
+
+cd ..
 git diff --check
 ```
 

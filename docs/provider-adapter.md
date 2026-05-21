@@ -57,7 +57,7 @@ Current P6 model capability result:
 - Capability and pricing JSON are validated before persistence.
 - P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
 - Current P7 runtime uses stable `modelId` references, so same-Provider `model_name` uniqueness was not required for execution. P10 keeps model-name uniqueness deferred and defines Provider deletion behavior for linked models.
-- P10 Provider/model lifecycle policy: Provider deletion is blocked while any non-deleted same-tenant model still references the Provider. Provider disable remains allowed and does not cascade to models. Soft-deleted models do not block Provider deletion.
+- P10 Provider/model lifecycle policy is implemented and merged: Provider deletion is blocked while any non-deleted same-tenant model still references the Provider. Provider disable remains allowed and does not cascade to models. Soft-deleted models do not block Provider deletion.
 
 Current P6 frontend management result:
 

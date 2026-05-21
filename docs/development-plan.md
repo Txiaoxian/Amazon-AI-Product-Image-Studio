@@ -530,19 +530,19 @@ P9 carry-forward risks:
 - History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
 - R8-identified unreachable legacy display/storage helpers were deleted in P9 security regression. Future legacy cleanup should be based on production import-graph evidence, not broad deletion.
 - Admin observability UI is intentionally acceptable as one component for this slice, but should be split after security regression if it becomes a maintenance hotspot.
-- API call log detail UI has no stale-request guard; a slower detail response can overwrite a newer click for the same admin user. This is a display correctness issue, not a security blocker, and should be considered for a follow-up frontend hardening task.
+- API call log detail UI has no stale-request guard; a slower detail response can overwrite a newer click for the same admin user. This is a display correctness issue, not a security blocker, and is scheduled as `P10-FE-ADMIN-OBSERVABILITY-HARDENING`.
 - Redis 7.4 may emit go-redis `maintnotifications` fallback warnings during API/Worker operation. P9 validation confirmed these warnings are non-blocking, but operators may want to revisit Redis/client compatibility if log noise becomes a concern.
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: in progress after `P10-BE-WORKER-POOL` and `P10-BE-SSE-BRIDGE-LIFECYCLE` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+Status: in progress after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, and `P10-BE-PROVIDER-MODEL-LIFECYCLE` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
 
 P10 priorities:
 
 1. `P10-BE-WORKER-POOL`: completed and merged. Configured Worker concurrency is now a real in-process processing pool while MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits remain intact.
 2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: completed and merged. API Redis task-event subscriber startup now receives the API lifecycle context, test env still avoids real subscriber startup, and Redis remains sequence-only wakeup while MySQL remains the replay source.
-3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: next. Implement the chosen Provider/model lifecycle policy: Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
-4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: later. Split the large admin observability/settings UI if needed and add stale-request protection for API call log details.
+3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: completed and merged. Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
+4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: next. Add stale-response protection for API call log details and split the large admin observability/settings panel only enough to make the detail flow maintainable.
 5. `P10-BE-HISTORY-QUERY`: optional later. Add a backend history query if frontend-assembled task/asset pagination becomes a correctness issue.
 
 P10 worker-pool result:
@@ -568,6 +568,19 @@ P10 Provider/model lifecycle decision:
 - Provider disable remains allowed and does not cascade to linked models; task creation already rejects disabled Providers.
 - Model deletion remains a soft delete and is the explicit cleanup step before Provider deletion.
 - The implementation must not cascade-delete or cascade-disable models, because that would silently alter model availability and frontend workbench choices.
+
+P10 Provider/model lifecycle result:
+
+- `DELETE /providers/{providerId}` now returns `409 PROVIDER_HAS_LINKED_MODELS` when same-tenant non-deleted models still reference the Provider.
+- The linked-model count query is tenant-scoped and ignores soft-deleted models.
+- Tests cover enabled linked models, disabled linked models, soft-deleted linked models, cross-tenant linked models, Provider disable with linked models, forbidden delete, unknown Provider delete, and operation-log redaction.
+- Non-blocking follow-up: if administrators perform Provider deletion and model create/update concurrently, stronger row-level serialization may be useful later. The current P10 task did not introduce that broad transaction-hardening scope.
+
+P10 frontend admin hardening plan:
+
+- `AdminObservabilitySettingsPanel` currently owns usage, operation logs, API call logs, API call detail, and system settings in one large file.
+- The next frontend task should first guard `getApiCallLog` detail responses so a slower response from an older selection cannot overwrite a newer selected API call log detail.
+- A small component split is allowed for the API call logs/detail or settings subview, but it must not rewrite the full admin UI or change backend API contracts.
 
 ## Phase boundaries
 
