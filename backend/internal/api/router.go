@@ -20,6 +20,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/sse"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/useradmin"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -84,21 +85,22 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
 		newAdminAuditUsageService(options.Database, options.Logger, options.AuditReadRedactor),
 		settingsService,
+		useradmin.NewService(options.Database, options.Logger),
 		options.HealthChecks...,
 	)
 
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, userAdminService *useradmin.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService, settingsService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService, settingsService, userAdminService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, userAdminService *useradmin.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -133,6 +135,9 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	}
 	if settingsService != nil {
 		settingsService.RegisterRoutes(protected)
+	}
+	if userAdminService != nil {
+		userAdminService.RegisterRoutes(protected)
 	}
 }
 
