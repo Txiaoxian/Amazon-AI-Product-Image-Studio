@@ -40,6 +40,7 @@ var (
 	ErrEncryption       = errors.New("provider api key encryption failed")
 	ErrProviderTest     = errors.New("provider test failed")
 	ErrProbeUnavailable = errors.New("provider probe unavailable")
+	ErrHasLinkedModels  = errors.New("provider has linked models")
 )
 
 type ListQuery struct {
