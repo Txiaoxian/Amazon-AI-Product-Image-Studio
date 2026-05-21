@@ -72,11 +72,54 @@ type ListOptions struct {
 	Type     string
 }
 
+type HistoryQuery struct {
+	PageNum  int
+	PageSize int
+	Kind     string
+}
+
+type HistoryOptions struct {
+	PageNum  int
+	PageSize int
+	Kind     string
+}
+
 type Page struct {
 	Records  []Response `json:"records"`
 	Total    int64      `json:"total"`
 	PageNum  int        `json:"pageNum"`
 	PageSize int        `json:"pageSize"`
+}
+
+type HistoryPage struct {
+	Records  []HistoryRecord `json:"records"`
+	Total    int64           `json:"total"`
+	PageNum  int             `json:"pageNum"`
+	PageSize int             `json:"pageSize"`
+}
+
+type HistoryRecord struct {
+	Asset AssetResponse `json:"asset"`
+	Task  Response      `json:"task"`
+}
+
+type AssetResponse struct {
+	ID           string `json:"id"`
+	TenantID     string `json:"tenantId"`
+	ProjectID    string `json:"projectId"`
+	Kind         string `json:"kind"`
+	Category     string `json:"category"`
+	Filename     string `json:"filename"`
+	MimeType     string `json:"mimeType"`
+	FileSize     int64  `json:"fileSize"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	ThumbnailURL string `json:"thumbnailUrl"`
+	PreviewURL   string `json:"previewUrl"`
+	IsFavorite   bool   `json:"isFavorite"`
+	CreatedBy    string `json:"createdBy"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
 }
 
 type CreateInput struct {
@@ -160,6 +203,27 @@ func responseFromRecord(record database.GenerationTask, outputAssetIDs []string)
 		CreatedAt:      formatTime(record.CreatedAt),
 		UpdatedAt:      formatTime(record.UpdatedAt),
 	}, nil
+}
+
+func assetResponseFromRecord(record database.ImageAsset) AssetResponse {
+	return AssetResponse{
+		ID:           record.ID,
+		TenantID:     record.TenantID,
+		ProjectID:    record.ProjectID,
+		Kind:         record.Kind,
+		Category:     record.Category,
+		Filename:     record.Filename,
+		MimeType:     record.MimeType,
+		FileSize:     record.SizeBytes,
+		Width:        record.Width,
+		Height:       record.Height,
+		ThumbnailURL: "",
+		PreviewURL:   "/api/v1/assets/" + record.ID + "/download",
+		IsFavorite:   record.IsFavorite,
+		CreatedBy:    record.CreatedBy,
+		CreatedAt:    formatTime(record.CreatedAt),
+		UpdatedAt:    formatTime(record.UpdatedAt),
+	}
 }
 
 func optionalTime(value *time.Time) *string {
