@@ -9,7 +9,7 @@ Development and feature verification must use the existing global local environm
 - If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
 - Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
 
-## Status after R9
+## Status after R10
 
 Completed:
 
@@ -41,18 +41,25 @@ Completed:
   - browser Provider adapters, normal-user Provider key/API URL settings, and IndexedDB-backed production history/image paths were removed or retired from the production import graph.
 - P9 usage, audit, settings, security regression, and release validation:
   - admin usage/audit read APIs, production placeholder secret guards, runtime-backed upload policy settings, frontend admin observability/settings UI, security regression coverage, and Docker Compose release validation are merged.
+- P10 runtime hardening and operator follow-ups:
+  - Worker `WORKER_CONCURRENCY` now drives a real in-process processing pool while runtime global/tenant/user/Provider/model limiters remain authoritative.
+  - API Redis task-event subscriber lifecycle is bound to API process shutdown.
+  - Provider deletion is blocked while same-tenant non-deleted models still reference it.
+  - Admin API-call detail UI ignores stale out-of-order responses.
+  - Backend project history query provides one tenant-scoped paginated source for generated/edited output assets and source tasks.
 
 Current review result:
 
-- R9 completed with no blocking findings. P9 can close and P10 can start.
+- R10 completed with no blocking findings. P10 code can remain merged in `main`.
 - Frontend validation passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`.
 - Backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
-- Docker Compose validation passed: config, build, up, health checks, API health, frontend static route, and cleanup with `down -v --remove-orphans`.
-- Remaining non-blocking R9 items:
-  - `AdminObservabilitySettingsPanel` has a stale-detail response risk and should be guarded when admin UI hardening is scheduled.
-  - `AdminObservabilitySettingsPanel` is large enough to split in a later maintenance task.
+- Docker Compose validation passed for config syntax: `docker compose -f deploy/docker-compose.yml config`.
+- P10 review also checked static forbidden-pattern scans for frontend Provider direct calls/API-key persistence/polling and backend sensitive-output surfaces touched by P10.
+- Remaining non-blocking R10 items:
+  - Frontend history still uses the existing history UI path until a later frontend task consumes `GET /api/v1/projects/{projectId}/history`.
+  - Provider deletion and model create/update can still race without stronger row-level serialization. The accepted P10 policy is correct, but deeper transaction hardening is a later maintenance task.
+  - `AdminObservabilitySettingsPanel` is still large; P10 split the API-call log section, and additional splits are optional maintenance work.
   - Redis health checker client lifecycle should get explicit ownership if health dependencies become dynamically reloadable.
-- The next phase is P10 runtime hardening. Start serially with `P10-BE-WORKER-POOL`.
 
 ## P3: Runtime deployment repair
 
@@ -593,6 +600,24 @@ P10 backend history query result:
 - The response uses safe asset/task DTOs and does not expose object keys, MinIO URLs, image bytes, Blob/base64 data, Provider secrets, Authorization headers, Cookies, or API call metadata.
 - Backend validation passed for the task: `go test ./internal/task ./internal/api -count=1`, `go test ./... -count=1`, `go test -race ./...`, non-cached `go test -race ./internal/task ./internal/api -count=1`, `go vet ./...`, `go build ./cmd/api ./cmd/worker`, `docker compose -f deploy/docker-compose.yml config`, and `git diff --check`.
 - Frontend still uses the existing task/assets client-side join until a later frontend migration task consumes the unified history endpoint.
+
+R10 review result:
+
+- Main-agent review covered P10 code from `7566c57` through `e7ae2f0`, including all five P10 merge commits and their task-level fixes.
+- No blocking correctness, tenant isolation, RBAC, sensitive logging, Provider Adapter, queue, SSE, or frontend migration violations were found.
+- Worker pool review confirmed the new in-process loop count does not bypass global/tenant/user/Provider/model runtime concurrency limiters and keeps recovery single-owned.
+- SSE bridge review confirmed Redis remains only a wakeup channel and MySQL remains the replay source; API shutdown now owns subscriber cancellation.
+- Provider/model lifecycle review confirmed linked-model blocking is same-tenant scoped, ignores soft-deleted models, and does not cascade model state.
+- Admin observability review confirmed stale API-call detail responses are ignored and detail metadata remains bounded/redacted in the UI.
+- History-query review confirmed output history uses tenant/project-scoped joins and does not expose object keys, MinIO URLs, Provider secrets, API call metadata, image bytes, or browser Blob/base64 data.
+- R10 validation passed:
+
+```bash
+cd frontend && npm run lint && npm run type-check && npm run test && npm run build
+cd ../backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker
+cd .. && docker compose -f deploy/docker-compose.yml config
+git diff --check 7566c57..HEAD
+```
 
 ## Phase boundaries
 

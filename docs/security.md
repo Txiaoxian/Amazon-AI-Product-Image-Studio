@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current transition risks after P10 backend history query
+## Current transition risks after R10
 
-The current `main` branch has completed P10 runtime, admin, and backend history-query hardening through `P10-BE-HISTORY-QUERY`. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P10 runtime, admin, and backend history-query hardening plus R10 review. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Status after P8 | Acceptance check |
 | --- | --- | --- | --- |
@@ -14,6 +14,7 @@ The current `main` branch has completed P10 runtime, admin, and backend history-
 Remaining post-P10 security and hardening risks:
 
 - Frontend history still joins separately paged task and asset lists until a later frontend migration consumes the P10 backend-owned, tenant-scoped project history query.
+- Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 - Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is now the only active writable slice and is backed by asset validation; default Provider/model IDs, tenant concurrency, storage quotas, and retention remain deferred until their task/worker/quota/cleanup consumers are explicit.
 
@@ -37,6 +38,7 @@ Resolved transition item:
 - P10 Worker pool, SSE bridge lifecycle, and Provider/model lifecycle hardening completed without changing tenant, Provider Adapter, SSE replay, task status, or sensitive logging contracts.
 - P10 frontend admin observability hardening added stale-response protection for API call details, keeps detail metadata bounded/redacted, preserves upload-policy-only system settings, and does not write Provider keys, auth tokens, log metadata, or settings payloads to browser storage.
 - P10 backend history query now provides a read-only, tenant-scoped, project-authorized `GET /projects/{projectId}/history` endpoint. It uses backend-owned task output, asset, and task joins; returns only non-deleted generated/edited output assets; excludes orphan and cross-tenant rows; and does not expose object keys, MinIO URLs, image bytes, Provider secrets, auth headers, cookies, or API call metadata.
+- R10 reviewed the complete P10 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
 
 P5 review hardening backlog:
 
