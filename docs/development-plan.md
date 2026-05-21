@@ -1,201 +1,194 @@
 # Development Plan
 
-## Local development environment rule
+## Development Environment Rule
 
-Development and feature verification must use the existing global local environment described in `docs/local-development.md`.
+Routine development and feature verification must use the existing shared local services documented in `docs/local-development.md`:
 
-- Use `dev-mysql8`, `dev-redis`, and `dev-minio` for routine validation.
-- Do not create project-specific MySQL, Redis, or MinIO containers for normal feature work.
-- If project Compose is used for deployment-specific verification, clean it up afterwards with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` unless the user explicitly asks to keep it.
-- Do not copy real local service passwords into project docs, `.env.example`, source code, tests, or logs.
+- MySQL: `dev-mysql8`
+- Redis: `dev-redis`
+- MinIO: `dev-minio`
 
-## Status after R10
-
-Completed:
-
-- P0 documentation and project Agent rules.
-- P1 repository structure foundation:
-  - frontend moved into `frontend/`.
-  - Go backend skeleton added under `backend/`.
-  - Docker Compose skeleton and `.env.example` added.
-- P2 backend and frontend infrastructure:
-  - backend config, logging, response helpers, router, request ID, security headers, CORS, recovery, and access log middleware.
-  - frontend API client and task SSE client foundations.
-- P3 runtime deployment repair:
-  - backend API and worker Dockerfile targets.
-  - frontend Nginx `/api/` proxy.
-  - worker readiness healthcheck.
-  - removal of frontend Nginx AI relay routing.
-- P4 database, tenant, auth, RBAC, and frontend auth:
-  - GORM/MySQL connection, explicit migrations, tenant-aware repository helper, and core auth/RBAC tables.
-  - init-admin, login, logout, `/me`, password change, HttpOnly Cookie JWT, CSRF, auth middleware, tenant context, RBAC guard, and operation log recording.
-  - frontend auth API wrappers, login screen, current-user loading, logout, 401 handling, and in-memory CSRF token usage.
-- P5 project and asset management:
-  - project/member APIs, MinIO-backed reference assets, upload validation, authorized downloads, and frontend project/asset integration.
-- P6 Provider and model management:
-  - encrypted Provider credentials, SSRF-safe Provider management/testing, model capability APIs, and frontend admin management UI.
-- P7 task, queue, runtime, and SSE foundation:
-  - task APIs, SSE replay, Redis queueing, Worker execution, backend Provider Adapter runtime, generated/edited assets, usage/API call logs, and frontend task/SSE contract layer.
-- P8 frontend backendization:
-  - production workbench generation/edit flow now uses backend task creation, SSE, backend model capabilities, project asset IDs, and backend output assets.
-  - browser Provider adapters, normal-user Provider key/API URL settings, and IndexedDB-backed production history/image paths were removed or retired from the production import graph.
-- P9 usage, audit, settings, security regression, and release validation:
-  - admin usage/audit read APIs, production placeholder secret guards, runtime-backed upload policy settings, frontend admin observability/settings UI, security regression coverage, and Docker Compose release validation are merged.
-- P10 runtime hardening and operator follow-ups:
-  - Worker `WORKER_CONCURRENCY` now drives a real in-process processing pool while runtime global/tenant/user/Provider/model limiters remain authoritative.
-  - API Redis task-event subscriber lifecycle is bound to API process shutdown.
-  - Provider deletion is blocked while same-tenant non-deleted models still reference it.
-  - Admin API-call detail UI ignores stale out-of-order responses.
-  - Backend project history query provides one tenant-scoped paginated source for generated/edited output assets and source tasks.
-
-Current review result:
-
-- R10 completed with no blocking findings. P10 code can remain merged in `main`.
-- Frontend validation passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`.
-- Backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
-- Docker Compose validation passed for config syntax: `docker compose -f deploy/docker-compose.yml config`.
-- P10 review also checked static forbidden-pattern scans for frontend Provider direct calls/API-key persistence/polling and backend sensitive-output surfaces touched by P10.
-- Remaining non-blocking R10 items:
-  - Frontend history still uses the existing history UI path until a later frontend task consumes `GET /api/v1/projects/{projectId}/history`.
-  - Provider deletion and model create/update can still race without stronger row-level serialization. The accepted P10 policy is correct, but deeper transaction hardening is a later maintenance task.
-  - `AdminObservabilitySettingsPanel` is still large; P10 split the API-call log section, and additional splits are optional maintenance work.
-  - Redis health checker client lifecycle should get explicit ownership if health dependencies become dynamically reloadable.
-
-## P3: Runtime deployment repair
-
-Priority: do this before database, authentication, or business API work.
-
-Tasks:
-
-- Add a backend Dockerfile with `api` and `worker` targets.
-- Make backend worker healthcheck real by creating/removing the configured readiness file.
-- Remove frontend Nginx AI relay routing.
-- Add frontend Nginx `/api/` proxy to `backend-api:8080`.
-- Add Vite dev `/api` proxy to the local backend API.
-- Keep existing frontend UI and local generation behavior unchanged.
-
-Verification:
+Do not create project-specific MySQL, Redis, or MinIO containers for ordinary feature work. `deploy/docker-compose.yml` is reserved for deployment verification; if it starts project containers, clean them up afterwards unless the user explicitly asks to keep them:
 
 ```bash
-cd frontend && npm run lint && npm run type-check && npm run test && npm run build
-cd ../backend && go test ./... && go test -race ./... && go vet ./...
-cd .. && docker compose -f deploy/docker-compose.yml config
-docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
-docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## P4: Database, tenant, auth, and RBAC foundation
+## Current State After R10
 
-Status: completed and merged to `main`.
+The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
-Tasks:
+Completed phases:
 
-- Implement GORM/MySQL connection and explicit migrations.
-- Add tenant-aware model and repository helpers.
-- Add tenant, user, role, permission, user role, role permission, and operation log tables.
-- Implement init-admin, login, logout, current user, and password change APIs.
-- Add HttpOnly Cookie JWT, CSRF foundation, auth middleware, tenant context middleware, and RBAC middleware.
-- Add frontend login/current user wiring only after backend auth contracts are stable.
+| Phase | Status | Result |
+| --- | --- | --- |
+| P0 | Complete | Planning docs and project Agent rules created. |
+| P1 | Complete | Monorepo structure established: `frontend/`, `backend/`, `deploy/`, `docs/`. |
+| P2 | Complete | Backend API infrastructure and frontend API/SSE client foundations. |
+| P3 | Complete | Docker Compose runtime repair, backend API/Worker images, frontend `/api/` proxy, no AI relay. |
+| P4 | Complete | MySQL/GORM, tenants, auth, RBAC foundation, HttpOnly Cookie JWT, CSRF, frontend login. |
+| P5 | Complete | Projects, project members, MinIO-backed assets, upload validation, frontend project/asset UI. |
+| P6 | Complete | Provider and model management with encrypted keys, SSRF defense, capability APIs, admin UI. |
+| P7 | Complete | Task APIs, Redis queue, Worker execution, Provider Adapter runtime, SSE replay, usage/API logs. |
+| P8 | Complete | Frontend generation/edit/history production flow moved to backend tasks, SSE, assets, and models. |
+| P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
+| P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 
-Verification:
+R10 found no blocking issues. Full frontend validation, backend validation, API/Worker builds, Docker Compose config, and static security scans passed.
 
-- Backend unit tests cover migrations, auth happy paths, auth failures, cookie flags, CSRF behavior, and tenant context.
-- Frontend auth tests cover login, unauthenticated state, logout, 401 handling, and current user loading.
-- Post-merge checks passed:
+## Completed Platform Capabilities
 
-```bash
-cd frontend && npm run lint && npm run type-check && npm run test && npm run build
-cd ../backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker
-cd .. && docker compose -f deploy/docker-compose.yml config
-```
+The current `main` branch supports:
 
-## P5: Project and asset management
+- Authenticated multi-user access with tenant context and RBAC enforcement.
+- Project and project-member management foundations.
+- MinIO-backed reference/generated/edited image assets with backend authorization.
+- Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
+- Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
+- Frontend workbench submission through backend task APIs and SSE only.
+- Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
+- Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
-Status: completed. Backend project, backend asset storage, frontend project/asset integration, and R5 review have all been reviewed and merged into `main`. Do not treat P5 as generation backendization. The P5-era transition risks around old frontend AI Provider direct calls, localStorage Provider API keys, and IndexedDB local history were later removed or retired from production paths in P8/P9.
+Hard platform rules remain unchanged:
 
-Execution order:
+- The browser must not call AI Providers directly.
+- The browser must not store AI Provider API keys.
+- Task state must use SSE, not polling.
+- MySQL is task state truth; Redis is queue/wakeup/lock/cache infrastructure.
+- MinIO stores image bytes; MySQL stores metadata and object keys only.
+- Tenant filters, RBAC, object authorization, sensitive-log redaction, and Provider SSRF defense are mandatory.
 
-1. `P5-BE-PROJECTS`: backend project and project member foundation. Completed and merged.
-2. `P5-BE-ASSET-STORAGE`: backend MinIO storage service, upload validation, asset APIs, and authorized downloads. Completed and merged.
-3. `P5-FE-PROJECT-ASSETS`: frontend project selector, asset list, reference upload, download, favorite/delete actions, and project-scoped reference selection. Completed and merged.
-4. `R5`: main-agent review, integration, regression, and contract cleanup. Completed.
+## Full Platform Completion Target
 
-P5 backend project requirements:
+The platform is not finished until these product capabilities are complete and verified:
 
-- Implement migrations and models for `projects` and `project_members`.
-- Implement project CRUD with soft delete.
-- Implement project membership APIs and object-level authorization helpers.
-- Every project query must filter by `tenant_id`.
-- Cross-tenant project IDs must return `404` or a non-revealing authorization failure.
+1. Tenant, user, role, and project-member administration are usable from backend and frontend.
+2. Seller-facing project workflows are polished enough for repeated use: create/select product projects, manage reference/generated/edited assets, inspect details, download, favorite, delete, and re-edit.
+3. Frontend history consumes the backend unified project history endpoint instead of joining task and asset lists client-side.
+4. Runtime settings have real consumers before they become writable: default Provider/model, tenant/user/model/provider concurrency, upload policy, storage quota, and retention.
+5. Storage lifecycle is operational: thumbnail generation or clear thumbnail policy, orphan cleanup, retention cleanup, and safe MinIO bucket/bootstrap guidance.
+6. Provider/model lifecycle and data integrity are hardened for concurrent admin operations.
+7. Usage and cost reporting are accurate enough for tenant/user/project/model/provider views and future billing.
+8. Security regression covers auth, tenant isolation, RBAC, object authorization, upload validation, Provider SSRF, sensitive redaction, task state transitions, SSE replay, and frontend forbidden patterns.
+9. End-to-end release validation proves the core seller flow: init admin, configure Provider/model, create project, upload reference image, submit generation/edit task, receive SSE updates, view output asset, download, re-edit, and inspect logs/usage.
 
-P5 backend project result:
+## Remaining Roadmap
 
-- Implemented project CRUD, project member management, and project authorization helpers.
-- Every project query is tenant-scoped.
-- Project creators become `OWNER` members.
-- Operation logs are written for project and member changes.
+### P11: Identity, Team, And RBAC Administration
 
-P5 backend asset requirements:
+Goal: complete the multi-user/team control plane.
 
-- Implement migrations and models for `image_assets`.
-- Implement MinIO client/storage service using the existing environment config.
-- Implement reference image upload to MinIO.
-- Implement asset metadata, thumbnail metadata placeholder, list, detail, favorite/unfavorite, soft delete, and authorized download.
-- Validate uploads by magic bytes, MIME allowlist, file size, width, height, and pixel count. SVG is forbidden.
-- MySQL stores metadata and `object_key`; image bytes go to MinIO only.
-- Use the shared local `dev-minio` environment for routine integration checks.
+Suggested order:
 
-P5 backend asset result:
+1. `P11-BE-USER-ROLE-ADMIN`
+   - Backend tenant user CRUD, disable/enable, role assignment, role/permission reads.
+   - Must preserve existing auth/session/RBAC behavior.
+2. `P11-FE-USER-ROLE-ADMIN`
+   - Admin UI for users, roles, permissions, status changes, and role assignment.
+   - Must not expose password hashes, JWTs, CSRF tokens, or tenant internals.
+3. `R11`
+   - Review and regression for tenant isolation, RBAC, auth edge cases, and frontend admin UX.
 
-- Implemented `image_assets`, MinIO object storage abstraction, upload validation, asset metadata APIs, favorite/unfavorite, soft delete, and authorized download.
-- Asset access uses `asset -> project` authorization and reuses project RBAC plus membership checks.
-- Reference uploads write image bytes to MinIO and metadata to MySQL only.
-- Review note: uploaded-object cleanup after a DB failure is implemented, but should later use an independent cleanup context and/or cleanup job for request-cancellation edge cases.
-- Review note: new built-in asset permissions are seeded for new tenants; a later reconciliation task should backfill built-in permissions for existing tenants.
-- Review note: bucket creation/bootstrap remains a deployment or local-environment responsibility.
+Parallelism: start serially with backend contracts. Frontend may start only after backend APIs are reviewed and merged.
 
-P5 frontend requirements:
+### P12: Seller Workflow And History Completion
 
-- Add project and asset API wrappers using the existing authenticated API client.
-- Add project selection/creation entry points without replacing the generation workflow yet.
-- Add reference asset upload/list/detail/download UI consistent with the existing workbench.
-- Keep old local IndexedDB history available until P8, but do not treat it as backend asset truth.
-- Use the merged backend contracts for `/api/v1/projects`, `/api/v1/projects/{projectId}/assets`, and `/api/v1/assets/{assetId}`.
-- Do not introduce task polling, Provider/model management, or frontend generation backendization in P5.
+Goal: make project/history/asset workflows coherent for daily seller use.
 
-P5 frontend result:
+Suggested order:
 
-- Added authenticated project and asset API wrappers on top of the existing frontend API client.
-- Added project selector/create UI, reference upload, asset list, asset detail actions, favorite/delete/download actions, and "use as reference" workbench wiring.
-- State-changing project and asset requests use the existing in-memory CSRF flow; no JWT, CSRF token, or Provider credential persistence was added.
-- Download goes through backend authorization and is handled as a browser blob response.
-- Existing generation submission and local history remain available as transition behavior until P8.
+1. `P12-FE-UNIFIED-HISTORY`
+   - Switch frontend history to `GET /api/v1/projects/{projectId}/history`.
+   - Fix history loading, empty, error, pagination, detail, download, and re-edit states.
+2. `P12-FE-PROJECT-WORKFLOW-POLISH`
+   - Improve project creation/editing/member entry points and asset management ergonomics.
+   - Keep the existing UI concepts; do not rewrite the app shell.
+3. `P12-BE-PROJECT-MEMBER-HARDENING`
+   - Add missing project-member invariants such as preventing loss of the last `OWNER` where appropriate.
+4. `R12`
+   - End-to-end seller workflow review.
 
-P5 acceptance gates:
+Parallelism: `P12-FE-UNIFIED-HISTORY` and `P12-BE-PROJECT-MEMBER-HARDENING` can run in parallel after P11 if their file scopes do not overlap. Project workflow polish should follow history migration.
 
-- Project and asset APIs require authentication, tenant filtering, RBAC, and object-level authorization.
-- Cross-tenant project/asset access is blocked or invisible.
-- Upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count.
-- Download requires backend authorization.
-- Frontend does not store Provider API keys, auth tokens, or image blobs as backend asset truth.
+### P13: Runtime Settings, Quotas, And Storage Lifecycle
 
-P5 R5 review result:
+Goal: make admin settings honest and operational by connecting every writable field to a runtime consumer.
 
-- P5 backend project and asset APIs enforce authentication, tenant filters, RBAC, project membership, object-level authorization, and soft delete behavior.
-- P5 asset upload tests cover forged MIME, invalid image bytes, SVG rejection, file size, dimensions, and pixel-count validation.
-- P5 frontend integration did not add new AI Provider direct calls, API key persistence, auth token persistence, or task polling.
-- Shared local development services were used for validation; no project-specific MySQL, Redis, or MinIO environment was created.
+Suggested order:
 
-P5 non-blocking backlog:
+1. `P13-BE-RUNTIME-DEFAULTS`
+   - Default Provider/model settings consumed by task creation when the request omits explicit IDs, or keep them unavailable if the product chooses explicit-only submission.
+2. `P13-BE-CONCURRENCY-POLICY`
+   - Tenant/user/provider/model concurrency policies loaded from settings and consumed by Worker limiters.
+3. `P13-BE-STORAGE-QUOTA-RETENTION`
+   - Storage quota accounting, log/asset retention policy, orphan cleanup, and independent cleanup context/job.
+4. `P13-FE-SYSTEM-SETTINGS`
+   - Frontend admin UI only for settings that are active and runtime-backed.
+5. `R13`
+   - Settings/quotas/storage lifecycle review.
 
-- Frontend project creation currently clears form inputs before the async create result is known; later UX hardening should clear only after success.
-- Frontend upload precheck still uses the local 15 MB limit while the backend default allows 25 MB. Until system settings are exposed to the frontend, backend validation remains the source of truth.
-- Uploaded-object cleanup after a DB failure is implemented, but should later use an independent cleanup context and/or cleanup job for request-cancellation edge cases.
-- New built-in asset permissions are seeded for new tenants; a later reconciliation task should backfill built-in permissions for existing tenants.
-- Bucket creation/bootstrap remains a deployment or local-environment responsibility.
+Parallelism: mostly serial because settings fields must not be exposed before runtime consumers exist.
 
-P5 full verification after merge:
+### P14: Provider, Model, And Cost Operations
+
+Goal: harden Provider/model operations and usage/cost reporting for real operations.
+
+Suggested order:
+
+1. `P14-BE-PROVIDER-MODEL-INTEGRITY`
+   - Stronger transaction serialization for Provider delete versus model create/update.
+   - Decide and implement optional `(tenant_id, provider_id, model_name)` uniqueness if required.
+2. `P14-BE-USAGE-COST-REPORTING`
+   - Improve cost estimation and aggregation by tenant, user, project, Provider, and model.
+3. `P14-FE-COST-OBSERVABILITY`
+   - Frontend views for cost/usage trends and drilldowns.
+4. `R14`
+   - Review Provider lifecycle, data integrity, and cost reporting.
+
+Parallelism: backend Provider integrity and usage reporting may run in parallel only after their contracts are frozen.
+
+### P15: Release Hardening And End-To-End QA
+
+Goal: prepare the full platform for an operator-run server deployment.
+
+Suggested order:
+
+1. `P15-E2E-CORE-FLOWS`
+   - Automated or scripted coverage for init-admin, login, Provider/model setup, project, upload, task, SSE, output asset, download, edit, usage, and logs.
+2. `P15-SECURITY-FINAL-REGRESSION`
+   - Full security regression suite and forbidden frontend pattern scans.
+3. `P15-DEPLOY-RUNBOOK-FINAL`
+   - Final Docker Compose release validation, backup/restore notes, healthcheck/runbook updates, and environment checks.
+4. `R15`
+   - Final release-readiness review.
+
+Parallelism: E2E and deployment docs may proceed in parallel after P13/P14 are stable; final security regression must run after all feature work is merged.
+
+## Worktree Scheduling Policy
+
+- Public contracts and phase plans are updated by the main agent only.
+- New feature work starts from latest `main`.
+- Use “serial contract first -> limited parallel implementation -> serial review and integration”.
+- First task in a new area should be serial. Parallelism is allowed only when write scopes are independent and shared contracts are already merged.
+- Every worktree task from P11 onward must include:
+  - task name
+  - goal
+  - allowed files
+  - forbidden files
+  - dependencies
+  - concrete development content
+  - security requirements
+  - acceptance criteria
+  - test commands
+  - existing behavior to preserve
+  - allowed intermediate state
+  - forbidden half-migrated states
+  - failure modes and edge cases
+  - required regression tests
+
+## Standard Regression Commands
+
+Frontend:
 
 ```bash
 cd frontend
@@ -203,425 +196,26 @@ npm run lint
 npm run type-check
 npm run test
 npm run build
+```
 
-cd ../backend
+Backend:
+
+```bash
+cd backend
 go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/api ./cmd/worker
+```
 
-cd ..
+Deployment config:
+
+```bash
 docker compose -f deploy/docker-compose.yml config
-git diff --check
 ```
 
-Actual R5 local checks also confirmed the shared local services were running and reachable:
+Full deployment validation is reserved for deployment/release tasks and must clean up the Compose stack afterwards unless the user asks to keep it.
 
-```bash
-docker ps --format '{{.Names}}\t{{.Status}}' | rg '^dev-(mysql8|redis|minio)\b'
-docker exec dev-redis redis-cli ping
-nc -vz 127.0.0.1 3306
-nc -vz 127.0.0.1 6379
-nc -vz 127.0.0.1 9000
-```
+## Current Priority
 
-P6 Provider/model management has completed and passed R6 integration review. The project is ready to enter P7 task queue, Worker, Provider Adapter execution, and SSE.
-
-## P6: Provider and model management
-
-Status: completed. `P6-BE-PROVIDER-SECURITY`, `P6-BE-MODEL-CAPABILITIES`, `P6-FE-PROVIDER-MODEL-MGMT`, and `R6` have been reviewed, merged into `main`, and verified. P6 added Provider/model management only; it did not implement worker generation/edit execution, task queue processing, SSE task delivery, or frontend generation backendization.
-
-P6 execution order:
-
-1. `P6-BE-PROVIDER-SECURITY`: backend Provider schema, encryption, SSRF validation, Provider CRUD, enable/disable, sanitized Provider test, operation logs, and security tests. Completed and merged.
-2. `P6-BE-MODEL-CAPABILITIES`: backend model capability schema, validation, CRUD, enable/disable, pricing metadata, and enabled model capability listing. Completed and merged.
-3. `P6-FE-PROVIDER-MODEL-MGMT`: frontend admin UI and API wrappers for Provider/model management. Completed and merged.
-4. `R6`: main-agent review, integration regression, security review, and public contract cleanup. Completed.
-
-P6 serial/parallel policy:
-
-- `P6-BE-PROVIDER-SECURITY` was intentionally developed first and merged before frontend Provider UI work.
-- `P6-BE-MODEL-CAPABILITIES` was intentionally developed after Provider security and before frontend Provider/model UI.
-- Frontend Provider/model management was developed after both backend contracts were stable and merged.
-
-P6 backend Provider requirements:
-
-- Add `ai_providers` model/migration fields needed for tenant-scoped Provider configuration.
-- Support Provider types `OPENAI`, `GEMINI`, and `OPENAI_COMPATIBLE`.
-- Encrypt API keys at rest using the configured API key encryption secret.
-- Return only masked key metadata such as hint and update time; never return full API keys.
-- Validate Provider `base_url` before save and before test/use with SSRF defenses.
-- Implement CRUD, enable/disable, and sanitized Provider test.
-- Write operation logs for create/update/delete/enable/disable/test.
-- Ensure logs and errors do not contain API keys, Authorization headers, Cookies, or image base64.
-
-P6 backend Provider result:
-
-- Implemented tenant-scoped `ai_providers` model/migration, repository, service, routes, and tests.
-- Implemented Provider CRUD, enable/disable, soft delete, backend-only Provider test, API key encryption, masked responses, recursive audit metadata redaction, and operation logs.
-- Implemented SSRF validation for Provider `baseUrl` on create/update and before Provider test, including tests for loopback, private ranges, link-local, multicast, Docker service names, embedded credentials, non-HTTPS schemes, and redirect-to-blocked-target.
-- Verified Provider test does not create tasks, assets, usage records, or call frontend Provider code.
-
-P6 Provider non-blocking backlog:
-
-- Completed in P7: real Provider Adapter execution uses SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
-- Completed in P9: production startup rejects default placeholder `API_KEY_ENCRYPTION_KEY` alongside other production secret checks.
-
-P6 backend model requirements:
-
-- Add `ai_models` model/migration fields for Provider ownership and capabilities.
-- Support generation/edit flags, multi-reference support, `n` support, max output count, supported sizes, qualities, output formats, pricing config, and enable/disable state.
-- Validate model capability combinations, for example disabled `supports_n` must not accept output counts above 1.
-- Ensure models are tenant-scoped and belong to a Provider in the same tenant.
-- Expose enabled model capability responses for the frontend to render dynamic parameters later.
-
-P6 backend model result:
-
-- Implemented tenant-scoped `ai_models` model/migration, repository, service, routes, and tests.
-- Implemented model CRUD, enable/disable, soft delete, capability validation, pricing metadata validation, Provider same-tenant checks, RBAC, and operation logs.
-- Verified cross-tenant Provider/model access is rejected or invisible, and model responses do not expose Provider credentials or sensitive request data.
-
-P6 model non-blocking backlog:
-
-- R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness was not required for P7 runtime. A later management/data-integrity decision may still tighten it.
-- P10 later resolved Provider/model deletion behavior: Provider deletion is blocked while same-tenant non-deleted models still reference it; Provider disable remains allowed and does not cascade to models.
-
-P6 frontend requirements:
-
-- Add Provider/model API wrappers using the existing authenticated API client.
-- Add admin-only Provider/model management screens or panels consistent with the existing UI style.
-- Provider forms may accept API keys only for immediate submission to the backend; they must not persist keys in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config.
-- Display masked key metadata only.
-- Render Provider test results and sanitized errors without leaking credentials.
-- Do not modify the legacy generation submit path in P6.
-
-P6 frontend result:
-
-- Implemented Provider/model API wrappers using the authenticated API client with `credentials: include` and CSRF headers for state-changing requests.
-- Implemented admin Provider/model management UI for list, create, edit, delete, enable/disable, and Provider test.
-- Provider API keys are accepted only as form input for immediate backend submission. The UI shows only masked key metadata, clears submitted and unsubmitted key drafts, and does not persist keys to browser storage.
-- Added tests for API wrappers, permission-hidden management entry, Provider key one-time submission, key draft cleanup on modal close, and permission/validation error states.
-- Did not modify legacy generation submission, browser Provider adapters, local history, IndexedDB, or P8 migration paths.
-
-P6 acceptance gates:
-
-- Provider and model APIs require authentication, tenant filtering, RBAC, and object-level checks where IDs are used.
-- API keys are encrypted in MySQL and are not returned in API responses.
-- SSRF tests block localhost, loopback, private ranges, link-local ranges, Docker-internal hostnames, invalid schemes, and redirects to blocked targets.
-- Provider test uses backend-only execution with timeout and redacted logs; it must not create generation tasks or output assets.
-- Frontend does not save Provider API keys or introduce new AI Provider direct calls.
-- P6 does not change task queue, worker generation, SSE task events, or frontend generation backendization.
-
-R6 verification result:
-
-```bash
-cd frontend
-npm run lint
-npm run type-check
-npm run test
-npm run build
-
-cd ../backend
-go test ./...
-go test -race ./...
-go vet ./...
-go build ./cmd/api ./cmd/worker
-
-cd ..
-docker compose -f deploy/docker-compose.yml config
-git diff --check
-```
-
-Actual R6 result:
-
-- Frontend validation passed: lint, type-check, 16 test files / 58 tests, and production build.
-- Backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
-- Docker Compose config validation passed.
-- P6 frontend diff security scan found only Provider type enum/test text references to `OPENAI`, `GEMINI`, and `OPENAI_COMPATIBLE`; no new browser Provider direct fetch, Authorization header, API key persistence, or polling path was introduced.
-
-P6 residual risks and carry-forward items:
-
-- P7 real Provider Adapter execution added SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
-- R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the current runtime path; a later management/data-integrity decision may still tighten it.
-- P10 resolved linked-model behavior when deleting Providers: deletion is blocked while any same-tenant non-deleted model still references the Provider.
-- P9 production startup hardening rejects default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
-- P8 removed browser Provider adapters, localStorage Provider API keys, and IndexedDB history/image production paths.
-- `ProviderModelAdminPanel` is large and should be split during later frontend maintenance, but this is not a security or merge blocker.
-
-## P7: Task queue, worker, Provider Adapter, and SSE
-
-Status: completed. `P7-BE-TASK-FOUNDATION`, `P7-BE-SSE-STREAM`, `P7-BE-WORKER-QUEUE`, `P7-BE-PROVIDER-ADAPTER-RUNTIME`, `P7-FE-TASK-CLIENT-SSE`, and `R7` have been reviewed, merged into `main`, and verified. P7 intentionally stops before replacing the main frontend workbench flow; P8 owns that migration.
-
-P7 execution order:
-
-1. `P7-BE-TASK-FOUNDATION`: completed and merged. Added MySQL task/event/output/log/usage models and migrations, task repository/service, task create/list/detail/cancel/retry APIs, task event writer, Redis enqueue abstraction, and stable `task_events.sequence` replay cursor. No real Provider call yet.
-2. `P7-BE-SSE-STREAM`: completed and merged. Implemented SSE endpoint with heartbeat, `Last-Event-ID`, `lastEventId` query fallback, MySQL replay by `task_events.sequence`, tenant/project/task authorization filtering, in-process fanout wakeups, and tests.
-3. `P7-BE-WORKER-QUEUE`: completed and merged. Added Redis reliable queue, Worker claim loop, task state machine, idempotency, cancellation, retry, timeout, recovery, concurrency limits, Redis wakeups for cross-process SSE delivery, and fake/stub Provider execution.
-4. `P7-BE-PROVIDER-ADAPTER-RUNTIME`: completed and merged. Added real backend Provider Adapter execution for OpenAI, Gemini, and OpenAI-compatible Providers; SSRF-safe outbound transport; output upload to MinIO; asset creation; `api_call_logs`; `usage_records`; sanitized Provider errors.
-5. `P7-FE-TASK-CLIENT-SSE`: completed and merged. Added frontend task API wrappers, task/SSE types, SSE client tests, and task event reducer utilities without replacing the main workbench generation flow.
-6. `R7`: completed. Main-agent review, integration regression, security review, and public contract cleanup passed before P8.
-
-P7 serial/parallel policy:
-
-- Start serially with `P7-BE-TASK-FOUNDATION`; do not parallelize until task schema, task event schema, status names, and API response contracts are merged.
-- `P7-BE-PROVIDER-ADAPTER-RUNTIME` merged after review and security fixes.
-- `P7-FE-TASK-CLIENT-SSE` merged as a contract-layer task only and did not start P8 workbench replacement early.
-
-P7 canonical status decision:
-
-- Backend/API task statuses are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, and `TIMED_OUT`.
-- SSE event type `TASK_COMPLETED` represents a transition to task status `SUCCEEDED`.
-- The transitional frontend `COMPLETED` status was aligned before task status entered production workbench paths; production task state uses canonical `SUCCEEDED`.
-
-P7 task foundation result:
-
-- Task creation persists MySQL task state, writes `TASK_QUEUED`, then enqueues Redis with task ID only.
-- Enqueue failure transitions the task to `FAILED` with sanitized `ENQUEUE_FAILED` metadata; it must not return success with an unqueued `QUEUED` task.
-- `task_events.sequence` is the durable, monotonic replay cursor. `task_events.id` is derived from that sequence as an SSE-safe string such as `evt_00000000000000000001`.
-- SSE replay must compare by `sequence`, not by `created_at` or lexical random IDs.
-
-P7 SSE stream result:
-
-- `GET /api/v1/events/tasks` is implemented under the authenticated `/api/v1` route group.
-- `Last-Event-ID` header and `lastEventId` query fallback parse `evt_...` IDs back to `task_events.sequence`.
-- Historical replay reads MySQL with `sequence > cursor`, orders by `sequence ASC`, and filters every event by tenant, project visibility, and optional task filter.
-- Heartbeat frames are emitted as `HEARTBEAT` with empty JSON payload and no task metadata.
-- Live delivery uses an in-process broker inside API and Redis wakeups from Worker/API processes. MySQL remains the only replay source.
-
-P7 Worker queue result:
-
-- `P7-BE-WORKER-QUEUE` merged into `main` after review and fix.
-- Redis reliable queue supports enqueue, delayed promotion, claim, ack, stale claim recovery, max-delivery dead-letter handling, and malformed claim recovery tests.
-- Worker consumes task IDs only, reloads task state from MySQL, transitions eligible tasks to `RUNNING`, writes task events, and uses fake/stub execution until Provider Adapter runtime is implemented.
-- Redis wakeups now notify API SSE streams after persisted task events. Wakeups carry only minimal sequence/task metadata; SSE still reloads visible events from MySQL.
-- Concurrency limits are implemented for global, tenant, user, Provider, and model dimensions with stale lock cleanup.
-- Completed in P10: the API Redis event subscriber is now bound to the API lifecycle context and exits on API shutdown instead of using an unbounded background context.
-- Real Provider execution, output asset creation, usage records, and API call logs are implemented by `P7-BE-PROVIDER-ADAPTER-RUNTIME`.
-
-P7 Provider Adapter runtime result:
-
-- `P7-BE-PROVIDER-ADAPTER-RUNTIME` merged into `main` after review and two security fixes.
-- Real backend generation/edit execution now goes through Provider Adapter implementations for OpenAI, Gemini, and OpenAI-compatible Providers.
-- Runtime execution uses model capability rows as the trusted allowlist, validates Provider URLs before use, and uses connect-time SSRF-safe outbound transport before dialing.
-- Successful execution uploads generated/edited images to MinIO, creates image assets and task outputs, records usage and API call logs, and emits `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal task events.
-- Provider errors and runtime metadata are recursively sanitized before persistence. Review fixes closed both “API Key appears as a value” and “API Key appears as a JSON map key” leakage paths for the currently decrypted Provider secret.
-- Residual runtime boundary: unknown secrets that are neither supplied to the redactor as known secrets nor matched by heuristics cannot be detected automatically. Current Provider API keys are passed as known secrets, so the active runtime path is covered.
-
-P7 frontend task client result:
-
-- `P7-FE-TASK-CLIENT-SSE` merged into `main` after review.
-- Frontend task API wrappers now cover create/list/detail/cancel/retry with the existing authenticated client and in-memory CSRF flow.
-- Frontend task/SSE types use canonical `SUCCEEDED` status, typed event payloads, EventSource with `lastEventId` fallback, heartbeat handling, and a pure task event reducer suitable for P8 integration.
-- The change did not replace the current workbench generation path, add task polling, add Provider direct calls, or add Provider key persistence.
-
-P7 R7 review result:
-
-- Full frontend validation passed: lint, type-check, 18 test files / 63 tests, and production build.
-- Full backend validation passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and API/worker builds.
-- Focused uncached integration tests passed for `internal/api`, `internal/task`, `internal/provider`, `internal/provideradapter`, and `internal/sse`.
-- Docker Compose config validation passed, and shared `dev-mysql8`, `dev-redis`, and `dev-minio` services were confirmed healthy/reachable for local verification.
-- Static scans found only the already-documented P8 migration leftovers: legacy browser Provider adapters and local settings persistence. P7 added no new direct Provider fetch, Provider key persistence, or polling path.
-
-P7 residual risks and carry-forward items after R9:
-
-- Completed in P8/P9: legacy browser Provider adapters, localStorage Provider API key persistence, IndexedDB-backed production history, and unreachable legacy display/storage helpers were removed or isolated from production paths.
-- Completed in P10: Worker now honors `WORKER_CONCURRENCY` as an in-process processing pool.
-- Completed in P10: API Redis event subscription lifecycle is tied to API server shutdown.
-- Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
-- Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
-- Resolved in P10: Provider deletion is blocked while same-tenant non-deleted linked models exist; Provider disable remains allowed and does not cascade to models.
-
-## P8: Frontend backendization
-
-Status: completed after R8 regression/review. P8 switched the existing frontend workbench from the local/browser execution path to the backend platform path while preserving the current workbench concepts and making backend task APIs, SSE, project assets, and model capabilities the production source of truth.
-
-P8 goals:
-
-- Replace browser generation/edit submission with backend task creation plus SSE state updates.
-- Drive selectable models and parameter controls from enabled backend model capability rows instead of `frontend/src/providers/registry.ts`.
-- Use project asset IDs as task inputs and backend-generated assets as outputs; do not use image blobs in IndexedDB as platform truth.
-- Replace local history as the primary workbench history source with project task history plus generated/edited assets.
-- Remove Provider API key inputs and Provider API URL fields from the normal settings flow; Provider credentials remain admin-only backend-managed data.
-- Remove or strictly isolate browser Provider adapters from production imports and stop persisting Provider keys in localStorage.
-- Keep IndexedDB only for non-sensitive drafts, prompt templates, temporary previews, or an explicit future compatibility/import flow. Do not silently upload old local blobs into tenant storage.
-
-P8 workbench decisions:
-
-- The workbench loads enabled backend models by capability and treats the selected backend `modelId` plus its `providerId` as the submission source of truth.
-- A model is selectable only when it is enabled and has usable Provider metadata. If a model/provider becomes unavailable after selection, task creation remains the final server-side guard; the frontend must surface the validation failure, refresh capabilities, and require reselection.
-- P8 does not require `POST /assets/{assetId}/edit-source`. Generation/edit tasks should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
-- Task progress uses EventSource/SSE only. Project-level and task-level UIs may compose reducers by `taskId`, but polling remains forbidden.
-- Local UI preferences may remain local if they contain no credentials. Provider API keys and Provider API URLs must not remain in persisted browser settings.
-- R7 confirmed current runtime uses stable `modelId` references, so model-name uniqueness is not a P8 blocker. Provider soft-delete linked-model policy was later resolved in P10; P8 still needed to handle stale model availability safely in the UI during migration.
-
-P8 execution order:
-
-1. `P8-FE-WORKBENCH-FOUNDATION`: completed and merged. It added backend model capability loading, backend-ready workbench input types, and project asset ID reference state while keeping the default production submit path legacy-safe until the next task.
-2. `P8-FE-TASK-WORKBENCH`: completed and merged. It switched the default workbench submission path to backend task creation + SSE lifecycle, added cancel/retry handling, and drives live result rendering from authorized backend output assets.
-3. `P8-FE-HISTORY-ASSET-SOURCE`: completed and merged. It moved the default history/detail/download/re-edit path to backend task history plus generated/edited assets, while keeping old IndexedDB history as an explicit collapsed compatibility entry.
-4. `P8-FE-LEGACY-RETIREMENT`: completed and merged. It removed browser Provider adapters, retired normal Provider key/API URL settings, removed `legacyFile` asset-reference payloads, and proved the production import graph no longer reaches old Provider or IndexedDB history/image modules.
-5. `R8`: completed. Main-agent review, regression, migration verification, and public contract cleanup passed before P9.
-
-P8 current result:
-
-- Backend model capabilities, backend task input, and project asset references are the production workbench state model.
-- The default production workbench creates backend tasks only, advances task state from SSE, and renders live backend output assets instead of browser Provider responses.
-- Backend task history, authorized asset download, backend result detail, and backend asset re-editing are now the default production history path.
-- Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
-- Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
-- IndexedDB is no longer the production source for generated images or history. Prompt templates may still exist as non-sensitive local convenience data, but they must not be reintroduced into the main workbench history/image path or silently uploaded into tenant storage.
-- Remaining post-R10 follow-ups: frontend history currently joins separately paged task/asset lists even though P10 added a unified backend history query; history load failure can still render an empty-state panel beside the error state. Admin API-call detail stale-response protection and the first admin observability component split were completed in P10.
-
-R8 verification result:
-
-- Frontend regression passed: `npm run lint`, `npm run type-check`, `npm run test`, and `npm run build`; 18 test files / 59 tests passed.
-- Backend regression passed: `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api ./cmd/worker`.
-- Docker Compose config validation passed with `docker compose -f deploy/docker-compose.yml config`.
-- Sensitive frontend static scan for `localStorage`, `sessionStorage`, `indexedDB`, Provider `Authorization`, direct Provider hosts, `setInterval`, and `setTimeout` returned no production-code hits.
-- Provider import static scan found only backend Provider management API paths: `frontend/src/api/providers.ts` and `frontend/src/components/admin/ProviderModelAdminPanel.tsx`. These are allowed backend admin API consumers, not browser AI Provider calls.
-- `frontend/src/providers/` no longer exists. P9 security regression deleted the R8-identified unreachable legacy display/storage helpers and added static regression coverage so they cannot re-enter the production path silently.
-
-P8 serial policy:
-
-- Execute P8 serially. All four frontend tasks touch the same workbench boundary and would otherwise create avoidable merge and behavior conflicts.
-- Do not retire old local code until the backend submission, SSE result path, and backend history path have replaced it.
-- Do not start P9 admin hardening as a substitute for P8 migration work.
-
-P8 acceptance gates:
-
-- Browser generation creates backend tasks only; no production workbench import path calls OpenAI, Gemini, or relay URLs.
-- Workbench task status comes from SSE only; no `setInterval`, repeated `setTimeout`, or looped fetch status checks.
-- Browser storage contains no Provider API key or Provider API URL persistence used by production workbench behavior.
-- Generated/edited assets and task history come from backend APIs/authorized downloads; IndexedDB is not the primary history/image source.
-- Existing upload, prompt, parameter, result, history, download, and edit concepts remain available in backend-backed form.
-
-P8 intentionally deferred these items; current status is:
-
-- Worker pool implementation for `WORKER_CONCURRENCY` was completed in P10.
-- API Redis subscription lifecycle binding to server shutdown was completed in P10.
-- General redaction of unknown secrets outside known-secret and heuristic rules.
-- Provider soft-delete linked-model backend policy was resolved in P10. Optional model-name uniqueness hardening remains a later management/data-integrity decision.
-
-## P9: Usage, audit, settings, hardening, and release readiness
-
-Status: completed and merged through deployment release validation. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, `P9-BE-RUNTIME-SETTINGS-CONTRACT`, `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`, `P9-SECURITY-REGRESSION`, and `P9-DEPLOY-RELEASE-VALIDATION` have been reviewed, locally validated, and merged into `main` as appropriate. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope.
-
-P9 was split into small serial tasks rather than one broad worktree. The first batch started with backend read contracts before frontend admin UI:
-
-1. `P9-BE-AUDIT-USAGE-READS`: completed and merged. Backend usage, operation log, and API call log read APIs now enforce admin RBAC, tenant isolation, pagination, deterministic ordering, and shared recursive response redaction.
-2. `P9-BE-PRODUCTION-SECRET-GUARD`: completed and merged. API and Worker startup now reject placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` in production while preserving non-production defaults.
-3. `P9-BE-RUNTIME-SETTINGS-CONTRACT`: completed and merged. Backend system settings now expose only the first honest runtime-backed slice: tenant upload policy consumed by asset upload validation. Default Provider/model selection, tenant concurrency, storage quota, and log retention remain deferred until their runtime consumers are deliberately in scope.
-4. `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`: completed and merged. Frontend admin UI now consumes paginated usage/audit reads and the narrow runtime-backed `uploadPolicy` settings contract without exposing deferred settings.
-5. `P9-SECURITY-REGRESSION`: completed and merged. Added targeted security regression tests for SSRF, tenant isolation, object permissions, upload validation, sensitive logging, SSE replay visibility, production secret guards, frontend static regressions, and residual legacy helper deletion.
-6. `P9-DEPLOY-RELEASE-VALIDATION`: completed, reviewed, and merged. Docker Compose config/build/up/healthcheck passed; frontend, backend API, backend Worker, MySQL, Redis, and MinIO were validated in the Compose topology; release documentation and runbook were updated.
-
-P9 deployment validation result:
-
-- Backend `go test`, race tests, vet, and API/Worker builds passed.
-- Frontend lint, type-check, tests, and production build passed after dependency installation with `npm ci`.
-- Compose config passed and images built for `backend-api`, `backend-worker`, and `frontend`.
-- Compose startup reached healthy state for `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, and `frontend`.
-- `minio-bootstrap` exited successfully and can be rerun idempotently.
-- API health checks now report MySQL, Redis, and MinIO bucket readiness.
-- Frontend `/api/` proxy reached `backend-api:8080`; SPA fallback and static assets worked.
-- Nginx runtime config contains no AI Provider or relay proxy.
-- Production placeholder secret guards failed fast for both API and Worker.
-- The Compose stack and volumes were removed with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans`.
-
-P9 carry-forward risks:
-
-- Unknown secrets cannot be redacted unless they are supplied as known secrets or match heuristic rules.
-- P9 audit reads now use the shared redaction package and support exact known-secret scrubbing through an injected redactor seam, but production read APIs intentionally do not widen Provider API-key decryption scope. If historical dirty rows must be scrubbed for non-heuristic secrets at read time, define a trusted minimal secret source and lifecycle before implementing it.
-- P9 system settings currently expose only settings with live runtime consumers. Tenant-scoped upload policy is implemented and consumed by asset validation; `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred because their task/worker/quota/cleanup consumers are not yet in scope.
-- Provider soft-delete linked-model policy was resolved in P10 by blocking Provider deletion while same-tenant non-deleted linked models exist.
-- History list pagination is still assembled by the frontend from task and asset lists. P10 added the backend unified history query; a later frontend task should switch history consumption to that endpoint.
-- R8-identified unreachable legacy display/storage helpers were deleted in P9 security regression. Future legacy cleanup should be based on production import-graph evidence, not broad deletion.
-- Admin API call log/detail rendering was split during `P10-FE-ADMIN-OBSERVABILITY-HARDENING`; further admin observability splits are optional maintenance work only.
-- API call log detail stale-request behavior was resolved in `P10-FE-ADMIN-OBSERVABILITY-HARDENING`.
-- Redis 7.4 may emit go-redis `maintnotifications` fallback warnings during API/Worker operation. P9 validation confirmed these warnings are non-blocking, but operators may want to revisit Redis/client compatibility if log noise becomes a concern.
-
-## P10: Runtime hardening and operator-grade follow-ups
-
-Status: development tasks completed and merged after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, `P10-FE-ADMIN-OBSERVABILITY-HARDENING`, and `P10-BE-HISTORY-QUERY`. P10 started after P9 release validation and R9 review completed, and remained serial because the tasks touched task runtime, shutdown lifecycle, Provider/model lifecycle policy, admin UI correctness, and history pagination correctness.
-
-P10 priorities:
-
-1. `P10-BE-WORKER-POOL`: completed and merged. Configured Worker concurrency is now a real in-process processing pool while MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits remain intact.
-2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: completed and merged. API Redis task-event subscriber startup now receives the API lifecycle context, test env still avoids real subscriber startup, and Redis remains sequence-only wakeup while MySQL remains the replay source.
-3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: completed and merged. Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
-4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: completed and merged. API call log detail responses now ignore stale out-of-order results, panel close and list page changes reset in-flight detail state, and API call log/detail rendering is split into a focused child component.
-5. `P10-BE-HISTORY-QUERY`: completed and merged. Backend now exposes a read-only project history query so generated/edited assets and their source tasks can be paginated as one tenant-scoped backend result set before the frontend switches away from task/assets client-side joining.
-
-P10 worker-pool result:
-
-- `WORKER_CONCURRENCY` is now parsed from config, documented in `.env.example`, and passed by Docker Compose to `backend-worker`.
-- Worker `Run` uses one recovery loop plus the configured number of processing loops.
-- Worker process concurrency remains separate from global/tenant/user/Provider/model runtime limiters.
-- Redis queue payloads remain task IDs only, and Worker still reloads task state from MySQL before transitions.
-- Tests cover valid/invalid worker concurrency, parallel processing, global limiter below pool size, single-owner recovery, shutdown cancellation, duplicate delivery de-duplication, and retry finalization failure isolation.
-
-P10 SSE bridge lifecycle boundaries:
-
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` completed and merged without changing task event names, task statuses, SSE frame format, `Last-Event-ID`, replay cursor semantics, or frontend EventSource behavior.
-- MySQL remains the only replay source. Redis task-event pub/sub remains a sequence-only wakeup mechanism.
-- The API Redis event subscriber is tied to the API process lifecycle and stops when API shutdown begins.
-- Router/queue tests cover lifecycle context startup, cancellation shutdown, `context.Canceled` log handling, test-env no real subscriber startup, malformed wakeup ignore, zero sequence ignore, and sequence-only payload.
-
-P10 Provider/model lifecycle decision:
-
-- Provider deletion must fail with a conflict-style API error when any non-deleted model in the same tenant still references that Provider.
-- Soft-deleted models do not block Provider deletion.
-- Cross-tenant models must never block or reveal Provider deletion in another tenant.
-- Provider disable remains allowed and does not cascade to linked models; task creation already rejects disabled Providers.
-- Model deletion remains a soft delete and is the explicit cleanup step before Provider deletion.
-- The implementation must not cascade-delete or cascade-disable models, because that would silently alter model availability and frontend workbench choices.
-
-P10 Provider/model lifecycle result:
-
-- `DELETE /providers/{providerId}` now returns `409 PROVIDER_HAS_LINKED_MODELS` when same-tenant non-deleted models still reference the Provider.
-- The linked-model count query is tenant-scoped and ignores soft-deleted models.
-- Tests cover enabled linked models, disabled linked models, soft-deleted linked models, cross-tenant linked models, Provider disable with linked models, forbidden delete, unknown Provider delete, and operation-log redaction.
-- Non-blocking follow-up: if administrators perform Provider deletion and model create/update concurrently, stronger row-level serialization may be useful later. The current P10 task did not introduce that broad transaction-hardening scope.
-
-P10 frontend admin hardening result:
-
-- `P10-FE-ADMIN-OBSERVABILITY-HARDENING` completed and merged after review.
-- `AdminObservabilitySettingsPanel` now guards `getApiCallLog` detail responses with a request sequence so a slower response from an older selection cannot overwrite the latest selected API call log detail.
-- Closing the panel and changing API call log pages clears and invalidates in-flight detail responses.
-- API call log list/detail rendering was extracted into `AdminApiCallLogsView` without changing backend admin API contracts, task/SSE behavior, Provider/model management, or upload-policy-only settings behavior.
-- Frontend validation for the task passed: `npm run lint`, `npm run type-check`, `npm run test -- adminObservabilitySettingsPanel`, `npm run test`, `npm run build`, and `git diff --check`.
-
-P10 backend history query result:
-
-- `P10-BE-HISTORY-QUERY` completed and merged after review.
-- `GET /api/v1/projects/{projectId}/history` now returns a standard paginated page of `{ asset, task }` records.
-- The endpoint is read-only, Cookie-authenticated, and uses the same `task:read` plus project member/admin authorization semantics as project task reads.
-- The query is tenant-scoped and project-scoped, uses backend-owned joins across `task_outputs`, `image_assets`, and `generation_tasks`, returns only non-deleted `GENERATED` and `EDITED` output assets, excludes orphan/cross-tenant records, and keeps ordering deterministic.
-- The response uses safe asset/task DTOs and does not expose object keys, MinIO URLs, image bytes, Blob/base64 data, Provider secrets, Authorization headers, Cookies, or API call metadata.
-- Backend validation passed for the task: `go test ./internal/task ./internal/api -count=1`, `go test ./... -count=1`, `go test -race ./...`, non-cached `go test -race ./internal/task ./internal/api -count=1`, `go vet ./...`, `go build ./cmd/api ./cmd/worker`, `docker compose -f deploy/docker-compose.yml config`, and `git diff --check`.
-- Frontend still uses the existing task/assets client-side join until a later frontend migration task consumes the unified history endpoint.
-
-R10 review result:
-
-- Main-agent review covered P10 code from `7566c57` through `e7ae2f0`, including all five P10 merge commits and their task-level fixes.
-- No blocking correctness, tenant isolation, RBAC, sensitive logging, Provider Adapter, queue, SSE, or frontend migration violations were found.
-- Worker pool review confirmed the new in-process loop count does not bypass global/tenant/user/Provider/model runtime concurrency limiters and keeps recovery single-owned.
-- SSE bridge review confirmed Redis remains only a wakeup channel and MySQL remains the replay source; API shutdown now owns subscriber cancellation.
-- Provider/model lifecycle review confirmed linked-model blocking is same-tenant scoped, ignores soft-deleted models, and does not cascade model state.
-- Admin observability review confirmed stale API-call detail responses are ignored and detail metadata remains bounded/redacted in the UI.
-- History-query review confirmed output history uses tenant/project-scoped joins and does not expose object keys, MinIO URLs, Provider secrets, API call metadata, image bytes, or browser Blob/base64 data.
-- R10 validation passed:
-
-```bash
-cd frontend && npm run lint && npm run type-check && npm run test && npm run build
-cd ../backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker
-cd .. && docker compose -f deploy/docker-compose.yml config
-git diff --check 7566c57..HEAD
-```
-
-## Phase boundaries
-
-- Do not implement Provider calls before API key encryption, SSRF validation, and logging redaction are in place.
-- Do not integrate frontend task status before backend SSE replay behavior exists.
-- Do not remove old frontend generation logic until backend task creation, Provider Adapter execution, MinIO asset persistence, and SSE delivery can replace it.
-- Do not treat localStorage API keys, frontend Provider calls, IndexedDB image Blob storage, or frontend Nginx AI relay as acceptable platform behavior.
+Start P11 with `P11-BE-USER-ROLE-ADMIN`. Do not start P12 frontend history or P13 settings until P11 backend contracts are reviewed and merged, unless the user explicitly chooses a different sequence.
