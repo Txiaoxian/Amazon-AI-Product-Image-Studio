@@ -48,7 +48,7 @@ Current P6 Provider security result:
 - Provider responses expose only masked key metadata and never return encrypted key material.
 - Provider test is backend-only and writes sanitized operation logs without creating tasks, assets, or usage records.
 - SSRF validation is implemented for Provider save/update/test and covers blocked hostnames, blocked IP ranges, unsupported schemes, embedded credentials, and redirects to blocked targets.
-- P7 real Provider Adapter execution must add an outbound SSRF-safe dialer or equivalent connect-time IP validation before real generation/edit calls are allowed.
+- P7 real Provider Adapter execution added the required SSRF-safe outbound transport with connect-time IP validation before real generation/edit calls.
 
 Current P6 model capability result:
 
@@ -70,7 +70,7 @@ P7 runtime boundary:
 - `P7-BE-PROVIDER-ADAPTER-RUNTIME` is the first phase allowed to execute real backend Provider generation/edit calls.
 - Runtime execution must use the Provider Adapter interface and the backend model capability table as the trusted source of allowed parameters.
 - Runtime execution starts after `P7-BE-WORKER-QUEUE` merged reliable queue consumption, Worker state handling, Redis SSE wakeups, and fake/stub execution.
-- Browser Provider adapters under `frontend/src/providers/**` remain migration references until P8 removes or isolates them from production generation paths.
+- Browser Provider adapters under `frontend/src/providers/**` were removed in P8 and must not be reintroduced into production generation paths.
 
 Current P7 runtime result:
 
@@ -80,10 +80,10 @@ Current P7 runtime result:
 - Provider errors and runtime metadata are recursively redacted. Review fixes explicitly cover the decrypted Provider API key when it appears both as a value and as a nested JSON map key.
 - Unknown secrets that are not supplied to the redactor and do not match heuristic rules remain outside automatic detection; configured Provider API keys are supplied as known secrets in the active runtime path.
 
-P8 frontend migration rule:
+P8 frontend migration result:
 
-- The production workbench must consume backend Provider/model/task APIs only.
-- `frontend/src/providers/**` may remain temporarily as explicit legacy/import reference code during migration, but it must not remain in production workbench imports after P8 completes.
+- The production workbench consumes backend Provider/model/task APIs only.
+- `frontend/src/providers/**` no longer exists in the production frontend source tree.
 - Browser settings may retain non-sensitive UI preferences if still useful, but must not persist Provider API keys or Provider API URLs.
 
 ## Adapter interface
@@ -100,7 +100,7 @@ type ImageProviderAdapter interface {
 
 Adapter inputs use normalized platform types. Adapter outputs use normalized image bytes, metadata, usage, and Provider request IDs.
 
-For P6, implementations may expose only a probe/test capability. `Generate` and `Edit` may remain unimplemented until P7, but business code must still depend on interfaces rather than concrete Provider URLs or SDK calls.
+P6 initially exposed only probe/test capability. P7 implemented `Generate` and `Edit` through backend Provider Adapters. Business code must continue to depend on interfaces rather than concrete Provider URLs or SDK calls.
 
 Provider test behavior:
 
@@ -167,6 +167,6 @@ Additional P7 requirement:
 
 - The actual HTTP transport used for real Provider generation/edit calls must validate the final dial target at connection time. Do not rely only on URL validation performed earlier in the request flow.
 
-## Existing frontend Provider code
+## Removed frontend Provider code
 
-Current frontend files under `src/providers/` are migration references only. Their behavior can guide backend adapters, but production frontend code must not call Providers directly.
+The old browser Provider Adapter files under `frontend/src/providers/**` were removed in P8. If future work needs Provider behavior references, use git history or backend Provider Adapter tests; do not recreate browser-side Provider calls.

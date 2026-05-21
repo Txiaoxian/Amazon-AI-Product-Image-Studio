@@ -19,7 +19,7 @@ The target platform structure is a monorepo-style root:
 - `deploy/` for Docker Compose, service config, and deployment assets.
 - `docs/` for architecture, contracts, security, and development plans.
 
-P0 documentation may describe this target structure before files are physically moved. The frontend mechanical move is a P1 prerequisite, not part of P0.
+P0/P1 are complete. The `frontend/`, `backend/`, `deploy/`, and `docs/` split is now the active repository structure.
 
 ## Mandatory platform rules
 

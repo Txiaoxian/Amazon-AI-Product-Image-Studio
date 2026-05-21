@@ -108,7 +108,7 @@ P10 Worker pool result:
 - Worker process concurrency is distinct from global/tenant/user/Provider/model execution limits. Worker loop count controls how many queue claims can be processed in parallel by one worker process; Redis concurrency limits still decide whether a claimed task may run.
 - The worker pool preserves the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
 - Recovery remains a single loop per Worker process so multiple processing loops do not duplicate timeout/recovery work.
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. The next P10 follow-up is Provider/model lifecycle policy for Provider deletion with linked models.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. `P10-BE-PROVIDER-MODEL-LIFECYCLE` is also merged; Provider deletion is now blocked while same-tenant non-deleted linked models exist.
 
 ## Cancellation
 

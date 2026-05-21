@@ -4,7 +4,7 @@
 
 The current `main` branch has completed P10 runtime, admin, and backend history-query hardening plus R10 review. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
-| Risk | Previous location | Status after P8 | Acceptance check |
+| Risk | Previous location | Current status after R10 | Acceptance check |
 | --- | --- | --- | --- |
 | Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | Resolved. Normal Provider settings were removed; Provider keys are submitted only through backend Provider management forms and are not persisted in browser storage. | Static scan and tests must continue to show no Provider API key/API URL persistence in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
 | Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, old browser Provider adapters | Resolved. Browser Provider adapter files and frontend Provider registry/types were removed; workbench generation creates backend tasks only. | Browser generation flow creates backend tasks only; no Provider `Authorization` header or direct Provider host appears in production frontend code. |
@@ -135,12 +135,12 @@ Provider URL validation must reject:
 - Hostnames that are Docker Compose service names or resolve to blocked IP ranges.
 - Redirect chains that land on a blocked target.
 
-SSRF tests are required before P6 merge.
+SSRF tests are required for Provider save/update/test and real runtime execution paths.
 
 Current P6 Provider backend status:
 
 - Provider save/update/test SSRF tests cover blocked schemes, embedded credentials, localhost, loopback, private ranges, link-local, multicast, Docker service names, DNS resolution to blocked ranges, and redirects to blocked targets.
-- Before P7 real Provider Adapter execution, outbound Provider clients must use connect-time IP validation or an SSRF-safe dialer to prevent DNS rebinding between validation and connection.
+- P7 real Provider Adapter execution uses connect-time IP validation / SSRF-safe transport to prevent DNS rebinding between validation and connection.
 
 P7 Provider runtime requirement:
 
@@ -168,12 +168,12 @@ P8 migration security requirements:
 - Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
 - Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
 
-Current R9 frontend security status:
+Current R10 frontend security status:
 
 - Production workbench generation/edit flows create backend tasks and use SSE for status.
-- Static scans through R9 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
+- Static scans through R10 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
 - Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths.
+- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths. Frontend history still uses backend task/assets APIs until a later migration consumes the P10 unified backend history endpoint.
 
 ## Upload defense
 

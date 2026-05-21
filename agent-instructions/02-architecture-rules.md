@@ -2,7 +2,7 @@
 
 ## Target directory layout
 
-The long-term repository root is the platform root:
+The repository root is the active platform root:
 
 ```text
 gpt-image/
@@ -16,7 +16,7 @@ gpt-image/
   .env.example
 ```
 
-The current frontend files are still at the repository root. Moving them into `frontend/` is a P1 prerequisite and must be mechanical: preserve code, tests, styles, and behavior.
+The P1 frontend mechanical move is complete. Do not move backend code under `frontend/` or re-mix app roots. New frontend work stays in `frontend/`, backend work stays in `backend/`, deployment work stays in `deploy/`, and public contracts stay in `docs/`.
 
 ## Service boundaries
 
@@ -33,8 +33,9 @@ The current frontend files are still at the repository root. Moving them into `f
 2. Frontend loads projects, assets, providers, and model capabilities from `/api/v1`.
 3. User creates a generation task.
 4. Backend persists the task in MySQL and enqueues it in Redis.
-5. Worker claims the task, calls the selected Provider Adapter, stores outputs in MinIO, and writes task events to MySQL.
+5. Worker claims the task, applies runtime concurrency limits, calls the selected Provider Adapter, stores outputs in MinIO, and writes task events to MySQL.
 6. Frontend receives task events over SSE and updates UI without polling.
+7. Project history currently uses backend task/assets data in the frontend; the P10 backend unified history endpoint exists and should be consumed by a later frontend migration task.
 
 ## Hard architecture rules
 

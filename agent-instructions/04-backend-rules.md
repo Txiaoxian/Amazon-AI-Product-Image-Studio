@@ -19,12 +19,17 @@ backend/
     asset/
     task/
     sse/
+    queue/
     provider/
-    usage/
+    provideradapter/
+    model/
     audit/
+    settings/
     storage/
-  migrations/
+    database/
 ```
+
+Explicit migrations currently live in `backend/internal/database/migrations.go`; do not introduce a second migration source unless a later task deliberately changes the migration strategy.
 
 ## API service
 

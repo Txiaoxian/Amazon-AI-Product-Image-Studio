@@ -15,16 +15,17 @@ The platform helps sellers:
 
 ## Current state
 
-The current repository is a pure frontend local app:
+The repository has been platformized through R10:
 
-- React + TypeScript + Vite.
-- Tailwind CSS.
-- Dexie / IndexedDB for local history and image blobs.
-- localStorage for settings and API keys.
-- Frontend Provider Adapters that call OpenAI, Gemini, and OpenAI-compatible relays directly.
-- Static Nginx Docker deployment.
+- The original React + TypeScript + Vite + Tailwind frontend now lives under `frontend/`.
+- The Go + Gin + GORM backend now lives under `backend/` with API and Worker entrypoints.
+- Docker Compose deployment assets live under `deploy/`.
+- Authentication, RBAC, tenant isolation, projects, assets, Provider/model management, task APIs, Redis queueing, Worker execution, SSE, usage/audit reads, upload-policy settings, and P10 runtime hardening are implemented.
+- Production generation/edit flows go through backend task APIs, backend Provider Adapters, Redis queueing, Worker execution, MinIO assets, and SSE. The browser must not call AI Providers directly.
+- Browser Provider adapters, normal-user Provider API key/API URL settings, and IndexedDB-backed production history/image paths have been removed or retired from the production import graph.
+- IndexedDB may still support non-sensitive local prompt-template convenience data and tests; it must not be reintroduced as platform history or image truth.
 
-This frontend must be preserved and evolved. Do not rewrite the UI from scratch.
+The existing frontend UI concepts should still be preserved and evolved. Do not rewrite the UI from scratch unless a later task explicitly authorizes a replacement.
 
 ## Target stack
 
@@ -38,15 +39,12 @@ This frontend must be preserved and evolved. Do not rewrite the UI from scratch.
 - Task status: SSE only.
 - Deployment: Docker Compose.
 
-## Non-goals for P0
+## Historical P0 non-goals
 
-- Do not implement backend business code.
-- Do not move frontend files yet.
-- Do not refactor existing React components.
-- Do not replace IndexedDB or localStorage code in P0.
+P0 is complete. Its old constraints are historical only: P0 did not implement backend business code, move frontend files, refactor React components, or replace local storage paths. Current tasks must follow the latest phase plan in `docs/development-plan.md` and `docs/codex-agent-tasks.md`.
 
 ## Implementation posture
 
 - Prefer incremental changes with explicit contracts.
-- Keep existing frontend behavior working until the backend replacement path is ready.
-- Do not remove existing logic before the backend-backed equivalent exists and is validated.
+- Preserve existing user-facing concepts while keeping the current backend-backed production paths honest.
+- Do not remove or replace an existing production path unless the backend-backed equivalent exists, is validated, and the task explicitly owns the migration.

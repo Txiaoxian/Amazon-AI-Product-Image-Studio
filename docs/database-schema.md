@@ -119,7 +119,7 @@ P6 implementation notes:
 - Implemented additional fields: `created_by`, `deleted_at`.
 - Implemented indexes include `(tenant_id, provider_id)`, `(tenant_id, status)`, `(tenant_id, provider_id, model_name)`, `(tenant_id, supports_generate)`, `(tenant_id, supports_edit)`, `(tenant_id, deleted_at)`, and `created_by`.
 - Current implementation does not enforce uniqueness on `(tenant_id, provider_id, model_name)`; R7 confirmed current task execution uses `modelId`, so runtime does not require that invariant. A later management/data-integrity decision may still tighten it.
-- Current implementation keeps model rows independently soft-deletable; P8/P9 must decide the linked-model behavior when a Provider is soft-deleted.
+- Current implementation keeps model rows independently soft-deletable. P10 resolved the linked-model behavior: Provider deletion is blocked while any non-deleted same-tenant model still references that Provider; soft-deleted models do not block deletion, and Provider disable does not cascade to models.
 - Generated and edited task execution must not begin in P6; models are configuration data for P7/P8.
 
 ### generation_tasks

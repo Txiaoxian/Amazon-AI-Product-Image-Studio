@@ -13,21 +13,21 @@ The repository started as a pure frontend local app:
 
 This baseline was preserved during the early platformization phases so existing UI concepts could be migrated instead of rewritten.
 
-## Current transition state after R8
+## Current platform state after R10
 
-The repository is now structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has backend/frontend infrastructure, authentication/RBAC, project management, reference asset management, Provider/model management, task APIs, SSE delivery, Worker queue processing, and backend Provider Adapter runtime foundations.
+The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has passed R10 review. It now has backend/frontend infrastructure, authentication/RBAC, project management, reference asset management, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, usage/audit reads, runtime-backed upload-policy settings, release validation, and P10 runtime hardening.
 
-Important transition facts:
+Important current facts:
 
 - The production frontend workbench now uses backend model capabilities, backend task creation, SSE task state, authorized backend assets, and backend task/asset history.
 - Browser Provider adapters, frontend Provider registry/types, and normal local Provider API Key/API URL settings have been removed.
-- IndexedDB is no longer the production source for generated images or history. It may still support non-sensitive prompt templates and residual non-production helpers/tests until P9 cleanup.
-- The backend currently has configuration, logging, router, health, response helpers, middleware, MySQL/GORM migrations, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, SSRF-validated Provider testing, task APIs, SSE replay, reliable Redis queueing, Worker state transitions, backend Provider Adapter runtime, MinIO output assets, usage records, and API call logs.
-- The frontend has an API client, task/SSE client contracts, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection by backend `assetId`, admin Provider/model management UI, backend task-backed workbench submission, backend result rendering, and backend history/detail/download/re-edit flows.
-- R8 verified the full P8 migration result. Known P9 cleanup candidates include unreachable legacy display components, old IndexedDB helper files, broad frontend `422` handling, and frontend-side joining of separately paged task/asset lists.
-- Docker Compose has buildable runtime foundations from P3. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
+- IndexedDB is no longer the production source for generated images or history. It may still support non-sensitive prompt templates and explicitly non-production tests/helpers only.
+- The backend currently has configuration, logging, router, health, response helpers, middleware, explicit MySQL/GORM migrations under `backend/internal/database`, auth, RBAC, project APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, SSRF-validated Provider testing, task APIs, SSE replay, reliable Redis queueing, Worker state transitions, backend Provider Adapter runtime, MinIO output assets, usage records, API call logs, operation logs, audit/usage read APIs, runtime-backed upload-policy settings, production secret guards, Worker process concurrency, and API Redis subscriber lifecycle ownership.
+- The frontend has an API client, task/SSE client contracts, auth integration, project selection/creation, project asset upload/list/favorite/delete/download UI, project-scoped reference selection by backend `assetId`, admin Provider/model management UI, admin usage/audit/settings UI, backend task-backed workbench submission, backend result rendering, and backend history/detail/download/re-edit flows.
+- P10 added a backend-owned project history query at `GET /api/v1/projects/{projectId}/history`. The frontend still uses the existing task/assets join until a later frontend migration consumes this unified endpoint.
+- Docker Compose has buildable runtime foundations and passed P9 release validation; R10 re-verified Compose config. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-This transition state is closer to the target platform and has passed R8 migration verification, but it still requires P9 hardening before release.
+Remaining R10 follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. The main open product/runtime follow-up is frontend consumption of the unified backend history endpoint; Provider delete/model create-update transaction hardening and further admin component splitting are non-blocking maintenance items.
 
 ## Target platform architecture
 
@@ -64,11 +64,14 @@ gpt-image/
       asset/
       task/
       sse/
+      queue/
       provider/
-      usage/
+      provideradapter/
+      model/
       audit/
+      settings/
       storage/
-    migrations/
+      database/
   deploy/
     docker-compose.yml
     mysql/
@@ -81,7 +84,7 @@ gpt-image/
   README.md
 ```
 
-P0 documents this structure. P1 performs the frontend mechanical move into `frontend/`.
+This layout is active. Explicit migrations currently live in `backend/internal/database/migrations.go`.
 
 ## Service boundaries
 
@@ -108,8 +111,8 @@ MySQL is the final source of truth. Redis is only for queueing, locks, cache, ra
 
 - Existing UI components are retained and adapted to backend APIs.
 - Existing prompt, upload, parameter, result, and history UI concepts remain.
-- Existing frontend Provider code becomes migration reference only, not production call path.
-- Existing local history may be used for an import or compatibility feature later, but not as primary platform data.
+- Browser Provider code has been removed from the production import graph and must not be reintroduced.
+- Existing local history data may be used only through an explicit future import/compatibility feature if one is approved; it is not primary platform data.
 
 ## Transition guardrails
 

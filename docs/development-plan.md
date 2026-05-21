@@ -112,7 +112,7 @@ cd .. && docker compose -f deploy/docker-compose.yml config
 
 ## P5: Project and asset management
 
-Status: completed. Backend project, backend asset storage, frontend project/asset integration, and R5 review have all been reviewed and merged into `main`. Do not treat P5 as generation backendization: old frontend AI Provider direct calls, localStorage Provider API keys, and IndexedDB local history remain documented transition risks and must be removed in P8 after P6/P7 backend replacements exist.
+Status: completed. Backend project, backend asset storage, frontend project/asset integration, and R5 review have all been reviewed and merged into `main`. Do not treat P5 as generation backendization. The P5-era transition risks around old frontend AI Provider direct calls, localStorage Provider API keys, and IndexedDB local history were later removed or retired from production paths in P8/P9.
 
 Execution order:
 
@@ -284,7 +284,7 @@ P6 backend model result:
 P6 model non-blocking backlog:
 
 - R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness was not required for P7 runtime. A later management/data-integrity decision may still tighten it.
-- Before broader P8/P9 lifecycle UX depends on Provider/model deletion behavior, decide how models should behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- P10 later resolved Provider/model deletion behavior: Provider deletion is blocked while same-tenant non-deleted models still reference it; Provider disable remains allowed and does not cascade to models.
 
 P6 frontend requirements:
 
@@ -343,7 +343,7 @@ P6 residual risks and carry-forward items:
 
 - P7 real Provider Adapter execution added SSRF-safe outbound transport / connect-time IP validation for DNS rebinding defense.
 - R7 confirmed current task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the current runtime path; a later management/data-integrity decision may still tighten it.
-- P10 must decide how linked models behave when their Provider is soft-deleted: block Provider deletion, hide linked models, or cascade-disable linked models.
+- P10 resolved linked-model behavior when deleting Providers: deletion is blocked while any same-tenant non-deleted model still references the Provider.
 - P9 production startup hardening rejects default placeholder secrets, including `JWT_SIGNING_SECRET` and `API_KEY_ENCRYPTION_KEY`, before release.
 - P8 removed browser Provider adapters, localStorage Provider API keys, and IndexedDB history/image production paths.
 - `ProviderModelAdminPanel` is large and should be split during later frontend maintenance, but this is not a security or merge blocker.
@@ -371,7 +371,7 @@ P7 canonical status decision:
 
 - Backend/API task statuses are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, and `TIMED_OUT`.
 - SSE event type `TASK_COMPLETED` represents a transition to task status `SUCCEEDED`.
-- Existing transitional frontend type `COMPLETED` must be updated in P7/P8 before frontend task status is used in production paths.
+- The transitional frontend `COMPLETED` status was aligned before task status entered production workbench paths; production task state uses canonical `SUCCEEDED`.
 
 P7 task foundation result:
 
@@ -429,7 +429,7 @@ P7 residual risks and carry-forward items after R9:
 - Completed in P10: API Redis event subscription lifecycle is tied to API server shutdown.
 - Unknown secrets that are neither supplied to the redactor nor matched by heuristics remain outside automatic detection; configured Provider API keys are covered in the active runtime path.
 - Current task execution uses stable `modelId` references, so duplicate `(tenant_id, provider_id, model_name)` values did not block P7 runtime. A later admin/data-integrity decision is still needed if stricter model-name uniqueness is desired.
-- Open for P10: Provider soft-delete behavior for linked models remains unresolved.
+- Resolved in P10: Provider deletion is blocked while same-tenant non-deleted linked models exist; Provider disable remains allowed and does not cascade to models.
 
 ## P8: Frontend backendization
 
@@ -452,7 +452,7 @@ P8 workbench decisions:
 - P8 does not require `POST /assets/{assetId}/edit-source`. Generation/edit tasks should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
 - Task progress uses EventSource/SSE only. Project-level and task-level UIs may compose reducers by `taskId`, but polling remains forbidden.
 - Local UI preferences may remain local if they contain no credentials. Provider API keys and Provider API URLs must not remain in persisted browser settings.
-- R7 confirmed current runtime uses stable `modelId` references, so model-name uniqueness is not a P8 blocker. Provider soft-delete linked-model policy remains a P9/admin-hardening decision; P8 must handle stale model availability safely in the UI.
+- R7 confirmed current runtime uses stable `modelId` references, so model-name uniqueness is not a P8 blocker. Provider soft-delete linked-model policy was later resolved in P10; P8 still needed to handle stale model availability safely in the UI during migration.
 
 P8 execution order:
 
@@ -470,7 +470,7 @@ P8 current result:
 - Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
 - Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
 - IndexedDB is no longer the production source for generated images or history. Prompt templates may still exist as non-sensitive local convenience data, but they must not be reintroduced into the main workbench history/image path or silently uploaded into tenant storage.
-- Remaining post-R9 follow-ups: frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state. Admin API-call detail stale-response protection and the first admin observability component split were completed in P10.
+- Remaining post-R10 follow-ups: frontend history currently joins separately paged task/asset lists even though P10 added a unified backend history query; history load failure can still render an empty-state panel beside the error state. Admin API-call detail stale-response protection and the first admin observability component split were completed in P10.
 
 R8 verification result:
 
@@ -495,18 +495,18 @@ P8 acceptance gates:
 - Generated/edited assets and task history come from backend APIs/authorized downloads; IndexedDB is not the primary history/image source.
 - Existing upload, prompt, parameter, result, history, download, and edit concepts remain available in backend-backed form.
 
-P8 intentionally did not resolve:
+P8 intentionally deferred these items; current status is:
 
 - Worker pool implementation for `WORKER_CONCURRENCY` was completed in P10.
 - API Redis subscription lifecycle binding to server shutdown was completed in P10.
 - General redaction of unknown secrets outside known-secret and heuristic rules.
-- Provider soft-delete linked-model backend policy or optional model-name uniqueness hardening; these remain P9/admin lifecycle concerns.
+- Provider soft-delete linked-model backend policy was resolved in P10. Optional model-name uniqueness hardening remains a later management/data-integrity decision.
 
 ## P9: Usage, audit, settings, hardening, and release readiness
 
 Status: completed and merged through deployment release validation. `P9-BE-AUDIT-USAGE-READS`, `P9-BE-PRODUCTION-SECRET-GUARD`, `P9-BE-RUNTIME-SETTINGS-CONTRACT`, `P9-FE-ADMIN-OBSERVABILITY-SETTINGS`, `P9-SECURITY-REGRESSION`, and `P9-DEPLOY-RELEASE-VALIDATION` have been reviewed, locally validated, and merged into `main` as appropriate. The first attempt to package broad settings hardening exposed a contract bug: writable settings cannot be honest until their runtime consumers are in scope.
 
-P9 must be split into small serial tasks rather than one broad worktree. The first batch should start with backend read contracts before any frontend admin UI:
+P9 was split into small serial tasks rather than one broad worktree. The first batch started with backend read contracts before frontend admin UI:
 
 1. `P9-BE-AUDIT-USAGE-READS`: completed and merged. Backend usage, operation log, and API call log read APIs now enforce admin RBAC, tenant isolation, pagination, deterministic ordering, and shared recursive response redaction.
 2. `P9-BE-PRODUCTION-SECRET-GUARD`: completed and merged. API and Worker startup now reject placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` in production while preserving non-production defaults.
@@ -534,7 +534,7 @@ P9 carry-forward risks:
 - P9 audit reads now use the shared redaction package and support exact known-secret scrubbing through an injected redactor seam, but production read APIs intentionally do not widen Provider API-key decryption scope. If historical dirty rows must be scrubbed for non-heuristic secrets at read time, define a trusted minimal secret source and lifecycle before implementing it.
 - P9 system settings currently expose only settings with live runtime consumers. Tenant-scoped upload policy is implemented and consumed by asset validation; `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred because their task/worker/quota/cleanup consumers are not yet in scope.
 - Provider soft-delete linked-model policy was resolved in P10 by blocking Provider deletion while same-tenant non-deleted linked models exist.
-- History list pagination is currently assembled by the frontend from task and asset lists; P10 should add a backend history query before frontend history switches away from client-side joining.
+- History list pagination is still assembled by the frontend from task and asset lists. P10 added the backend unified history query; a later frontend task should switch history consumption to that endpoint.
 - R8-identified unreachable legacy display/storage helpers were deleted in P9 security regression. Future legacy cleanup should be based on production import-graph evidence, not broad deletion.
 - Admin API call log/detail rendering was split during `P10-FE-ADMIN-OBSERVABILITY-HARDENING`; further admin observability splits are optional maintenance work only.
 - API call log detail stale-request behavior was resolved in `P10-FE-ADMIN-OBSERVABILITY-HARDENING`.

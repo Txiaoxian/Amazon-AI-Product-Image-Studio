@@ -52,6 +52,16 @@
 - `deploy/docker-compose.yml` 只用于部署骨架或部署回归验证；如需启动项目 Compose 栈，验证后必须清理，除非用户明确要求保留。
 - 不得把全局本地环境中的真实密码复制到项目文档、源码、测试或日志中。
 
+## 当前进度阅读规则
+
+当前主线已经完成 R10。后续任务规划和子 agent 启动前，应优先阅读本节、`docs/development-plan.md` 顶部的 `Status after R10`、以及 `docs/security.md` 的 R10 状态，再查看历史任务包。
+
+历史任务包保留了当时的开发约束和验收标准，其中出现的“P8/P9/P10 待处理”描述如果已被后续 R10 状态覆盖，应按最新状态理解：
+
+- P8/P9 已移除或隔离浏览器 Provider 直连、localStorage Provider API Key、IndexedDB 生产历史/图片路径，以及不可达 legacy display/storage helpers。
+- P10 已完成 Worker process concurrency、API Redis event subscriber lifecycle、Provider linked-model delete policy、admin API-call detail stale-response guard、以及 backend unified history query。
+- R10 仍保留的主要后续项是：前端 history 消费 P10 unified backend history endpoint、Provider delete/model create-update 的更强事务序列化、可选 admin 组件继续拆分、以及 Redis health checker lifecycle 在动态 reload 场景下的所有权。
+
 ## P8 及后续任务强制执行的任务包标准
 
 从 P8 及后续任务开始，任务包必须是“实现合同”，不能只写功能清单。除原有字段外，每个新 worktree 任务包还必须包含：
@@ -2239,7 +2249,7 @@ git diff --check
 - 已在 P10 处理：API Redis event subscription 绑定 API server lifecycle，不再由 production API path 使用 unbounded background context 启动。
 - 当前 runtime 对已知 Provider API Key 已覆盖 value/key 两类脱敏；未知且不命中启发式规则的 secret 仍无法自动识别。
 - 当前任务执行按 `modelId` 工作，未被 `model_name` 非唯一阻塞；若后续需要更强管理约束，仍需决定 `(tenant_id, provider_id, model_name)` 是否唯一。
-- P10 后续处理：Provider soft delete 后的 linked-model 行为已确定为“存在同租户未软删除模型时阻止删除”，下一任务负责实现。
+- 已在 P10 处理：Provider soft delete 后的 linked-model 行为已实现为“存在同租户未软删除模型时阻止删除”。
 
 ## 第八批串行开发
 
@@ -2851,7 +2861,7 @@ Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This 
 
 R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
 
-P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, `P10-FE-ADMIN-OBSERVABILITY-HARDENING`, and `P10-BE-HISTORY-QUERY` are completed, reviewed, and merged. The unified backend history contract is now available, but frontend history migration has not started yet.
+P10 started serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, `P10-FE-ADMIN-OBSERVABILITY-HARDENING`, and `P10-BE-HISTORY-QUERY` are completed, reviewed, and merged. The unified backend history contract is now available, but frontend history migration has not started yet.
 
 R10 completed after all P10 development tasks were merged. Main-agent review covered P10 code from `7566c57` through `e7ae2f0` and found no blocking issues. Full frontend validation passed (`npm run lint`, `npm run type-check`, `npm run test`, `npm run build`), backend validation passed (`go test ./...`, `go test -race ./...`, `go vet ./...`, `go build ./cmd/api ./cmd/worker`), Docker Compose config passed, and `git diff --check 7566c57..HEAD` passed. R10 residual non-blocking items are: frontend still needs a later migration to consume the unified backend history endpoint, Provider delete/model create-update concurrency may later need stronger transaction serialization, `AdminObservabilitySettingsPanel` can be further split as maintenance work, and Redis health checker client lifecycle should be explicit if health dependencies become reloadable.
 
@@ -3693,7 +3703,7 @@ P10-BE-WORKER-POOL - 让 Worker 并发配置成为真实处理池
 - `P9-DEPLOY-RELEASE-VALIDATION` completed, reviewed, and merged into `main`.
 - `R9` completed with no blocking findings, and P10 is cleared to start from latest `main`.
 - Existing Worker reliable queue, Provider runtime execution, MinIO output persistence, usage/API call logs, and SSE wakeup paths are already merged.
-- Current known carry-forward risk: Worker process still runs one processing loop even though operator-facing concurrency settings exist.
+- This task entered with the known carry-forward risk that Worker process concurrency was still one processing loop even though operator-facing concurrency settings existed. The accepted P10 implementation resolved it by wiring `WORKER_CONCURRENCY` to an in-process processing pool.
 
 ### 必须保持的现有行为
 
