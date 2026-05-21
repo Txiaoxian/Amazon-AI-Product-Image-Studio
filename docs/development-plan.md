@@ -463,7 +463,7 @@ P8 current result:
 - Browser Provider adapter files and frontend Provider registry/types have been removed. Normal settings no longer accept or persist Provider API Key or Provider API URL.
 - Project asset references now submit backend `assetId` values only. The temporary `legacyFile` compatibility payload has been removed, and project switching clears pending references before task creation.
 - IndexedDB is no longer the production source for generated images or history. Prompt templates may still exist as non-sensitive local convenience data, but they must not be reintroduced into the main workbench history/image path or silently uploaded into tenant storage.
-- Remaining post-R9 follow-ups: frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state; admin API-call detail UI needs stale-response protection; large admin observability/settings components should be split during hardening.
+- Remaining post-R9 follow-ups: frontend history currently joins separately paged task/asset lists; history load failure can still render an empty-state panel beside the error state. Admin API-call detail stale-response protection and the first admin observability component split were completed in P10.
 
 R8 verification result:
 
@@ -526,24 +526,24 @@ P9 carry-forward risks:
 - Unknown secrets cannot be redacted unless they are supplied as known secrets or match heuristic rules.
 - P9 audit reads now use the shared redaction package and support exact known-secret scrubbing through an injected redactor seam, but production read APIs intentionally do not widen Provider API-key decryption scope. If historical dirty rows must be scrubbed for non-heuristic secrets at read time, define a trusted minimal secret source and lifecycle before implementing it.
 - P9 system settings currently expose only settings with live runtime consumers. Tenant-scoped upload policy is implemented and consumed by asset validation; `defaultProviderId/defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred because their task/worker/quota/cleanup consumers are not yet in scope.
-- Provider soft-delete linked-model policy remains unresolved.
-- History list pagination is currently assembled by the frontend from task and asset lists; a backend history query should be considered if pagination correctness becomes important.
+- Provider soft-delete linked-model policy was resolved in P10 by blocking Provider deletion while same-tenant non-deleted linked models exist.
+- History list pagination is currently assembled by the frontend from task and asset lists; P10 should add a backend history query before frontend history switches away from client-side joining.
 - R8-identified unreachable legacy display/storage helpers were deleted in P9 security regression. Future legacy cleanup should be based on production import-graph evidence, not broad deletion.
-- Admin observability UI is intentionally acceptable as one component for this slice, but should be split after security regression if it becomes a maintenance hotspot.
-- API call log detail UI has no stale-request guard; a slower detail response can overwrite a newer click for the same admin user. This is a display correctness issue, not a security blocker, and is scheduled as `P10-FE-ADMIN-OBSERVABILITY-HARDENING`.
+- Admin API call log/detail rendering was split during `P10-FE-ADMIN-OBSERVABILITY-HARDENING`; further admin observability splits are optional maintenance work only.
+- API call log detail stale-request behavior was resolved in `P10-FE-ADMIN-OBSERVABILITY-HARDENING`.
 - Redis 7.4 may emit go-redis `maintnotifications` fallback warnings during API/Worker operation. P9 validation confirmed these warnings are non-blocking, but operators may want to revisit Redis/client compatibility if log noise becomes a concern.
 
 ## P10: Runtime hardening and operator-grade follow-ups
 
-Status: in progress after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, and `P10-BE-PROVIDER-MODEL-LIFECYCLE` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, and admin UI correctness.
+Status: in progress after `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, and `P10-FE-ADMIN-OBSERVABILITY-HARDENING` merged. P10 starts after P9 release validation and R9 review have completed. P10 should be split into small serial tasks because the remaining items touch task runtime, shutdown lifecycle, Provider/model lifecycle policy, admin UI correctness, and history pagination correctness.
 
 P10 priorities:
 
 1. `P10-BE-WORKER-POOL`: completed and merged. Configured Worker concurrency is now a real in-process processing pool while MySQL task-state authority, Redis claim/ack/retry semantics, idempotency, cancellation, timeout, retry, dead-letter, and global/tenant/user/Provider/model concurrency limits remain intact.
 2. `P10-BE-SSE-BRIDGE-LIFECYCLE`: completed and merged. API Redis task-event subscriber startup now receives the API lifecycle context, test env still avoids real subscriber startup, and Redis remains sequence-only wakeup while MySQL remains the replay source.
 3. `P10-BE-PROVIDER-MODEL-LIFECYCLE`: completed and merged. Provider deletion is blocked while any non-deleted linked models exist in the same tenant; admins must delete linked models first. Provider disable remains allowed and task creation continues to reject disabled Providers.
-4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: next. Add stale-response protection for API call log details and split the large admin observability/settings panel only enough to make the detail flow maintainable.
-5. `P10-BE-HISTORY-QUERY`: optional later. Add a backend history query if frontend-assembled task/asset pagination becomes a correctness issue.
+4. `P10-FE-ADMIN-OBSERVABILITY-HARDENING`: completed and merged. API call log detail responses now ignore stale out-of-order results, panel close and list page changes reset in-flight detail state, and API call log/detail rendering is split into a focused child component.
+5. `P10-BE-HISTORY-QUERY`: next. Add a backend project history query so generated/edited assets and their source tasks are paginated as one tenant-scoped backend result set before the frontend switches away from task/assets client-side joining.
 
 P10 worker-pool result:
 
@@ -576,11 +576,20 @@ P10 Provider/model lifecycle result:
 - Tests cover enabled linked models, disabled linked models, soft-deleted linked models, cross-tenant linked models, Provider disable with linked models, forbidden delete, unknown Provider delete, and operation-log redaction.
 - Non-blocking follow-up: if administrators perform Provider deletion and model create/update concurrently, stronger row-level serialization may be useful later. The current P10 task did not introduce that broad transaction-hardening scope.
 
-P10 frontend admin hardening plan:
+P10 frontend admin hardening result:
 
-- `AdminObservabilitySettingsPanel` currently owns usage, operation logs, API call logs, API call detail, and system settings in one large file.
-- The next frontend task should first guard `getApiCallLog` detail responses so a slower response from an older selection cannot overwrite a newer selected API call log detail.
-- A small component split is allowed for the API call logs/detail or settings subview, but it must not rewrite the full admin UI or change backend API contracts.
+- `P10-FE-ADMIN-OBSERVABILITY-HARDENING` completed and merged after review.
+- `AdminObservabilitySettingsPanel` now guards `getApiCallLog` detail responses with a request sequence so a slower response from an older selection cannot overwrite the latest selected API call log detail.
+- Closing the panel and changing API call log pages clears and invalidates in-flight detail responses.
+- API call log list/detail rendering was extracted into `AdminApiCallLogsView` without changing backend admin API contracts, task/SSE behavior, Provider/model management, or upload-policy-only settings behavior.
+- Frontend validation for the task passed: `npm run lint`, `npm run type-check`, `npm run test -- adminObservabilitySettingsPanel`, `npm run test`, `npm run build`, and `git diff --check`.
+
+P10 backend history query plan:
+
+- Current production history is backend-backed, but the frontend assembles it by separately fetching project tasks plus generated and edited assets, then joining and sorting in the browser.
+- The next backend task should add `GET /api/v1/projects/{projectId}/history` as a read-only, tenant-scoped, project-authorized endpoint returning a single paginated list of `{ asset, task }` records.
+- The endpoint must use backend-owned joins across `image_assets`, `task_outputs`, and `generation_tasks`; it must return only non-deleted `GENERATED` and `EDITED` assets linked to visible same-tenant tasks.
+- The first task is backend-only. Frontend migration to consume this endpoint should be a later task after the backend contract is reviewed and merged.
 
 ## Phase boundaries
 

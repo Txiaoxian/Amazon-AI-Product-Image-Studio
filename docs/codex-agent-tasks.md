@@ -2851,7 +2851,7 @@ Sixth batch completed: `P9-DEPLOY-RELEASE-VALIDATION` merged after review. This 
 
 R9 completed after all P9 development tasks merged. Main-agent review covered P9 code from R8 completion through `P9-DEPLOY-RELEASE-VALIDATION`, excluded the later P10 planning commit from P9 scope, and found no blocking issues. Full frontend, backend, race, vet, build, Compose config/build/up/health, API health, frontend static route, and Compose cleanup checks passed. Non-blocking carry-forward items are: admin API-call detail stale-response guard, large admin observability/settings component split, and explicit Redis health-check client lifecycle if health dependencies later become reloadable.
 
-P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, and `P10-BE-PROVIDER-MODEL-LIFECYCLE` are completed and merged. The next task is `P10-FE-ADMIN-OBSERVABILITY-HARDENING`; do not start history query work in parallel.
+P10 starts serially after R9. `P10-BE-WORKER-POOL`, `P10-BE-SSE-BRIDGE-LIFECYCLE`, `P10-BE-PROVIDER-MODEL-LIFECYCLE`, and `P10-FE-ADMIN-OBSERVABILITY-HARDENING` are completed and merged. The next task is `P10-BE-HISTORY-QUERY`; keep it backend-only and do not start frontend history migration until this backend contract is reviewed and merged.
 
 ## 子任务 26：审计与用量只读 API
 
@@ -4089,6 +4089,10 @@ git diff --check
 
 P10-FE-ADMIN-OBSERVABILITY-HARDENING - 修复 API call detail stale response 并收窄 admin observability 组件
 
+### 状态
+
+Completed, reviewed, and merged into `main`. The accepted implementation guards API call detail requests with a request sequence, clears/invalidates in-flight detail state on panel close and API call log page changes, extracts API call log/detail rendering into `AdminApiCallLogsView`, and preserves upload-policy-only settings behavior, permission gates, bounded redacted metadata display, and browser-storage safety. Frontend lint, type-check, targeted admin observability test, full test suite, build, and `git diff --check` passed before merge.
+
 ### 推荐执行信息
 
 - 推荐线程名：`P10-FE-ADMIN-OBSERVABILITY-HARDENING`
@@ -4214,6 +4218,140 @@ npm run test
 npm run build
 
 cd ..
+git diff --check
+```
+
+## 子任务 36：P10 后端统一历史查询
+
+### 任务名称
+
+P10-BE-HISTORY-QUERY - 增加后端项目历史统一分页查询
+
+### 推荐执行信息
+
+- 推荐线程名：`P10-BE-HISTORY-QUERY`
+- 推荐分支名：`codex/p10-backend-history-query`
+- 起始分支：最新 `main`
+- 开发顺序：串行执行。该任务定义后端 history query 合同，不要与 frontend history migration、task/SSE runtime、asset storage 写路径、Provider runtime、admin settings 或 deployment 任务并行。
+
+### 目标
+
+新增只读 API `GET /api/v1/projects/{projectId}/history`，由后端一次性返回项目历史分页：每条记录由一个非删除的 `GENERATED` 或 `EDITED` 图片资产及其同租户、同项目、同输出关系的源任务组成。该任务只做后端查询与测试，不改前端消费路径；前端继续暂时使用现有 task/assets join，直到后续 frontend migration 任务切换到该新合同。
+
+### 允许修改文件
+
+- `backend/internal/task/**`
+- `backend/internal/api/**` 仅限任务/历史 API 路由测试、测试 helper 或必要路由装配
+- `backend/internal/database/**` 仅限必要索引或查询支持；默认不新增业务表
+- `backend/internal/httpx/**` 仅限复用/补充分页错误 helper，若必须修改需保持兼容
+- `backend/internal/rbac/**` 仅限复用现有 `task:read` 权限测试，不新增权限码，除非发现明确合同缺口并先报告主 agent
+- `backend/internal/**/**/*_test.go` 仅限本任务直接相关测试
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `.env.example`
+- `backend/internal/provider/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/model/**`
+- `backend/internal/queue/**`
+- `backend/internal/storage/**`
+- Worker 执行、任务状态机、Redis enqueue/claim/ack/retry、SSE 事件格式、Provider runtime、MinIO 上传/下载写路径
+
+### 前置依赖
+
+- `P10-FE-ADMIN-OBSERVABILITY-HARDENING` completed, reviewed, and merged.
+- `docs/api-contract.md` 已由主 agent 定义 `GET /projects/{projectId}/history` 合同。
+- P7/P8 backend task, task outputs, generated/edited assets, authorized downloads, and frontend backend history path are already merged.
+
+### 必须保持的现有行为
+
+- Existing `POST /projects/{projectId}/tasks`, `GET /projects/{projectId}/tasks`, `GET /tasks/{taskId}`, cancel/retry, Worker, Redis queue, SSE replay, Provider runtime execution, generated/edited asset persistence, and authorized asset download behavior remain unchanged.
+- Existing asset list/detail/download APIs remain unchanged.
+- Existing frontend history can keep using task/assets join during this backend-only intermediate state.
+- Existing task/asset response field shapes remain compatible.
+- MySQL remains the task/history source of truth; Redis and MinIO are not read for this history query.
+
+### 允许的中间态
+
+- Backend history query endpoint exists and is tested while frontend still does not call it.
+- The first history response shape may be exactly `{ asset, task }` inside the existing page envelope; do not add frontend-only display fields unless the backend already owns them.
+- The endpoint may reuse existing task and asset response builders as long as it avoids cross-tenant leakage and keeps pagination deterministic.
+
+### 禁止的半迁移状态
+
+- Do not change the frontend to consume this endpoint in this task.
+- Do not return `REFERENCE` assets, soft-deleted assets, orphan generated/edited assets without a same-tenant task/output link, cross-tenant tasks/assets, `objectKey`, MinIO URLs, image bytes, Blob/base64 data, Provider API keys, Authorization headers, Cookies, or API call log metadata.
+- Do not trust client-provided tenant IDs, task IDs, or asset/task join data.
+- Do not make unpaginated history endpoints or page sizes above the backend cap.
+- Do not create new tasks, enqueue Redis work, emit SSE events, write operation logs for reads, or touch MinIO objects.
+- Do not modify task statuses, task output persistence, Worker finalization, retry/cancel semantics, or Provider/model lifecycle behavior.
+
+### 失败模式与边界场景
+
+| Area | Scenario | Expected result |
+| --- | --- | --- |
+| Auth | unauthenticated request | HTTP 401 using existing API error shape |
+| RBAC/project auth | user lacks `task:read` or project membership/admin access | non-leaking 403/404 consistent with existing project task reads |
+| Tenant isolation | project belongs to tenant B while user is tenant A | no rows leak; response is non-leaking 403/404 |
+| Asset filtering | project has `REFERENCE`, `GENERATED`, and `EDITED` assets | only generated/edited output assets are returned |
+| Soft delete | output asset is soft-deleted | item is absent and total excludes it |
+| Orphan output | generated/edited asset has no same-tenant `task_outputs` link to a visible task | item is absent |
+| Cross-tenant output link | task output or task belongs to another tenant | item is absent and no foreign IDs leak |
+| Pagination | more records than one page and same `created_at` values | page count and ordering are deterministic, newest asset first with stable tie-breaker |
+| Kind filter | `kind=GENERATED` or `kind=EDITED` | only matching output asset kind is returned |
+| Invalid query | invalid `pageNum`, `pageSize`, or `kind` | HTTP 422 validation error; no query fallback to unsafe defaults |
+| Response safety | returned asset/task payloads | no object keys, MinIO URLs, blobs/base64, Provider secrets, auth headers, cookies, or API call metadata |
+
+### 必须新增或更新的回归测试
+
+- Add backend route/service tests for successful history listing with generated and edited output assets paired with their source tasks.
+- Add tests for tenant isolation, project authorization/RBAC denial, soft-deleted asset exclusion, reference asset exclusion, orphan output exclusion, kind filter, bounded pagination, deterministic ordering on same timestamp, invalid query handling, and response-safety fields.
+- If implementation adds repository helpers, add focused repository/service tests where route tests would be too broad.
+- Final child-agent handoff must map every failure-mode row above to concrete test names.
+
+### 具体开发内容
+
+- Inspect existing task list/detail response builders, asset response builders, `task_outputs`, `image_assets`, and project authorization patterns.
+- Add route registration for `GET /projects/:projectId/history` near the task/project read APIs.
+- Add request parsing for `pageNum`, `pageSize`, and optional `kind`.
+- Implement a tenant-scoped query based on backend-owned relationships, preferably `task_outputs -> image_assets -> generation_tasks`, filtering by project, output asset kind, and soft delete.
+- Return the standard page envelope with records shaped as `{ asset, task }`.
+- Reuse existing authorization semantics from project task reads: Cookie auth plus `task:read` and project member/admin access.
+- Keep all code backend-only and small; if frontend migration looks necessary, stop and report instead of widening scope.
+
+### 安全要求
+
+- Every query must include `tenant_id` and `project_id` filters.
+- Object-level authorization must happen before listing records.
+- Response payloads must use safe public API DTOs and must not include internal storage keys, MinIO bucket names, raw object data, raw Provider/request metadata, or secrets.
+- No Provider Adapter, AI call, Redis queue, SSE event, or MinIO object read/write is allowed in this endpoint.
+- Logs and errors must remain non-sensitive and non-enumerating.
+
+### 验收标准
+
+- `GET /api/v1/projects/{projectId}/history` returns a deterministic, paginated, tenant-scoped list of `{ asset, task }` records.
+- Returned records are only non-deleted generated/edited output assets linked to same-tenant visible tasks for the authorized project.
+- Existing task, asset, Worker, SSE, Provider, and frontend behavior is unchanged.
+- No forbidden files are modified.
+- Tests cover all named failure modes and the child-agent handoff maps each row to actual tests.
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/task ./internal/api -count=1
+go test ./... -count=1
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
 

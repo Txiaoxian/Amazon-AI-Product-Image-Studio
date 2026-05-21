@@ -213,6 +213,34 @@ P8 workbench contract:
 - Task creation remains the final validator when a selected Provider/model is disabled, deleted, or otherwise becomes unavailable after the UI loaded it.
 - Browser code must not construct Provider-facing request payloads beyond the platform task contract.
 
+## History APIs
+
+- `GET /projects/{projectId}/history`: list backend-generated project history as a single paginated feed of generated/edited assets paired with their source task.
+
+History query params for P10:
+
+- `pageNum`: default `1`, positive integer.
+- `pageSize`: default follows backend pagination defaults and must be capped by the same maximum page-size policy used by task/assets lists.
+- `kind`: optional `GENERATED` or `EDITED`; absent means both generated and edited output assets.
+
+History response fields for P10:
+
+- Standard page envelope: `records`, `total`, `pageNum`, `pageSize`.
+- Each `records[]` item contains:
+  - `asset`: same safe asset response shape as `GET /assets/{assetId}`, including backend download/preview URL but never `objectKey`, MinIO URL, image bytes, or Blob data.
+  - `task`: same task response shape as `GET /tasks/{taskId}`, including `outputAssetIds`.
+
+History API requirements:
+
+- The endpoint is read-only and requires Cookie auth.
+- The endpoint must authorize the project with `task:read` and the same project-member/admin access semantics used by project task reads.
+- Queries must filter by `tenant_id`, `project_id`, `image_assets.deleted_at IS NULL`, generated/edited asset kind, and same-tenant linked tasks.
+- The backend must build the feed from backend-owned relationships, preferably `task_outputs -> image_assets -> generation_tasks`; client-provided task IDs, tenant IDs, or asset/task joins are never trusted.
+- Sorting must be deterministic, newest output asset first, with a stable tie-breaker such as asset ID.
+- Orphaned generated/edited assets without a same-tenant visible task/output link must not appear in the history feed.
+- This endpoint does not create tasks, does not touch Redis/SSE, does not read or write MinIO objects, and does not expose operation/API call log metadata.
+- P10 backend history query is backend-only. Frontend migration to consume it must be a later task after the endpoint is reviewed and merged.
+
 ## Provider APIs
 
 - `GET /providers`
