@@ -77,7 +77,7 @@
 
 ## 当前状态
 
-R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理任务均已 review、合并并完成整批回归。
+R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理任务均已 review、合并并完成整批回归。`P12-FE-UNIFIED-HISTORY` 已 review 并合并。
 
 已完成的平台基础：
 
@@ -88,7 +88,7 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 当前已知后续项：
 
-- 前端历史需要改为消费 `GET /api/v1/projects/{projectId}/history`。
+- 前端历史已改为消费 `GET /api/v1/projects/{projectId}/history`；后续项目/资产工作流仍需产品化打磨。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略之外的运行时设置，在有真实运行时消费者前，不得暴露为可写配置。
 - 存储清理、保留周期、配额、缩略图策略和 orphan cleanup 仍需实现。
@@ -121,6 +121,7 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 1. `P12-FE-UNIFIED-HISTORY`
    - 将前端历史切换到后端统一历史接口。
+   - 已完成并合并。历史列表不再由浏览器 join tasks/assets 生成。
 2. `P12-FE-PROJECT-WORKFLOW-POLISH`
    - 改进项目选择、编辑、成员入口和资产管理体验。
 3. `P12-BE-PROJECT-MEMBER-HARDENING`
@@ -177,12 +178,12 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 ## 下一个建议生成的任务
 
-除非用户选择其他顺序，否则下一个任务应生成 `P12-FE-UNIFIED-HISTORY`。
+除非用户选择其他顺序，否则下一个任务应生成 `P12-FE-PROJECT-WORKFLOW-POLISH`。
 
 推荐分支：
 
 ```text
-codex/p12-frontend-unified-history
+codex/p12-frontend-project-workflow-polish
 ```
 
 推荐起始分支：
@@ -194,8 +195,9 @@ latest main
 串行/并行策略：
 
 - P11 后端与前端用户/角色管理已完成、合并并通过 R11。
-- P12 第一个任务应串行执行前端统一历史迁移，因为它会改变卖家侧历史生产路径。
-- `P12-BE-PROJECT-MEMBER-HARDENING` 可在 `P12-FE-UNIFIED-HISTORY` 稳定后再考虑并行或串行推进。
+- `P12-FE-UNIFIED-HISTORY` 已完成并合并。
+- 下一步串行执行 `P12-FE-PROJECT-WORKFLOW-POLISH`，因为它会触碰卖家侧主工作区、项目选择和资产操作体验。
+- `P12-BE-PROJECT-MEMBER-HARDENING` 可在前端 polish 稳定后再考虑并行或串行推进。
 - 在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
 
 ## 标准验证命令

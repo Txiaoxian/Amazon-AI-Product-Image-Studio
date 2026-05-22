@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After R11 Identity Administration Review
+## Current State After P12 Unified History Merge
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -34,6 +34,7 @@ Completed phases:
 | P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
+| P12 | In progress | Frontend history now consumes the backend unified project history endpoint. Project workflow polish and project-member hardening remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -51,6 +52,8 @@ R11 validation passed:
 - `git diff --check 2b186fb..HEAD`
 - Focused P11 frontend/backend sensitive-pattern scans for forbidden browser storage, polling, Provider direct calls, unsafe response fields, and secret markers.
 
+`P12-FE-UNIFIED-HISTORY` was reviewed and merged. The frontend history production path now uses `GET /api/v1/projects/{projectId}/history` instead of joining task and asset lists in the browser. The task passed frontend lint, type-check, targeted history/API tests, full frontend tests, build, and whitespace checks. Non-blocking follow-up: history thumbnails currently use authorized asset download URLs; later polish can prefer safe same-origin thumbnail URLs when available.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -63,6 +66,7 @@ The current `main` branch supports:
 - Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
 - Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
 - Frontend workbench submission through backend task APIs and SSE only.
+- Frontend history reads backend-owned project history from `GET /projects/{projectId}/history`, with pagination, generated/edited filtering, stale-response protection, authorized detail/download, and backend `editSourceAssetId` re-edit.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
@@ -117,6 +121,7 @@ Suggested order:
 1. `P12-FE-UNIFIED-HISTORY`
    - Switch frontend history to `GET /api/v1/projects/{projectId}/history`.
    - Fix history loading, empty, error, pagination, detail, download, and re-edit states.
+   - Completed and merged. The browser no longer builds the production history feed by joining tasks and generated/edited asset lists.
 2. `P12-FE-PROJECT-WORKFLOW-POLISH`
    - Improve project creation/editing/member entry points and asset management ergonomics.
    - Keep the existing UI concepts; do not rewrite the app shell.
@@ -125,7 +130,7 @@ Suggested order:
 4. `R12`
    - End-to-end seller workflow review.
 
-Parallelism: `P12-FE-UNIFIED-HISTORY` and `P12-BE-PROJECT-MEMBER-HARDENING` can run in parallel after P11 if their file scopes do not overlap. Project workflow polish should follow history migration.
+Parallelism: `P12-FE-UNIFIED-HISTORY` is complete. Next run `P12-FE-PROJECT-WORKFLOW-POLISH` serially because it touches the main seller workspace UI. `P12-BE-PROJECT-MEMBER-HARDENING` can follow or run later in an independent backend worktree after the frontend polish scope is stable.
 
 ### P13: Runtime Settings, Quotas, And Storage Lifecycle
 
@@ -235,4 +240,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start P12 with `P12-FE-UNIFIED-HISTORY` from latest `main`. Keep this first P12 task serial because it changes the seller-facing history production path. Do not start P13 writable settings until every proposed setting has a real runtime consumer.
+Continue P12 with `P12-FE-PROJECT-WORKFLOW-POLISH` from latest `main`. Keep it focused on project selection/editing/member entry points and asset management ergonomics; do not start P13 writable settings until every proposed setting has a real runtime consumer.
