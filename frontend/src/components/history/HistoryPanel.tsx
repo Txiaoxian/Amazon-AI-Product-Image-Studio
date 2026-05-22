@@ -1,32 +1,50 @@
-import { RefreshCw } from 'lucide-react'
-import type { BackendHistoryItem } from '../../types/history'
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import type { BackendHistoryItem, HistoryKind } from '../../types/history'
 import { HistoryItem } from './HistoryItem'
 
 interface HistoryPanelProps {
   items: BackendHistoryItem[]
   error: string
   isLoading: boolean
+  kind?: HistoryKind
   onView: (history: BackendHistoryItem) => void
   onEdit: (history: BackendHistoryItem) => void
   onDownload: (history: BackendHistoryItem) => void
+  onKindChange: (kind?: HistoryKind) => void
+  onPageChange: (pageNum: number) => void
+  onPageSizeChange: (pageSize: number) => void
   onRefresh: () => void
+  pageNum: number
+  pageSize: number
+  total: number
 }
 
 export function HistoryPanel({
   items,
   error,
   isLoading,
+  kind,
   onView,
   onEdit,
   onDownload,
+  onKindChange,
+  onPageChange,
+  onPageSizeChange,
   onRefresh,
+  pageNum,
+  pageSize,
+  total,
 }: HistoryPanelProps) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const canGoPrevious = pageNum > 1 && !isLoading
+  const canGoNext = pageNum < totalPages && !isLoading
+
   return (
     <aside className="panel flex min-h-0 flex-col">
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-ink-900">历史记录</h2>
-          <p className="text-xs text-ink-400">{items.length} 条结果</p>
+          <p className="text-xs text-ink-400">{total} 条结果</p>
         </div>
         <button
           aria-label="刷新历史记录"
@@ -38,6 +56,62 @@ export function HistoryPanel({
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </button>
+      </div>
+
+      <div className="grid gap-2 border-b border-ink-200 px-4 py-3">
+        <label className="grid gap-1 text-xs font-medium text-ink-500">
+          结果类型
+          <select
+            className="h-9 rounded-md border border-ink-200 bg-white px-2 text-sm text-ink-700 focus:border-amazon-500 focus:outline-none focus:ring-2 focus:ring-amazon-500/20"
+            disabled={isLoading}
+            onChange={(event) => onKindChange(toHistoryKind(event.target.value))}
+            value={kind ?? 'ALL'}
+          >
+            <option value="ALL">全部结果</option>
+            <option value="GENERATED">生成结果</option>
+            <option value="EDITED">编辑结果</option>
+          </select>
+        </label>
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-xs font-medium text-ink-500">
+            每页
+            <select
+              className="h-8 rounded-md border border-ink-200 bg-white px-2 text-sm text-ink-700 focus:border-amazon-500 focus:outline-none focus:ring-2 focus:ring-amazon-500/20"
+              disabled={isLoading}
+              onChange={(event) => onPageSizeChange(Number(event.target.value))}
+              value={pageSize}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              aria-label="上一页历史记录"
+              className="icon-button h-8 w-8"
+              disabled={!canGoPrevious}
+              onClick={() => onPageChange(pageNum - 1)}
+              title="上一页"
+              type="button"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-16 text-center text-xs text-ink-500">
+              {pageNum} / {totalPages}
+            </span>
+            <button
+              aria-label="下一页历史记录"
+              className="icon-button h-8 w-8"
+              disabled={!canGoNext}
+              onClick={() => onPageChange(pageNum + 1)}
+              title="下一页"
+              type="button"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 p-3 xl:overflow-y-auto">
@@ -70,4 +144,8 @@ export function HistoryPanel({
       </div>
     </aside>
   )
+}
+
+function toHistoryKind(value: string): HistoryKind | undefined {
+  return value === 'GENERATED' || value === 'EDITED' ? value : undefined
 }

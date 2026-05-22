@@ -428,13 +428,7 @@ function createWorkbenchFetch(overrides: {
     if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
       return successResponse(page([asset]))
     }
-    if (url === '/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50') {
-      return successResponse(page([]))
-    }
-    if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50') {
-      return successResponse(page([]))
-    }
-    if (url === '/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50') {
+    if (url === '/api/v1/projects/project_1/history?pageNum=1&pageSize=10') {
       return successResponse(page([]))
     }
     if (url === '/api/v1/assets/asset_1/download') {

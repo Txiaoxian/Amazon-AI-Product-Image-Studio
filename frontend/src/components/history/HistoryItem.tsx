@@ -16,7 +16,7 @@ export function HistoryItem({ history, onView, onEdit, onDownload }: HistoryItem
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(history.asset.createdAt))
-  const previewUrl = history.asset.thumbnailUrl ?? history.asset.previewUrl
+  const previewUrl = `/api/v1/assets/${encodeURIComponent(history.asset.id)}/download`
 
   return (
     <article className="rounded-lg border border-ink-200 bg-white p-2">
