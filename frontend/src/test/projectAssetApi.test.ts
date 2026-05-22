@@ -185,6 +185,48 @@ describe('project and asset API wrappers', () => {
     })
   })
 
+  it('calls project member list and write endpoints through the project API', async () => {
+    const member = {
+      id: 'member_1',
+      tenantId: 'tenant_1',
+      projectId: 'project_1',
+      userId: 'user_2',
+      role: 'VIEWER',
+      createdAt: '2026-05-12T00:00:00Z',
+      updatedAt: '2026-05-12T00:00:00Z',
+    }
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse([member]))
+      .mockResolvedValueOnce(jsonResponse(member, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...member, role: 'EDITOR' }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+    const projectApi = createProjectApi(createApiClient({ fetchImpl }))
+
+    await expect(projectApi.listMembers('project_1')).resolves.toEqual([member])
+    await expect(projectApi.addMember('project_1', { userId: 'user_2', role: 'VIEWER' }, 'csrf_memory_only')).resolves.toEqual(member)
+    await expect(projectApi.updateMember('project_1', 'user_2', { role: 'EDITOR' }, 'csrf_memory_only')).resolves.toMatchObject({
+      role: 'EDITOR',
+    })
+    await expect(projectApi.removeMember('project_1', 'user_2', 'csrf_memory_only')).resolves.toEqual({ ok: true })
+
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/projects/project_1/members',
+      '/api/v1/projects/project_1/members',
+      '/api/v1/projects/project_1/members/user_2',
+      '/api/v1/projects/project_1/members/user_2',
+    ])
+    expect(fetchImpl.mock.calls[0][1]).toEqual(expect.objectContaining({ method: 'GET' }))
+    expect(fetchImpl.mock.calls[1][1]).toEqual(expect.objectContaining({ method: 'POST' }))
+    expect(fetchImpl.mock.calls[2][1]).toEqual(expect.objectContaining({ method: 'PATCH' }))
+    expect(fetchImpl.mock.calls[3][1]).toEqual(expect.objectContaining({ method: 'DELETE' }))
+    expect((fetchImpl.mock.calls[1][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect((fetchImpl.mock.calls[2][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect((fetchImpl.mock.calls[3][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect(JSON.parse(fetchImpl.mock.calls[1][1]?.body as string)).toEqual({ userId: 'user_2', role: 'VIEWER' })
+    expect(JSON.parse(fetchImpl.mock.calls[2][1]?.body as string)).toEqual({ role: 'EDITOR' })
+  })
+
   it('calls asset list, update, favorite, delete, detail, and download endpoints', async () => {
     const asset = {
       id: 'asset_1',

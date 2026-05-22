@@ -28,6 +28,11 @@ const authenticatedSession = {
   csrfToken: 'csrf_from_me',
 }
 
+const projectMemberSession = {
+  ...authenticatedSession,
+  permissions: [...authenticatedSession.permissions, 'project:member:manage'],
+}
+
 const project = {
   id: 'project_1',
   tenantId: 'tenant_1',
@@ -625,6 +630,287 @@ describe('project asset workbench', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
     expect(listCalls).toBe(2)
+  })
+
+  it('does not insert completed uploads into a project selected after upload start', async () => {
+    const user = userEvent.setup()
+    const upload = deferredResponse()
+    const uploadedAsset = {
+      ...asset,
+      id: 'asset_upload',
+      filename: 'upload.png',
+      previewUrl: '/api/v1/assets/asset_upload/download',
+    }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project, secondProject]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_2/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_1/assets/uploads' && init?.method === 'POST') {
+        return upload.promise
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByRole('option', { name: 'Winter Launch' })).toBeInTheDocument()
+    await user.upload(screen.getByLabelText('上传参考图'), new File(['png-bytes'], 'upload.png', { type: 'image/png' }))
+    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
+    expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
+
+    upload.resolve(successResponse(uploadedAsset, 201))
+
+    await waitFor(() => {
+      expect(screen.queryByText('upload.png')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('当前项目')).toHaveValue('project_2')
+    })
+  })
+
+  it('removes an asset from a favorite-filtered list after unfavorite succeeds', async () => {
+    const user = userEvent.setup()
+    const favoriteAsset = {
+      ...asset,
+      filename: 'favorite.png',
+      isFavorite: true,
+    }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([favoriteAsset]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?favorite=true&pageNum=1&pageSize=50') {
+        return successResponse(page([favoriteAsset]))
+      }
+      if (url === '/api/v1/assets/asset_1/favorite' && init?.method === 'DELETE') {
+        return successResponse({ ...favoriteAsset, isFavorite: false })
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('favorite.png')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('收藏'), 'true')
+    await user.click(screen.getByRole('button', { name: '筛选资产' }))
+    expect(await screen.findByRole('button', { name: '取消收藏 favorite.png' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '取消收藏 favorite.png' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '取消收藏 favorite.png' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('暂无项目资产')).toBeInTheDocument()
+  })
+
+  it('removes an asset from a category-filtered list after category metadata changes', async () => {
+    const user = userEvent.setup()
+    const categoryAsset = {
+      ...asset,
+      filename: 'category.png',
+      category: 'reference',
+    }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([categoryAsset]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?category=reference&pageNum=1&pageSize=50') {
+        return successResponse(page([categoryAsset]))
+      }
+      if (url === '/api/v1/assets/asset_1' && init?.method === 'PATCH') {
+        return successResponse({ ...categoryAsset, category: 'hero' })
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('category.png')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('筛选分类'), 'reference')
+    await user.click(screen.getByRole('button', { name: '筛选资产' }))
+    await user.click(await screen.findByRole('button', { name: '查看详情 category.png' }))
+    await user.clear(screen.getByLabelText('分类'))
+    await user.type(screen.getByLabelText('分类'), 'hero')
+    await user.click(screen.getByRole('button', { name: '保存元数据' }))
+
+    expect(await screen.findByText('资产元数据已更新。')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '查看详情 category.png' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('暂无项目资产')).toBeInTheDocument()
+  })
+
+  it('loads and writes project members through real project member APIs', async () => {
+    const user = userEvent.setup()
+    const member = {
+      id: 'member_1',
+      tenantId: 'tenant_1',
+      projectId: 'project_1',
+      userId: 'user_2',
+      role: 'VIEWER',
+      createdAt: '2026-05-12T00:00:00Z',
+      updatedAt: '2026-05-12T00:00:00Z',
+    }
+    const addedMember = { ...member, id: 'member_2', userId: 'user_3', role: 'EDITOR' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(projectMemberSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
+        return successResponse([member])
+      }
+      if (url === '/api/v1/projects/project_1/members' && init?.method === 'POST') {
+        return successResponse(addedMember, 201)
+      }
+      if (url === '/api/v1/projects/project_1/members/user_2' && init?.method === 'PATCH') {
+        return successResponse({ ...member, role: 'OWNER' })
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '项目成员' }))
+    expect(await screen.findByText('user_2')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('成员用户 ID'), 'user_3')
+    await user.selectOptions(screen.getByLabelText('成员角色'), 'EDITOR')
+    await user.click(screen.getByRole('button', { name: '添加' }))
+    expect(await screen.findByText('user_3')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('项目成员角色 user_2'), 'OWNER')
+    expect(await screen.findByText('项目成员已更新。')).toBeInTheDocument()
+
+    const postCall = fetchImpl.mock.calls.find(([url, init]) => url === '/api/v1/projects/project_1/members' && init?.method === 'POST')
+    const patchCall = fetchImpl.mock.calls.find(([url, init]) => url === '/api/v1/projects/project_1/members/user_2' && init?.method === 'PATCH')
+    expect((postCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+    expect((patchCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+  })
+
+  it.each([
+    [401, 'AUTHENTICATION_REQUIRED', '登录状态已失效，请重新登录。'],
+    [403, 'FORBIDDEN', '没有权限管理项目成员。'],
+    [404, 'NOT_FOUND', '项目或成员不存在，可能已被删除或无权访问。'],
+  ])('shows safe project member list errors for %i', async (status, code, message) => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(projectMemberSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
+        return errorResponse(status, code, 'Unsafe backend detail')
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '项目成员' }))
+    expect(await screen.findByText(message)).toBeInTheDocument()
+  })
+
+  it.each([
+    [409, 'CONFLICT', '项目成员操作冲突，请刷新后重试。'],
+    [422, 'VALIDATION_ERROR', '成员信息未通过校验，请检查用户 ID 和角色。'],
+  ])('shows safe project member write errors for %i', async (status, code, message) => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(projectMemberSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
+        return successResponse([])
+      }
+      if (url === '/api/v1/projects/project_1/members' && init?.method === 'POST') {
+        return errorResponse(status, code, 'Unsafe backend detail')
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '项目成员' }))
+    await user.type(screen.getByLabelText('成员用户 ID'), 'user_2')
+    await user.click(screen.getByRole('button', { name: '添加' }))
+
+    expect(await screen.findByText(message)).toBeInTheDocument()
   })
 
   it('does not store project or asset master data in browser storage', async () => {

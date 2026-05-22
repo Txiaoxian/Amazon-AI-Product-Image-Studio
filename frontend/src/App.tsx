@@ -21,7 +21,7 @@ import { useProjectAssets } from './hooks/useProjectAssets'
 import { downloadBlob } from './lib/download'
 import type { AuthSession } from './types/auth'
 import type { BackendHistoryItem } from './types/history'
-import type { Asset } from './types/platform'
+import type { Asset, ProjectMemberRole, UserId } from './types/platform'
 import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from './types/workbench'
 
 function App() {
@@ -145,6 +145,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canDisableUsers = hasPermission(session, 'user:disable')
   const canReadRoles = hasPermission(session, 'role:read')
   const canManageRoles = hasPermission(session, 'role:manage')
+  const canManageProjectMembers = hasPermission(session, 'project:member:manage')
   const canOpenAdmin = canManageProviders || canManageModels
   const canOpenObservabilityAdmin = canReadUsage || canReadAudit || canManageSystemSettings
   const canOpenIdentityAdmin = canReadUsers || canCreateUsers || canUpdateUsers || canDisableUsers || canReadRoles || canManageRoles
@@ -316,6 +317,38 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
   }
 
+  const handleAddProjectMember = async (
+    projectId: Asset['projectId'],
+    request: { userId: UserId | string; role: ProjectMemberRole },
+  ) => {
+    const member = await projectAssets.addProjectMember(projectId, request)
+    if (member) {
+      setNotice('项目成员已添加。')
+    }
+  }
+
+  const handleUpdateProjectMember = async (
+    projectId: Asset['projectId'],
+    userId: UserId | string,
+    request: { role: ProjectMemberRole },
+  ) => {
+    const member = await projectAssets.updateProjectMember(projectId, userId, request)
+    if (member) {
+      setNotice('项目成员已更新。')
+    }
+  }
+
+  const handleRemoveProjectMember = async (projectId: Asset['projectId'], userId: UserId | string) => {
+    if (!window.confirm(`确定移除项目成员 ${userId} 吗？`)) {
+      return
+    }
+
+    const removed = await projectAssets.removeProjectMember(projectId, userId)
+    if (removed) {
+      setNotice('项目成员已移除。')
+    }
+  }
+
   const handleOpenCurrentDetail = () => {
     if (!generation.current || generation.current.kind !== 'backend') {
       return
@@ -423,24 +456,34 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             assetFilters={projectAssets.assetFilters}
             assetStatus={projectAssets.assetStatus}
             assets={projectAssets.assets}
+            canManageProjectMembers={canManageProjectMembers}
             error={projectAssets.error}
             isCreatingProject={projectAssets.isCreatingProject}
             isLoadingAssets={projectAssets.isLoadingAssets}
             isLoadingProjects={projectAssets.isLoadingProjects}
+            isSavingProjectMember={projectAssets.isSavingProjectMember}
             isUpdatingProject={projectAssets.isUpdatingProject}
             isUploadingAsset={projectAssets.isUploadingAsset}
+            onAddProjectMember={(projectId, request) => void handleAddProjectMember(projectId, request)}
             onCreateProject={handleCreateProject}
             onDeleteAsset={handleDeleteAsset}
             onDownloadAsset={handleDownloadAsset}
             onOpenAsset={setAssetDetail}
             onRefreshAssets={() => void projectAssets.refreshAssets()}
+            onRefreshProjectMembers={(projectId) => void projectAssets.refreshProjectMembers(projectId)}
             onRefreshProjects={() => void projectAssets.refreshProjects()}
+            onRemoveProjectMember={(projectId, userId) => void handleRemoveProjectMember(projectId, userId)}
             onSelectProject={projectAssets.selectProject}
             onToggleFavorite={(asset) => void projectAssets.toggleFavorite(asset)}
             onUpdateAssetFilters={projectAssets.updateAssetFilters}
+            onUpdateProjectMember={(projectId, userId, request) => void handleUpdateProjectMember(projectId, userId, request)}
             onUpdateProject={(projectId, request) => void handleUpdateProject(projectId, request)}
             onUploadReferences={(files) => void handleUploadReferences(files)}
             onUseAssetAsReference={(asset) => void handleUseAssetAsReference(asset)}
+            projectMemberActionUserId={projectAssets.projectMemberActionUserId}
+            projectMemberError={projectAssets.projectMemberError}
+            projectMembers={projectAssets.projectMembers}
+            projectMemberStatus={projectAssets.projectMemberStatus}
             projectStatus={projectAssets.projectStatus}
             projects={projectAssets.projects}
             selectedProject={projectAssets.selectedProject}

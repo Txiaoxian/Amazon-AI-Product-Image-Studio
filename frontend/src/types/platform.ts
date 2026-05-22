@@ -52,6 +52,7 @@ export interface CurrentSession {
 }
 
 export type ProjectStatus = 'ACTIVE' | 'ARCHIVED'
+export type ProjectMemberRole = 'OWNER' | 'EDITOR' | 'VIEWER'
 
 export interface Project {
   id: ProjectId
@@ -63,6 +64,16 @@ export interface Project {
   notes: string
   status: ProjectStatus
   createdBy: UserId
+  createdAt: ISODateTimeString
+  updatedAt: ISODateTimeString
+}
+
+export interface ProjectMember {
+  id: string
+  tenantId: TenantId
+  projectId: ProjectId
+  userId: UserId
+  role: ProjectMemberRole
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
 }
