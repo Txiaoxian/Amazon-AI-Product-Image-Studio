@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { BarChart3, Settings } from 'lucide-react'
+import { BarChart3, Settings, UserCog } from 'lucide-react'
 import { AuthStatus } from './components/auth/AuthStatus'
 import { LoginPanel } from './components/auth/LoginPanel'
 import { AdminObservabilitySettingsPanel } from './components/admin/AdminObservabilitySettingsPanel'
 import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
+import { UserRoleAdminPanel } from './components/admin/UserRoleAdminPanel'
 import { AppShell } from './components/layout/AppShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
 import { ImageDetailModal, type ImageDetail } from './components/modals/ImageDetailModal'
@@ -81,6 +82,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   })
   const [isAdminOpen, setAdminOpen] = useState(false)
   const [isObservabilityAdminOpen, setObservabilityAdminOpen] = useState(false)
+  const [isIdentityAdminOpen, setIdentityAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<ImageDetail | null>(null)
   const [detailError, setDetailError] = useState('')
@@ -137,8 +139,15 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canReadUsage = hasPermission(session, 'usage:read')
   const canReadAudit = hasPermission(session, 'audit:read')
   const canManageSystemSettings = hasPermission(session, 'system:settings:manage')
+  const canReadUsers = hasPermission(session, 'user:read')
+  const canCreateUsers = hasPermission(session, 'user:create')
+  const canUpdateUsers = hasPermission(session, 'user:update')
+  const canDisableUsers = hasPermission(session, 'user:disable')
+  const canReadRoles = hasPermission(session, 'role:read')
+  const canManageRoles = hasPermission(session, 'role:manage')
   const canOpenAdmin = canManageProviders || canManageModels
   const canOpenObservabilityAdmin = canReadUsage || canReadAudit || canManageSystemSettings
+  const canOpenIdentityAdmin = canReadUsers || canCreateUsers || canUpdateUsers || canDisableUsers || canReadRoles || canManageRoles
 
   const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
     if (pendingEditSourceAssetId) {
@@ -334,6 +343,18 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
               <span className="hidden sm:inline">观测与设置</span>
             </button>
           ) : null}
+          {canOpenIdentityAdmin ? (
+            <button
+              aria-label="用户/角色管理"
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-ink-200 bg-white px-3 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-50 hover:text-ink-900 focus:outline-none focus:ring-2 focus:ring-amazon-500/30"
+              onClick={() => setIdentityAdminOpen(true)}
+              title="用户/角色管理"
+              type="button"
+            >
+              <UserCog className="h-4 w-4" />
+              <span className="hidden sm:inline">用户/角色管理</span>
+            </button>
+          ) : null}
           <AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />
         </>
       }
@@ -425,6 +446,21 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           csrfToken={session.csrfToken}
           isOpen={isObservabilityAdminOpen}
           onClose={() => setObservabilityAdminOpen(false)}
+        />
+      ) : null}
+
+      {canOpenIdentityAdmin ? (
+        <UserRoleAdminPanel
+          canCreateUsers={canCreateUsers}
+          canDisableUsers={canDisableUsers}
+          canManageRoles={canManageRoles}
+          canReadRoles={canReadRoles}
+          canReadUsers={canReadUsers}
+          canUpdateUsers={canUpdateUsers}
+          csrfToken={session.csrfToken}
+          currentUserId={session.user.id}
+          isOpen={isIdentityAdminOpen}
+          onClose={() => setIdentityAdminOpen(false)}
         />
       ) : null}
 
