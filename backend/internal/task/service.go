@@ -18,6 +18,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	providerpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -291,6 +292,10 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 		}
 
 		repo := s.repo.withDB(tx)
+		request, err = resolveTaskDefaultProviderModel(ctx, tx, scope, request)
+		if err != nil {
+			return err
+		}
 		providerRecord, err := repo.FindProvider(ctx, scope, request.ProviderID)
 		if err != nil {
 			return err
@@ -390,6 +395,28 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 	}
 
 	return s.responseForRecord(ctx, scope, created)
+}
+
+func resolveTaskDefaultProviderModel(ctx context.Context, tx *gorm.DB, scope tenant.Scope, request createRequest) (createRequest, error) {
+	if request.providerIDSet && request.modelIDSet {
+		return request, nil
+	}
+	if request.providerIDSet != request.modelIDSet {
+		return createRequest{}, ErrValidation
+	}
+
+	defaults, err := settings.LoadTaskDefaults(ctx, settings.NewRepository(tx), scope)
+	if err != nil {
+		return createRequest{}, err
+	}
+	if defaults.DefaultProviderID == nil || defaults.DefaultModelID == nil {
+		return createRequest{}, ErrValidation
+	}
+	request.ProviderID = *defaults.DefaultProviderID
+	request.ModelID = *defaults.DefaultModelID
+	request.providerIDSet = true
+	request.modelIDSet = true
+	return request, nil
 }
 
 func (s *Service) cancelTask(ctx context.Context, principal auth.Principal, taskID string, ip string, userAgent string) (Response, error) {

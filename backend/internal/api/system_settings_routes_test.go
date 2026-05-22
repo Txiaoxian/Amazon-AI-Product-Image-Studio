@@ -10,7 +10,10 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"gorm.io/gorm"
 )
 
@@ -26,14 +29,14 @@ func TestSystemSettingsRoutesRejectNonAdminAndRequireCSRF(t *testing.T) {
 	}
 
 	patchResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
-		"uploadPolicy": map[string]any{"maxWidth": 1},
+		"taskDefaults": map[string]any{"defaultProviderId": "provider-a", "defaultModelId": "model-a"},
 	}, sellerSession.cookies, sellerSession.csrfHeader())
 	if patchResponse.Code != http.StatusForbidden {
 		t.Fatalf("seller PATCH status = %d, want %d: %s", patchResponse.Code, http.StatusForbidden, patchResponse.Body.String())
 	}
 
 	noCSRFResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
-		"uploadPolicy": map[string]any{"maxWidth": 1},
+		"taskDefaults": map[string]any{"defaultProviderId": "provider-a", "defaultModelId": "model-a"},
 	}, adminSession.cookies, nil)
 	if noCSRFResponse.Code != http.StatusForbidden {
 		t.Fatalf("admin PATCH without CSRF status = %d, want %d: %s", noCSRFResponse.Code, http.StatusForbidden, noCSRFResponse.Body.String())
@@ -55,7 +58,8 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 		t.Fatalf("GET status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	assertUploadPolicy(t, response, upload.MaxFileSizeBytes, upload.MaxWidth, upload.MaxHeight, upload.MaxPixels)
-	assertResponseExcludes(t, response.Body.String(), "defaultProviderId", "defaultModelId", "tenantConcurrency", "storageQuotaBytes", "logRetentionDays", "allowedMimeTypes")
+	assertTaskDefaults(t, response, "", "")
+	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "logRetentionDays", "allowedMimeTypes")
 
 	var rows int64
 	if err := db.Model(&database.SystemSetting{}).Where("tenant_id = ?", adminSession.tenantID).Count(&rows).Error; err != nil {
@@ -63,6 +67,131 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("fallback GET created %d override rows, want 0", rows)
+	}
+}
+
+func TestSystemSettingsTaskDefaultsPatchGetClearValidationAndTenantIsolation(t *testing.T) {
+	upload := config.UploadConfig{
+		MaxFileSizeBytes: 2048,
+		MaxWidth:         10,
+		MaxHeight:        10,
+		MaxPixels:        100,
+		AllowedMIMETypes: []string{"image/png"},
+	}
+	router, db, _, adminSession := newAssetRouteTestRouter(t, upload)
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-defaults", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	tenantBSession := seedTenantAdminSession(t, router, db, "tenant-b", "tenant-b-admin", "tenant-b-admin@example.com", "tenant-b-password-123")
+
+	getBefore := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if getBefore.Code != http.StatusOK {
+		t.Fatalf("GET before status = %d, want %d: %s", getBefore.Code, http.StatusOK, getBefore.Body.String())
+	}
+	assertTaskDefaults(t, getBefore, "", "")
+
+	setResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskDefaults": map[string]any{
+			"defaultProviderId": providerID,
+			"defaultModelId":    modelID,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setResponse.Code != http.StatusOK {
+		t.Fatalf("set taskDefaults status = %d, want %d: %s", setResponse.Code, http.StatusOK, setResponse.Body.String())
+	}
+	assertUploadPolicy(t, setResponse, upload.MaxFileSizeBytes, upload.MaxWidth, upload.MaxHeight, upload.MaxPixels)
+	assertTaskDefaults(t, setResponse, providerID, modelID)
+
+	var setting database.SystemSetting
+	if err := db.Where("tenant_id = ? AND `key` = ?", adminSession.tenantID, settings.KeyTaskDefaults).First(&setting).Error; err != nil {
+		t.Fatalf("load task defaults setting: %v", err)
+	}
+	if !strings.Contains(setting.ValueJSON, providerID) || !strings.Contains(setting.ValueJSON, modelID) {
+		t.Fatalf("task defaults value_json = %s, want provider/model IDs", setting.ValueJSON)
+	}
+
+	tenantBGet := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, tenantBSession.cookies, nil)
+	if tenantBGet.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status = %d, want %d: %s", tenantBGet.Code, http.StatusOK, tenantBGet.Body.String())
+	}
+	assertTaskDefaults(t, tenantBGet, "", "")
+
+	clearResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskDefaults": map[string]any{
+			"defaultProviderId": nil,
+			"defaultModelId":    nil,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear taskDefaults status = %d, want %d: %s", clearResponse.Code, http.StatusOK, clearResponse.Body.String())
+	}
+	assertTaskDefaults(t, clearResponse, "", "")
+
+	var logs []database.OperationLog
+	if err := db.Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyTaskDefaults).Find(&logs).Error; err != nil {
+		t.Fatalf("load taskDefaults operation logs: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("taskDefaults operation logs = %d, want 2: %#v", len(logs), logs)
+	}
+	for _, log := range logs {
+		metadata := strings.ToLower(log.MetadataJSON)
+		for _, forbidden := range []string{"password", "token", "cookie", "authorization", "api_key", "apikey", "secret", "jwt", "base64", "data:image"} {
+			if strings.Contains(metadata, forbidden) {
+				t.Fatalf("operation log metadata contains %q: %s", forbidden, log.MetadataJSON)
+			}
+		}
+	}
+}
+
+func TestSystemSettingsTaskDefaultsRejectsInvalidReferencesAndShapes(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-valid", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	disabledProviderID, disabledProviderModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-disabled-provider", provider.StatusDisabled, model.StatusEnabled, true, true, false, false, 1)
+	enabledProviderID, disabledModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-disabled-model", provider.StatusEnabled, model.StatusDisabled, true, true, false, false, 1)
+	otherProviderID, otherModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-other-provider", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	seedOtherTenantTask(t, db)
+
+	valid := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": modelID},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid taskDefaults status = %d, want %d: %s", valid.Code, http.StatusOK, valid.Body.String())
+	}
+
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "empty root", body: map[string]any{}},
+		{name: "top-level unknown field", body: map[string]any{"tenantConcurrency": 2}},
+		{name: "top-level defaultProviderId", body: map[string]any{"defaultProviderId": providerID}},
+		{name: "missing model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID}}},
+		{name: "missing provider", body: map[string]any{"taskDefaults": map[string]any{"defaultModelId": modelID}}},
+		{name: "single-field null", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": nil}}},
+		{name: "one null one non-null", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": nil}}},
+		{name: "unknown nested field", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": modelID, "extra": "blocked"}}},
+		{name: "empty provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": " ", "defaultModelId": modelID}}},
+		{name: "empty model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": ""}}},
+		{name: "disabled provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": disabledProviderID, "defaultModelId": disabledProviderModelID}}},
+		{name: "disabled model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": enabledProviderID, "defaultModelId": disabledModelID}}},
+		{name: "cross-tenant provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": "provider-tenant-b", "defaultModelId": modelID}}},
+		{name: "cross-tenant model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": "model-tenant-b"}}},
+		{name: "model belongs to different provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": otherProviderID, "defaultModelId": modelID}}},
+		{name: "provider belongs to different model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": otherModelID}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+			if getResponse.Code != http.StatusOK {
+				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+			}
+			assertTaskDefaults(t, getResponse, providerID, modelID)
+			assertResponseExcludes(t, response.Body.String(), "provider-tenant-b", "model-tenant-b", disabledProviderID, disabledModelID)
+		})
 	}
 }
 
@@ -245,6 +374,27 @@ func assertUploadPolicy(t *testing.T, response *httptest.ResponseRecorder, maxFi
 	assertNumericField(t, policy, "maxWidth", int64(maxWidth))
 	assertNumericField(t, policy, "maxHeight", int64(maxHeight))
 	assertNumericField(t, policy, "maxPixels", maxPixels)
+}
+
+func assertTaskDefaults(t *testing.T, response *httptest.ResponseRecorder, expectedProviderID string, expectedModelID string) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	defaults := objectField(t, data, "taskDefaults")
+	if expectedProviderID == "" {
+		if defaults["defaultProviderId"] != nil {
+			t.Fatalf("defaultProviderId = %#v, want null", defaults["defaultProviderId"])
+		}
+	} else if value, ok := defaults["defaultProviderId"].(string); !ok || value != expectedProviderID {
+		t.Fatalf("defaultProviderId = %#v, want %q", defaults["defaultProviderId"], expectedProviderID)
+	}
+	if expectedModelID == "" {
+		if defaults["defaultModelId"] != nil {
+			t.Fatalf("defaultModelId = %#v, want null", defaults["defaultModelId"])
+		}
+	} else if value, ok := defaults["defaultModelId"].(string); !ok || value != expectedModelID {
+		t.Fatalf("defaultModelId = %#v, want %q", defaults["defaultModelId"], expectedModelID)
+	}
 }
 
 func assertNumericField(t *testing.T, object map[string]any, field string, expected int64) {

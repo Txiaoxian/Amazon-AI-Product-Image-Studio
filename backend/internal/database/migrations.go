@@ -527,7 +527,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
   UNIQUE KEY uk_system_settings_tenant_key (tenant_id, ` + "`key`" + `),
   KEY idx_system_settings_tenant_id (tenant_id),
   CONSTRAINT fk_system_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tenant-scoped system settings; first active key is upload_policy only'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tenant-scoped system settings stored as JSON by active key'
 `,
 		},
 	},

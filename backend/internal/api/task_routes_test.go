@@ -14,6 +14,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"gorm.io/gorm"
 )
@@ -95,6 +96,249 @@ func TestTaskRoutesCreateListDetailCancelRetryAndAudit(t *testing.T) {
 	assertTaskEventsHaveStableReplayCursor(t, db, taskID)
 	assertTaskOperationLogs(t, db, []string{"task.create", "task.cancel", "task.retry"})
 	assertNoTaskEventOrOperationLogSecrets(t, db)
+}
+
+func TestTaskRoutesCreateWithOmittedProviderModelUsesTenantDefaults(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Task Defaults Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "defaults-happy", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	seedTaskDefaultsSetting(t, db, adminSession.tenantID, providerID, modelID)
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Use tenant task defaults",
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("default-backed create status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	data := decodeData(t, response)
+	taskID := stringField(t, data, "id")
+	if stringField(t, data, "providerId") != providerID || stringField(t, data, "modelId") != modelID {
+		t.Fatalf("created provider/model = %s/%s, want %s/%s", stringField(t, data, "providerId"), stringField(t, data, "modelId"), providerID, modelID)
+	}
+	if len(enqueuer.taskIDs) != 1 || enqueuer.taskIDs[0] != taskID {
+		t.Fatalf("default-backed enqueue payloads = %#v, want task ID %q", enqueuer.taskIDs, taskID)
+	}
+	assertTaskOperationLogs(t, db, []string{"task.create"})
+	assertNoTaskEventOrOperationLogSecrets(t, db)
+}
+
+func TestTaskRoutesRejectMixedMissingProviderModelIDs(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Task Mixed Defaults Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "mixed-missing", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	seedTaskDefaultsSetting(t, db, adminSession.tenantID, providerID, modelID)
+
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "missing provider only",
+			body: map[string]any{
+				"type":       task.TypeImageGeneration,
+				"prompt":     "Missing provider only",
+				"modelId":    modelID,
+				"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+			},
+		},
+		{
+			name: "missing model only",
+			body: map[string]any{
+				"type":       task.TypeImageGeneration,
+				"prompt":     "Missing model only",
+				"providerId": providerID,
+				"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", tc.body, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s status = %d, want %d: %s", tc.name, response.Code, http.StatusUnprocessableEntity, response.Body.String())
+		}
+	}
+	assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+}
+
+func TestTaskRoutesRejectInvalidRuntimeTaskDefaultsWithoutSideEffects(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, db *gorm.DB, tenantID string) (string, string)
+		body  func(projectID string) map[string]any
+	}{
+		{
+			name: "missing taskDefaults",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				return "", ""
+			},
+		},
+		{
+			name: "cleared taskDefaults",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				seedClearedTaskDefaultsSetting(t, db, tenantID)
+				return "", ""
+			},
+		},
+		{
+			name: "disabled default provider",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				return seedTaskProviderModel(t, db, tenantID, "defaults-disabled-provider", provider.StatusDisabled, model.StatusEnabled, true, true, false, false, 1)
+			},
+		},
+		{
+			name: "deleted default provider",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				providerID, modelID := seedTaskProviderModel(t, db, tenantID, "defaults-deleted-provider", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				if err := db.Where("tenant_id = ? AND id = ?", tenantID, providerID).Delete(&database.AIProvider{}).Error; err != nil {
+					t.Fatalf("delete default provider: %v", err)
+				}
+				return providerID, modelID
+			},
+		},
+		{
+			name: "cross-tenant default provider",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				_, modelID := seedTaskProviderModel(t, db, tenantID, "defaults-cross-provider-local", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				seedOtherTenantTask(t, db)
+				return "provider-tenant-b", modelID
+			},
+		},
+		{
+			name: "disabled default model",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				return seedTaskProviderModel(t, db, tenantID, "defaults-disabled-model", provider.StatusEnabled, model.StatusDisabled, true, true, false, false, 1)
+			},
+		},
+		{
+			name: "deleted default model",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				providerID, modelID := seedTaskProviderModel(t, db, tenantID, "defaults-deleted-model", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				if err := db.Where("tenant_id = ? AND id = ?", tenantID, modelID).Delete(&database.AIModel{}).Error; err != nil {
+					t.Fatalf("delete default model: %v", err)
+				}
+				return providerID, modelID
+			},
+		},
+		{
+			name: "cross-tenant default model",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				providerID, _ := seedTaskProviderModel(t, db, tenantID, "defaults-cross-model-local", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				seedOtherTenantTask(t, db)
+				return providerID, "model-tenant-b"
+			},
+		},
+		{
+			name: "default model belongs to another provider",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				providerID, _ := seedTaskProviderModel(t, db, tenantID, "defaults-provider-a", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				_, otherModelID := seedTaskProviderModel(t, db, tenantID, "defaults-provider-b", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+				return providerID, otherModelID
+			},
+		},
+		{
+			name: "default model does not support generation",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				return seedTaskProviderModel(t, db, tenantID, "defaults-edit-only", provider.StatusEnabled, model.StatusEnabled, false, true, false, false, 1)
+			},
+		},
+		{
+			name: "default-backed unsupported output count",
+			setup: func(t *testing.T, db *gorm.DB, tenantID string) (string, string) {
+				return seedTaskProviderModel(t, db, tenantID, "defaults-no-n", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+			},
+			body: func(projectID string) map[string]any {
+				return map[string]any{
+					"type":       task.TypeImageGeneration,
+					"prompt":     "Unsupported output count",
+					"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png", "outputCount": 2},
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+			projectID := createTaskTestProject(t, router, adminSession, "Invalid Defaults "+tc.name)
+			providerID, modelID := tc.setup(t, db, adminSession.tenantID)
+			if providerID != "" || modelID != "" {
+				seedTaskDefaultsSetting(t, db, adminSession.tenantID, providerID, modelID)
+			}
+			body := map[string]any{
+				"type":       task.TypeImageGeneration,
+				"prompt":     "Default-backed request should fail",
+				"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+			}
+			if tc.body != nil {
+				body = tc.body(projectID)
+			}
+			response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("default-backed create status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+			assertResponseExcludes(t, response.Body.String(), "provider-tenant-b", "model-tenant-b", "encrypted", "api_key", "apikey", "secret")
+		})
+	}
+}
+
+func TestTaskRoutesRejectDefaultModelWithoutEditCapability(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Invalid Edit Defaults")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "defaults-generate-only", provider.StatusEnabled, model.StatusEnabled, true, false, false, false, 1)
+	seedTaskDefaultsSetting(t, db, adminSession.tenantID, providerID, modelID)
+	sourceAssetID := seedTaskAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, assetpkg.KindGenerated, "defaults-edit-source")
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":              task.TypeImageEdit,
+		"prompt":            "Default model cannot edit",
+		"editSourceAssetId": sourceAssetID,
+		"parameters":        map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("default edit create status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+	}
+	assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+	assertResponseExcludes(t, response.Body.String(), providerID, modelID, "encrypted", "api_key", "apikey", "secret")
+}
+
+func TestTaskRoutesRejectOmittedProviderModelAfterTaskDefaultsClearedViaSettingsAPI(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Cleared Defaults Project")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "defaults-clear-api", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+
+	setDefaults := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskDefaults": map[string]any{
+			"defaultProviderId": providerID,
+			"defaultModelId":    modelID,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setDefaults.Code != http.StatusOK {
+		t.Fatalf("set taskDefaults status = %d, want %d: %s", setDefaults.Code, http.StatusOK, setDefaults.Body.String())
+	}
+	clearDefaults := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskDefaults": map[string]any{
+			"defaultProviderId": nil,
+			"defaultModelId":    nil,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearDefaults.Code != http.StatusOK {
+		t.Fatalf("clear taskDefaults status = %d, want %d: %s", clearDefaults.Code, http.StatusOK, clearDefaults.Body.String())
+	}
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Defaults were cleared",
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create after clear status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+	}
+	assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+	assertResponseExcludes(t, response.Body.String(), providerID, modelID, "encrypted", "api_key", "apikey", "secret")
 }
 
 func TestTaskRoutesAllowGeneratedAndEditedEditSourceAssetsOnlyForEditSource(t *testing.T) {
@@ -498,6 +742,36 @@ func seedTaskProviderModel(t *testing.T, db *gorm.DB, tenantID string, suffix st
 	return providerID, modelID
 }
 
+func seedTaskDefaultsSetting(t *testing.T, db *gorm.DB, tenantID string, providerID string, modelID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "setting-task-defaults",
+		TenantID:  tenantID,
+		Key:       settings.KeyTaskDefaults,
+		ValueJSON: `{"defaultProviderId":"` + providerID + `","defaultModelId":"` + modelID + `"}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed task defaults setting: %v", err)
+	}
+}
+
+func seedClearedTaskDefaultsSetting(t *testing.T, db *gorm.DB, tenantID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "setting-task-defaults",
+		TenantID:  tenantID,
+		Key:       settings.KeyTaskDefaults,
+		ValueJSON: `{"defaultProviderId":null,"defaultModelId":null}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed cleared task defaults setting: %v", err)
+	}
+}
+
 func seedTaskReferenceAsset(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string, suffix string) string {
 	return seedTaskAsset(t, db, tenantID, projectID, userID, assetpkg.KindReference, suffix)
 }
@@ -618,6 +892,27 @@ func assertTaskOperationLogs(t *testing.T, db *gorm.DB, expectedActions []string
 		if !seen[action] {
 			t.Fatalf("missing task operation log %s; logs = %#v", action, logs)
 		}
+	}
+}
+
+func assertNoTaskCreateSideEffects(t *testing.T, db *gorm.DB, tenantID string, projectID string, enqueuer *fakeTaskEnqueuer) {
+	t.Helper()
+	if len(enqueuer.taskIDs) != 0 {
+		t.Fatalf("rejected request enqueued tasks: %#v", enqueuer.taskIDs)
+	}
+	var taskCount int64
+	if err := db.Model(&database.GenerationTask{}).Where("tenant_id = ? AND project_id = ?", tenantID, projectID).Count(&taskCount).Error; err != nil {
+		t.Fatalf("count tasks after rejected request: %v", err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("rejected request created %d tasks, want 0", taskCount)
+	}
+	var logCount int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ?", tenantID, "task.create").Count(&logCount).Error; err != nil {
+		t.Fatalf("count task.create logs after rejected request: %v", err)
+	}
+	if logCount != 0 {
+		t.Fatalf("rejected request wrote %d task.create logs, want 0", logCount)
 	}
 }
 

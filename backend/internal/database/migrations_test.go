@@ -203,7 +203,7 @@ func TestImageAssetsMigrationStoresMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestSystemSettingsMigrationIsTenantScopedAndUploadPolicyOnly(t *testing.T) {
+func TestSystemSettingsMigrationIsTenantScopedGenericJSON(t *testing.T) {
 	statement := findCreateTableStatement(t, "system_settings")
 	for _, required := range []string{
 		"tenant_id VARCHAR(36) NOT NULL",
@@ -211,7 +211,7 @@ func TestSystemSettingsMigrationIsTenantScopedAndUploadPolicyOnly(t *testing.T) 
 		"value_json JSON NOT NULL",
 		"UNIQUE KEY uk_system_settings_tenant_key (tenant_id, `key`)",
 		"CONSTRAINT fk_system_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)",
-		"first active key is upload_policy only",
+		"Tenant-scoped system settings stored as JSON by active key",
 	} {
 		if !strings.Contains(statement, required) {
 			t.Fatalf("system_settings migration missing %q", required)

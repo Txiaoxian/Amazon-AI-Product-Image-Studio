@@ -21,6 +21,8 @@ type createRequest struct {
 	ReferenceAssetIDs []string       `json:"referenceAssetIds"`
 	EditSourceAssetID string         `json:"editSourceAssetId"`
 	Parameters        map[string]any `json:"parameters"`
+	providerIDSet     bool
+	modelIDSet        bool
 }
 
 var allowedCreateFields = map[string]bool{
@@ -84,6 +86,8 @@ func bindCreateRequest(c *gin.Context) (createRequest, error) {
 	if err := json.Unmarshal(raw, &request); err != nil {
 		return createRequest{}, ErrMalformedRequest
 	}
+	_, request.providerIDSet = fields["providerId"]
+	_, request.modelIDSet = fields["modelId"]
 	return request, nil
 }
 

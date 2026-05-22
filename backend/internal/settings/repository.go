@@ -90,3 +90,43 @@ func (r Repository) Upsert(ctx context.Context, scope tenant.Scope, key string, 
 		}),
 	}).Create(&record).Error
 }
+
+func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.AIProvider{}, err
+	}
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return database.AIProvider{}, ErrValidation
+	}
+
+	var record database.AIProvider
+	err = db.Model(&database.AIProvider{}).
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), providerID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.AIProvider{}, ErrValidation
+	}
+	return record, err
+}
+
+func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.AIModel{}, err
+	}
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return database.AIModel{}, ErrValidation
+	}
+
+	var record database.AIModel
+	err = db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), modelID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.AIModel{}, ErrValidation
+	}
+	return record, err
+}
