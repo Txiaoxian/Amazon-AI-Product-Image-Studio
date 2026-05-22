@@ -420,10 +420,17 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             error={history.error}
             isLoading={history.isLoading}
             items={history.items}
+            kind={history.kind}
             onDownload={(item) => void handleDownloadBackendHistory(item)}
             onEdit={(item) => void handleEditBackendHistory(item)}
+            onKindChange={history.setKind}
+            onPageChange={history.setPageNum}
+            onPageSizeChange={history.setPageSize}
             onRefresh={() => void history.refresh()}
             onView={(item) => void handleOpenBackendDetail(item.asset.id, item.task.id)}
+            pageNum={history.pageNum}
+            pageSize={history.pageSize}
+            total={history.total}
           />
         </div>
       </div>

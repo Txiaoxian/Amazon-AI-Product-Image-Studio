@@ -99,6 +99,18 @@ const generatedAsset = {
   updatedAt: '2026-05-17T00:00:04Z',
 }
 
+const editedAsset = {
+  ...generatedAsset,
+  id: 'asset_edited_1',
+  taskId: 'task_2',
+  kind: 'EDITED',
+  filename: 'edited.png',
+  previewUrl: 'https://minio.internal/bucket/edited.png',
+  thumbnailUrl: 'data:image/png;base64,unsafe-thumbnail',
+  createdAt: '2026-05-18T00:00:04Z',
+  updatedAt: '2026-05-18T00:00:04Z',
+}
+
 const model = {
   id: 'model_1',
   tenantId: 'tenant_1',
@@ -156,6 +168,21 @@ const task = {
   updatedAt: '2026-05-17T00:00:04Z',
 }
 
+const editedTask = {
+  ...task,
+  id: 'task_2',
+  type: 'IMAGE_EDIT',
+  outputAssetIds: ['asset_edited_1'],
+  parameters: {
+    ...task.parameters,
+    outputCount: 1,
+    apiCall: {
+      redactedRequest: 'Authorization: Bearer secret',
+      redactedResponse: 'base64-image-data',
+    },
+  },
+}
+
 function successResponse(data: unknown, status = 200): Response {
   return new Response(
     JSON.stringify({
@@ -211,7 +238,7 @@ describe('backend history asset source', () => {
     vi.unstubAllGlobals()
   })
 
-  it('uses backend tasks and assets as the only visible history source while ignoring residual legacy blobs', async () => {
+  it('uses unified backend history as the only visible history source while ignoring residual legacy blobs', async () => {
     const generatedImage = await saveImage({
       blob: new Blob(['legacy-image'], { type: 'image/png' }),
       mimeType: 'image/png',
@@ -250,9 +277,22 @@ describe('backend history asset source', () => {
     expect(screen.queryByText('Legacy local prompt')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看旧本地历史' })).not.toBeInTheDocument()
     expect(screen.queryByText('旧本地历史（兼容）')).not.toBeInTheDocument()
-    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50')
-    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50')
-    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50')
+  })
+
+  it('does not request history when no project is selected', async () => {
+    const fetchImpl = createHistoryFetch({
+      listProjects: () => successResponse(page([])),
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => url.includes('/history?'))).toBe(false)
   })
 
   it('shows a project-scoped empty state after switching projects without leaking the previous project history', async () => {
@@ -270,15 +310,11 @@ describe('backend history asset source', () => {
 
   it('ignores stale history responses from the previous project after a project switch', async () => {
     const user = userEvent.setup()
-    const projectOneTasks = deferredResponse()
-    const projectOneGeneratedAssets = deferredResponse()
-    const projectOneEditedAssets = deferredResponse()
+    const projectOneHistory = deferredResponse()
     vi.stubGlobal(
       'fetch',
       createHistoryFetch({
-        listProjectOneEditedAssets: () => projectOneEditedAssets.promise,
-        listProjectOneGeneratedAssets: () => projectOneGeneratedAssets.promise,
-        listProjectOneTasks: () => projectOneTasks.promise,
+        listProjectOneHistory: () => projectOneHistory.promise,
       }),
     )
 
@@ -288,13 +324,117 @@ describe('backend history asset source', () => {
     await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
     expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
 
-    projectOneTasks.resolve(successResponse(page([task])))
-    projectOneGeneratedAssets.resolve(successResponse(page([generatedAsset])))
-    projectOneEditedAssets.resolve(successResponse(page([])))
+    projectOneHistory.resolve(successResponse(page([{ asset: generatedAsset, task }])))
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '查看结果 hero.png' })).not.toBeInTheDocument()
     })
+  })
+
+  it.each([
+    [401, 'UNAUTHENTICATED', 'object_key=minio/internal', '登录状态已失效，请重新登录。'],
+    [403, 'FORBIDDEN', 'Authorization: Bearer secret', '没有权限读取该项目历史。'],
+    [404, 'NOT_FOUND', 'minio://private-bucket/object.png', '无法读取该结果，可能已被删除或无权访问。'],
+  ])('maps /history %s errors to non-leaky feedback', async (status, code, backendMessage, friendlyMessage) => {
+    vi.stubGlobal(
+      'fetch',
+      createHistoryFetch({
+        listProjectOneHistory: () => errorResponse(status, code, backendMessage),
+      }),
+    )
+
+    render(<App />)
+
+    expect(await screen.findByText(friendlyMessage)).toBeInTheDocument()
+    expect(screen.queryByText(backendMessage)).not.toBeInTheDocument()
+  })
+
+  it('uses unified history query parameters for pagination and kind filtering', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = createHistoryFetch({
+      listProjectOneHistory: (url) => {
+        if (url === '/api/v1/projects/project_1/history?pageNum=2&pageSize=10') {
+          return successResponse({
+            records: [{ asset: editedAsset, task: editedTask }],
+            total: 11,
+            pageNum: 2,
+            pageSize: 10,
+          })
+        }
+        if (url === '/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED') {
+          return successResponse({
+            records: [{ asset: editedAsset, task: editedTask }],
+            total: 1,
+            pageNum: 1,
+            pageSize: 10,
+          })
+        }
+
+        return successResponse({
+          records: [{ asset: generatedAsset, task }],
+          total: 11,
+          pageNum: 1,
+          pageSize: 10,
+        })
+      },
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: '查看结果 hero.png' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '下一页历史记录' }))
+    expect(await screen.findByRole('button', { name: '查看结果 edited.png' })).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('结果类型'), 'EDITED')
+    expect(await screen.findByRole('button', { name: '查看结果 edited.png' })).toBeInTheDocument()
+
+    const urls = fetchImpl.mock.calls.map(([url]) => url)
+    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=2&pageSize=10')
+    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED')
+    expect(urls).not.toContain('/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50')
+    expect(urls).not.toContain('/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50')
+  })
+
+  it('does not render unsafe fields returned by unified history', async () => {
+    vi.stubGlobal(
+      'fetch',
+      createHistoryFetch({
+        listProjectOneHistory: () =>
+          successResponse(
+            page([
+              {
+                asset: {
+                  ...generatedAsset,
+                  objectKey: 'tenant/project/object-key-secret.png',
+                  thumbnailObjectKey: 'tenant/project/thumb-secret.png',
+                  previewUrl: 'https://minio.internal/private/object-key-secret.png',
+                  thumbnailUrl: 'data:image/png;base64,unsafe-history-thumbnail',
+                },
+                task: {
+                  ...task,
+                  apiCall: {
+                    redactedRequest: 'Authorization: Bearer secret',
+                    redactedResponse: 'base64-image-data',
+                  },
+                  redactedRequest: 'Cookie: session=secret',
+                },
+              },
+            ], 10),
+          ),
+      }),
+    )
+
+    render(<App />)
+
+    const image = await screen.findByAltText('hero.png')
+    expect(image).toHaveAttribute('src', '/api/v1/assets/asset_generated_1/download')
+    expect(document.body.innerHTML).not.toContain('object-key-secret')
+    expect(document.body.innerHTML).not.toContain('thumb-secret')
+    expect(document.body.innerHTML).not.toContain('minio.internal')
+    expect(document.body.innerHTML).not.toContain('Authorization')
+    expect(document.body.innerHTML).not.toContain('Cookie')
+    expect(document.body.innerHTML).not.toContain('base64-image-data')
   })
 
   it('keeps unavailable asset feedback non-leaky when detail loading fails', async () => {
@@ -471,9 +611,9 @@ function createHistoryFetch(overrides: {
   createTask?: () => Promise<Response> | Response
   downloadAsset?: () => Promise<Response> | Response
   getAsset?: () => Promise<Response> | Response
-  listProjectOneEditedAssets?: () => Promise<Response> | Response
-  listProjectOneGeneratedAssets?: () => Promise<Response> | Response
-  listProjectOneTasks?: () => Promise<Response> | Response
+  listProjects?: () => Promise<Response> | Response
+  listProjectOneHistory?: (url: string) => Promise<Response> | Response
+  listProjectTwoHistory?: (url: string) => Promise<Response> | Response
 } = {}) {
   return vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input)
@@ -485,7 +625,7 @@ function createHistoryFetch(overrides: {
       return successResponse(page([model], 100))
     }
     if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
-      return successResponse(page(projects))
+      return await (overrides.listProjects?.() ?? successResponse(page(projects)))
     }
     if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
       return successResponse(page([referenceAsset, generatedAsset]))
@@ -493,23 +633,11 @@ function createHistoryFetch(overrides: {
     if (url === '/api/v1/projects/project_2/assets?pageNum=1&pageSize=50') {
       return successResponse(page([]))
     }
-    if (url === '/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50') {
-      return await (overrides.listProjectOneTasks?.() ?? successResponse(page([task])))
+    if (url.startsWith('/api/v1/projects/project_1/history?')) {
+      return await (overrides.listProjectOneHistory?.(url) ?? successResponse(page([{ asset: generatedAsset, task }], 10)))
     }
-    if (url === '/api/v1/projects/project_2/tasks?pageNum=1&pageSize=50') {
-      return successResponse(page([]))
-    }
-    if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50') {
-      return await (overrides.listProjectOneGeneratedAssets?.() ?? successResponse(page([generatedAsset])))
-    }
-    if (url === '/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50') {
-      return await (overrides.listProjectOneEditedAssets?.() ?? successResponse(page([])))
-    }
-    if (url === '/api/v1/projects/project_2/assets?kind=GENERATED&pageNum=1&pageSize=50') {
-      return successResponse(page([]))
-    }
-    if (url === '/api/v1/projects/project_2/assets?kind=EDITED&pageNum=1&pageSize=50') {
-      return successResponse(page([]))
+    if (url.startsWith('/api/v1/projects/project_2/history?')) {
+      return await (overrides.listProjectTwoHistory?.(url) ?? successResponse(page([], 10)))
     }
     if (url === '/api/v1/assets/asset_generated_1') {
       return await (overrides.getAsset?.() ?? successResponse(generatedAsset))

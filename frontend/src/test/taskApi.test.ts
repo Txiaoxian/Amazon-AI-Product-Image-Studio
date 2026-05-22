@@ -53,6 +53,14 @@ describe('task API wrappers', () => {
           pageSize: 20,
         }),
       )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          records: [{ asset: { id: 'asset_1' }, task }],
+          total: 1,
+          pageNum: 2,
+          pageSize: 10,
+        }),
+      )
       .mockResolvedValueOnce(jsonResponse(task, 201))
       .mockResolvedValueOnce(jsonResponse(task))
       .mockResolvedValueOnce(jsonResponse({ ...task, status: 'CANCELLED' }))
@@ -62,6 +70,12 @@ describe('task API wrappers', () => {
     await expect(taskApi.list('project_1', { status: 'QUEUED', type: 'IMAGE_GENERATION', pageNum: 1, pageSize: 20 })).resolves.toMatchObject({
       records: [task],
       total: 1,
+    })
+    await expect(taskApi.listHistory('project_1', { kind: 'EDITED', pageNum: 2, pageSize: 10 })).resolves.toMatchObject({
+      records: [{ asset: { id: 'asset_1' }, task }],
+      total: 1,
+      pageNum: 2,
+      pageSize: 10,
     })
     await expect(
       taskApi.create(
@@ -89,20 +103,22 @@ describe('task API wrappers', () => {
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/projects/project_1/tasks?status=QUEUED&type=IMAGE_GENERATION&pageNum=1&pageSize=20',
+      '/api/v1/projects/project_1/history?pageNum=2&pageSize=10&kind=EDITED',
       '/api/v1/projects/project_1/tasks',
       '/api/v1/tasks/task_1',
       '/api/v1/tasks/task_1/cancel',
       '/api/v1/tasks/task_1/retry',
     ])
     expect(fetchImpl.mock.calls[0][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'GET' }))
-    expect(fetchImpl.mock.calls[1][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'POST' }))
-    expect(fetchImpl.mock.calls[2][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'GET' }))
-    expect(fetchImpl.mock.calls[3][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'POST' }))
+    expect(fetchImpl.mock.calls[1][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'GET' }))
+    expect(fetchImpl.mock.calls[2][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'POST' }))
+    expect(fetchImpl.mock.calls[3][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'GET' }))
     expect(fetchImpl.mock.calls[4][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'POST' }))
-    expect((fetchImpl.mock.calls[1][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
-    expect((fetchImpl.mock.calls[3][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect(fetchImpl.mock.calls[5][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'POST' }))
+    expect((fetchImpl.mock.calls[2][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
     expect((fetchImpl.mock.calls[4][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
-    expect(JSON.parse(fetchImpl.mock.calls[1][1]?.body as string)).toEqual({
+    expect((fetchImpl.mock.calls[5][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect(JSON.parse(fetchImpl.mock.calls[2][1]?.body as string)).toEqual({
       type: 'IMAGE_GENERATION',
       prompt: 'Create a clean ecommerce hero image.',
       providerId: 'provider_1',

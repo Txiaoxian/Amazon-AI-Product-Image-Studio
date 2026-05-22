@@ -3,7 +3,7 @@ import { assetApi as defaultAssetApi, type AssetApi } from '../api/assets'
 import { isApiClientError } from '../api/client'
 import { taskApi as defaultTaskApi, type TaskApi } from '../api/tasks'
 import { FriendlyError } from '../lib/errors'
-import type { BackendHistoryItem } from '../types/history'
+import type { BackendHistoryItem, HistoryKind } from '../types/history'
 import type { Asset, AssetId, ProjectId, Task, TaskId } from '../types/platform'
 
 interface UseHistoryOptions {
@@ -11,6 +11,8 @@ interface UseHistoryOptions {
   projectId?: ProjectId | null
   taskApi?: TaskApi
 }
+
+const DEFAULT_HISTORY_PAGE_SIZE = 10
 
 export function useHistory({
   assetApi = defaultAssetApi,
@@ -20,7 +22,26 @@ export function useHistory({
   const [items, setItems] = useState<BackendHistoryItem[]>([])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [pageNum, setPageNum] = useState(1)
+  const [pageSize, setPageSizeState] = useState(DEFAULT_HISTORY_PAGE_SIZE)
+  const [kind, setKindState] = useState<HistoryKind | undefined>(undefined)
+  const [total, setTotal] = useState(0)
   const refreshVersionRef = useRef(0)
+  const projectIdRef = useRef<ProjectId | null | undefined>(undefined)
+
+  useEffect(() => {
+    if (projectIdRef.current === projectId) {
+      return
+    }
+
+    projectIdRef.current = projectId
+    refreshVersionRef.current += 1
+    setItems([])
+    setError('')
+    setTotal(0)
+    setIsLoading(false)
+    setPageNum(1)
+  }, [projectId])
 
   const refresh = useCallback(async () => {
     const refreshVersion = refreshVersionRef.current + 1
@@ -29,34 +50,34 @@ export function useHistory({
     if (!projectId) {
       setItems([])
       setError('')
+      setTotal(0)
       setIsLoading(false)
       return
     }
 
     setIsLoading(true)
     setError('')
+    setItems([])
     try {
-      const [tasksPage, generatedPage, editedPage] = await Promise.all([
-        taskApi.list(projectId, { pageNum: 1, pageSize: 50 }),
-        assetApi.list(projectId, { kind: 'GENERATED', pageNum: 1, pageSize: 50 }),
-        assetApi.list(projectId, { kind: 'EDITED', pageNum: 1, pageSize: 50 }),
-      ])
+      const historyPage = await taskApi.listHistory(projectId, { pageNum, pageSize, kind })
       if (refreshVersion !== refreshVersionRef.current) {
         return
       }
-      setItems(buildBackendHistoryItems(projectId, tasksPage.records, [...generatedPage.records, ...editedPage.records]))
+      setItems(historyPage.records.map(sanitizeBackendHistoryItem).filter((item) => isVisibleHistoryItem(projectId, item)))
+      setTotal(historyPage.total)
     } catch (err) {
       if (refreshVersion !== refreshVersionRef.current) {
         return
       }
       setItems([])
+      setTotal(0)
       setError(getBackendHistoryErrorMessage(err, '无法加载项目历史，请稍后重试。'))
     } finally {
       if (refreshVersion === refreshVersionRef.current) {
         setIsLoading(false)
       }
     }
-  }, [assetApi, projectId, taskApi])
+  }, [kind, pageNum, pageSize, projectId, taskApi])
 
   const loadBackendDetail = useCallback(
     async (assetId: AssetId, taskId?: TaskId): Promise<{ asset: Asset; task: Task }> => {
@@ -65,12 +86,12 @@ export function useHistory({
       }
 
       try {
-        const asset = await assetApi.get(assetId)
+        const asset = sanitizeAsset(await assetApi.get(assetId))
         const resolvedTaskId = taskId ?? asset.taskId
         if (!resolvedTaskId) {
           throw new FriendlyError('无法读取该结果，可能已被删除或无权访问。', 'BACKEND_RESULT_UNAVAILABLE')
         }
-        const task = await taskApi.get(resolvedTaskId)
+        const task = sanitizeTask(await taskApi.get(resolvedTaskId))
 
         if (!isVisibleBackendDetail(projectId, asset, task)) {
           throw new FriendlyError('无法读取该结果，可能已被删除或无权访问。', 'BACKEND_RESULT_UNAVAILABLE')
@@ -95,7 +116,7 @@ export function useHistory({
       }
 
       try {
-        const asset = await assetApi.get(assetId)
+        const asset = sanitizeAsset(await assetApi.get(assetId))
         return asset.projectId === projectId
       } catch {
         return false
@@ -123,30 +144,112 @@ export function useHistory({
     void refresh()
   }, [refresh])
 
+  const setKind = useCallback((nextKind: HistoryKind | undefined) => {
+    setKindState(nextKind)
+    setPageNum(1)
+  }, [])
+
+  const setPageSize = useCallback((nextPageSize: number) => {
+    setPageSizeState(nextPageSize)
+    setPageNum(1)
+  }, [])
+
   return {
     downloadBackendAsset,
     ensureBackendAssetAvailable,
     items,
     error,
     isLoading,
+    kind,
     loadBackendDetail,
+    pageNum,
+    pageSize,
     refresh,
+    setKind,
+    setPageNum,
+    setPageSize,
+    total,
   }
 }
 
-function buildBackendHistoryItems(projectId: ProjectId, tasks: Task[], assets: Asset[]): BackendHistoryItem[] {
-  const tasksById = new Map(tasks.filter((task) => task.projectId === projectId).map((task) => [task.id, task]))
+function sanitizeBackendHistoryItem(item: BackendHistoryItem): BackendHistoryItem {
+  return {
+    asset: sanitizeAsset(item.asset),
+    task: sanitizeTask(item.task),
+  }
+}
 
-  return assets
-    .filter((asset) => asset.projectId === projectId && (asset.kind === 'GENERATED' || asset.kind === 'EDITED'))
-    .flatMap((asset) => {
-      const task = asset.taskId
-        ? tasksById.get(asset.taskId)
-        : tasks.find((candidate) => candidate.projectId === projectId && candidate.outputAssetIds.includes(asset.id))
+function sanitizeAsset(asset: Asset): Asset {
+  const previewUrl = backendAssetDownloadUrl(asset.id)
 
-      return task ? [{ asset, task }] : []
-    })
-    .sort((left, right) => Date.parse(right.asset.createdAt) - Date.parse(left.asset.createdAt))
+  return {
+    id: asset.id,
+    tenantId: asset.tenantId,
+    projectId: asset.projectId,
+    taskId: asset.taskId,
+    kind: asset.kind,
+    category: asset.category,
+    filename: asset.filename,
+    mimeType: asset.mimeType,
+    fileSize: asset.fileSize,
+    width: asset.width,
+    height: asset.height,
+    thumbnailUrl: previewUrl,
+    previewUrl,
+    downloadUrl: undefined,
+    isFavorite: asset.isFavorite,
+    createdBy: asset.createdBy,
+    createdAt: asset.createdAt,
+    updatedAt: asset.updatedAt,
+  }
+}
+
+function sanitizeTask(task: Task): Task {
+  return {
+    id: task.id,
+    tenantId: task.tenantId,
+    projectId: task.projectId,
+    type: task.type,
+    status: task.status,
+    prompt: task.prompt,
+    providerId: task.providerId,
+    modelId: task.modelId,
+    imageType: task.imageType,
+    parameters: sanitizeTaskParameters(task.parameters),
+    inputAssetIds: task.inputAssetIds,
+    outputAssetIds: task.outputAssetIds,
+    attempt: task.attempt,
+    maxAttempts: task.maxAttempts,
+    queuedAt: task.queuedAt,
+    startedAt: task.startedAt,
+    finishedAt: task.finishedAt,
+    timeoutAt: task.timeoutAt,
+    errorCode: task.errorCode,
+    errorMessage: task.errorMessage,
+    createdBy: task.createdBy,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  }
+}
+
+function backendAssetDownloadUrl(assetId: AssetId): string {
+  return `/api/v1/assets/${encodeURIComponent(assetId)}/download`
+}
+
+function sanitizeTaskParameters(parameters: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(parameters).filter(([key]) => !isUnsafeHistoryParameterKey(key)))
+}
+
+function isUnsafeHistoryParameterKey(key: string): boolean {
+  const normalizedKey = key.toLowerCase()
+  return (
+    normalizedKey === 'apicall' ||
+    normalizedKey.includes('authorization') ||
+    normalizedKey.includes('base64') ||
+    normalizedKey.includes('cookie') ||
+    normalizedKey.includes('redacted') ||
+    (normalizedKey.includes('object') && normalizedKey.includes('key'))
+  )
 }
 
 function isVisibleBackendDetail(projectId: ProjectId, asset: Asset, task: Task): boolean {
@@ -155,6 +258,10 @@ function isVisibleBackendDetail(projectId: ProjectId, asset: Asset, task: Task):
   }
 
   return asset.taskId === task.id || task.outputAssetIds.includes(asset.id)
+}
+
+function isVisibleHistoryItem(projectId: ProjectId, item: BackendHistoryItem): boolean {
+  return item.asset.projectId === projectId && item.task.projectId === projectId && (item.asset.kind === 'GENERATED' || item.asset.kind === 'EDITED')
 }
 
 function getBackendHistoryErrorMessage(error: unknown, fallback: string): string {
