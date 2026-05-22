@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P12 Project Workflow Polish Merge
+## Current State After P12 Project Member Hardening Merge
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -34,7 +34,7 @@ Completed phases:
 | P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
-| P12 | In progress | Frontend unified history and seller project/asset workflow polish are merged. Backend project-member invariant hardening and R12 remain. |
+| P12 | In progress | Frontend unified history, seller project/asset workflow polish, and backend project-member invariant hardening are merged. R12 remains. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -56,6 +56,8 @@ R11 validation passed:
 
 `P12-FE-PROJECT-WORKFLOW-POLISH` was reviewed, fixed, and merged. The seller workspace now supports project edit, asset filters, asset metadata edit, project member entry points backed by real member APIs, upload/project-switch stale protection, and filtered-list consistency after favorite or metadata mutations. The task passed frontend lint, type-check, targeted project/asset tests, full frontend tests, build, and whitespace checks. Non-blocking follow-up: member remove success and member update/remove error paths can receive more granular frontend tests when the project-member backend invariants are hardened.
 
+`P12-BE-PROJECT-MEMBER-HARDENING` was reviewed, fixed, and merged. Backend project member write paths now prevent deleting or downgrading the final `OWNER`, keep owner-transfer paths valid when another `OWNER` remains, preserve tenant/RBAC/project-role authorization, and verify blocked writes do not create successful operation logs. Validation passed backend project-route focused tests, full backend tests, race tests, vet, API/Worker builds, and whitespace checks. Non-blocking follow-up: MySQL-backed concurrent owner-mutation coverage can be added in later integration or E2E work.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -63,7 +65,7 @@ The current `main` branch supports:
 - Authenticated multi-user access with tenant context and RBAC enforcement.
 - Backend tenant user administration: list, create, detail, update safe fields, disable/enable, role assignment, role reads, and permission reads.
 - Frontend tenant user/role administration UI gated by `user:*` and `role:*` permissions, with password inputs kept transient and write requests sent through CSRF-protected backend APIs.
-- Project and project-member management foundations.
+- Project and project-member management foundations, including backend last-`OWNER` protection for member update/delete paths.
 - MinIO-backed reference/generated/edited image assets with backend authorization.
 - Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
 - Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
@@ -131,10 +133,11 @@ Suggested order:
    - Completed and merged. Project edit, asset filters, asset metadata edit, project member API entry points, and project-switch stale-state protections are now in the frontend.
 3. `P12-BE-PROJECT-MEMBER-HARDENING`
    - Add missing project-member invariants such as preventing loss of the last `OWNER` where appropriate.
+   - Completed and merged. Backend member update/delete paths now preserve at least one project `OWNER` and keep blocked attempts out of successful operation logs.
 4. `R12`
    - End-to-end seller workflow review.
 
-Parallelism: `P12-FE-UNIFIED-HISTORY` and `P12-FE-PROJECT-WORKFLOW-POLISH` are complete. Next run `P12-BE-PROJECT-MEMBER-HARDENING` serially because it changes backend project-member invariants and authorization-sensitive write paths. Run `R12` after it merges.
+Parallelism: P12 implementation tasks are complete. Run `R12` from latest `main` before starting P13.
 
 ### P13: Runtime Settings, Quotas, And Storage Lifecycle
 
@@ -244,4 +247,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Continue P12 with `P12-BE-PROJECT-MEMBER-HARDENING` from latest `main`. Keep it focused on backend project-member invariants such as last-owner protection, role transition validation, tenant/object authorization, and operation-log coverage. Do not start P13 writable settings until every proposed setting has a real runtime consumer.
+Run `R12` from latest `main` to review and regress the complete seller workflow and P12 code range. Do not start P13 writable settings until R12 is complete and every proposed setting has a real runtime consumer.

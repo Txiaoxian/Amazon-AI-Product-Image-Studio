@@ -137,12 +137,14 @@ Project member rules for P5:
 - Member role values: `OWNER`, `EDITOR`, `VIEWER`.
 - Project member APIs require `project:member:manage` or tenant admin permission.
 - Project object APIs must combine RBAC permission and project membership. For example, asset upload requires `asset:upload` and project `OWNER` or `EDITOR`.
+- A project must retain at least one `OWNER`. Updating or deleting the final `OWNER` returns `409 CONFLICT` and must not write a successful project-member operation log.
+- Owner transfer is supported by adding or promoting another `OWNER` before downgrading or removing the original `OWNER`.
 
 Current P5 implementation status:
 
-- Backend implements project CRUD, project member APIs, tenant-scoped object authorization, and operation logs.
-- Frontend uses `GET /projects` and `POST /projects` for project selection and project creation in the workbench.
-- Project member management is backend-ready; a richer frontend management screen can be added later without changing this contract.
+- Backend implements project CRUD, project member APIs, tenant-scoped object authorization, operation logs, and last-`OWNER` protection for member update/delete paths.
+- Frontend uses project APIs for project selection, project creation/editing, and seller workspace project-member management entry points.
+- Project member management is backend-ready for daily seller workflows; later frontend polish can add more granular member mutation error states without changing this contract.
 
 ## Asset APIs
 

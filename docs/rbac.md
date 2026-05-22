@@ -126,6 +126,8 @@ Project members can have project-level roles such as:
 
 Project role checks should combine with tenant RBAC. For example, a user needs `task:create` and project editor access to submit a task in that project.
 
+Project member writes require tenant admin access or the relevant tenant RBAC permission plus project `OWNER` access. No member write path may leave a project without an `OWNER`: deleting or downgrading the final `OWNER` must fail with a conflict, and owner transfer must happen by adding or promoting another `OWNER` first.
+
 Current P5 project/asset role mapping:
 
 - Project create requires tenant RBAC `project:create`; the creator becomes project `OWNER`.
