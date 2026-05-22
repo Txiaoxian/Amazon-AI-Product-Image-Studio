@@ -1,5 +1,5 @@
 import type { ApiPage, QueryParamRecord } from '../types/api'
-import type { Project, ProjectId, ProjectStatus } from '../types/platform'
+import type { Project, ProjectId, ProjectMember, ProjectMemberRole, ProjectStatus, UserId } from '../types/platform'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface ListProjectsParams {
@@ -26,12 +26,30 @@ export interface UpdateProjectRequest {
   status?: ProjectStatus
 }
 
+export interface ProjectMemberRequest {
+  userId: UserId | string
+  role: ProjectMemberRole
+}
+
+export interface UpdateProjectMemberRequest {
+  role: ProjectMemberRole
+}
+
 export interface ProjectApi {
   list(params?: ListProjectsParams): Promise<ApiPage<Project>>
   create(request: CreateProjectRequest, csrfToken: string): Promise<Project>
   get(projectId: ProjectId | string): Promise<Project>
   update(projectId: ProjectId | string, request: UpdateProjectRequest, csrfToken: string): Promise<Project>
   delete(projectId: ProjectId | string, csrfToken: string): Promise<{ ok: boolean }>
+  listMembers(projectId: ProjectId | string): Promise<ProjectMember[]>
+  addMember(projectId: ProjectId | string, request: ProjectMemberRequest, csrfToken: string): Promise<ProjectMember>
+  updateMember(
+    projectId: ProjectId | string,
+    userId: UserId | string,
+    request: UpdateProjectMemberRequest,
+    csrfToken: string,
+  ): Promise<ProjectMember>
+  removeMember(projectId: ProjectId | string, userId: UserId | string, csrfToken: string): Promise<{ ok: boolean }>
 }
 
 export function createProjectApi(client: ApiClient = apiClient): ProjectApi {
@@ -48,6 +66,19 @@ export function createProjectApi(client: ApiClient = apiClient): ProjectApi {
       }),
     delete: (projectId, csrfToken) =>
       client.delete<{ ok: boolean }>(`/projects/${encodeURIComponent(projectId)}`, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    listMembers: (projectId) => client.get<ProjectMember[]>(`/projects/${encodeURIComponent(projectId)}/members`),
+    addMember: (projectId, request, csrfToken) =>
+      client.post<ProjectMember>(`/projects/${encodeURIComponent(projectId)}/members`, request, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    updateMember: (projectId, userId, request, csrfToken) =>
+      client.patch<ProjectMember>(`/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, request, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    removeMember: (projectId, userId, csrfToken) =>
+      client.delete<{ ok: boolean }>(`/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, {
         headers: csrfHeaders(csrfToken),
       }),
   }

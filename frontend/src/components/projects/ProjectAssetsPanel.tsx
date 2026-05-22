@@ -1,7 +1,8 @@
-import { Download, Eye, ImagePlus, Loader2, RefreshCw, Star, Trash2, UploadCloud } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Download, Eye, ImagePlus, Loader2, Pencil, RefreshCw, Star, Trash2, UploadCloud, X } from 'lucide-react'
+import type { FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatBytes } from '../../lib/storageLimit'
-import type { Asset, Project, ProjectId } from '../../types/platform'
+import type { Asset, AssetKind, Project, ProjectId, ProjectMember, ProjectMemberRole, UserId } from '../../types/platform'
 import { Button } from '../ui/Button'
 
 interface ProjectAssetsPanelProps {
@@ -11,17 +12,38 @@ interface ProjectAssetsPanelProps {
   isCreatingProject: boolean
   isLoadingAssets: boolean
   isLoadingProjects: boolean
+  isUpdatingProject: boolean
   isUploadingAsset: boolean
+  projectStatus: 'idle' | 'loading' | 'success' | 'error'
+  assetStatus: 'idle' | 'loading' | 'success' | 'error'
   projects: Project[]
+  selectedProject: Project | null
   selectedProjectId: ProjectId | null
+  assetFilters: {
+    category?: string
+    favorite?: boolean
+    kind?: AssetKind
+  }
+  canManageProjectMembers: boolean
+  isSavingProjectMember: boolean
+  projectMemberActionUserId: UserId | string | null
+  projectMemberError: string | null
+  projectMembers: ProjectMember[]
+  projectMemberStatus: 'idle' | 'loading' | 'success' | 'error'
+  onAddProjectMember: (projectId: ProjectId, request: { userId: UserId | string; role: ProjectMemberRole }) => void
   onCreateProject: (request: { name: string; brand?: string; asin?: string; site?: string; notes?: string }) => void
   onDeleteAsset: (asset: Asset) => void
   onDownloadAsset: (asset: Asset) => void
   onOpenAsset: (asset: Asset) => void
   onRefreshAssets: () => void
+  onRefreshProjectMembers: (projectId: ProjectId) => void
   onRefreshProjects: () => void
+  onRemoveProjectMember: (projectId: ProjectId, userId: UserId | string) => void
   onSelectProject: (projectId: ProjectId) => void
   onToggleFavorite: (asset: Asset) => void
+  onUpdateAssetFilters: (filters: { category?: string; favorite?: boolean; kind?: AssetKind }) => void
+  onUpdateProjectMember: (projectId: ProjectId, userId: UserId | string, request: { role: ProjectMemberRole }) => void
+  onUpdateProject: (projectId: ProjectId, request: { name?: string; brand?: string; asin?: string; site?: string; notes?: string }) => void
   onUploadReferences: (files: FileList) => void
   onUseAssetAsReference: (asset: Asset) => void
 }
@@ -33,17 +55,34 @@ export function ProjectAssetsPanel({
   isCreatingProject,
   isLoadingAssets,
   isLoadingProjects,
+  isUpdatingProject,
   isUploadingAsset,
+  projectStatus,
+  assetStatus,
   projects,
+  selectedProject,
   selectedProjectId,
+  assetFilters,
+  canManageProjectMembers,
+  isSavingProjectMember,
+  projectMemberActionUserId,
+  projectMemberError,
+  projectMembers,
+  projectMemberStatus,
+  onAddProjectMember,
   onCreateProject,
   onDeleteAsset,
   onDownloadAsset,
   onOpenAsset,
   onRefreshAssets,
+  onRefreshProjectMembers,
   onRefreshProjects,
+  onRemoveProjectMember,
   onSelectProject,
   onToggleFavorite,
+  onUpdateAssetFilters,
+  onUpdateProjectMember,
+  onUpdateProject,
   onUploadReferences,
   onUseAssetAsReference,
 }: ProjectAssetsPanelProps) {
@@ -51,6 +90,51 @@ export function ProjectAssetsPanel({
   const [name, setName] = useState('')
   const [brand, setBrand] = useState('')
   const [asin, setAsin] = useState('')
+  const [projectEditOpen, setProjectEditOpen] = useState(false)
+  const [projectMembersOpen, setProjectMembersOpen] = useState(false)
+  const [projectDraft, setProjectDraft] = useState({
+    name: '',
+    brand: '',
+    asin: '',
+    site: '',
+    notes: '',
+  })
+  const [filterDraft, setFilterDraft] = useState({
+    category: assetFilters.category ?? '',
+    favorite: assetFilters.favorite === undefined ? '' : String(assetFilters.favorite),
+    kind: assetFilters.kind ?? '',
+  })
+  const [memberDraft, setMemberDraft] = useState<{ userId: string; role: ProjectMemberRole }>({
+    userId: '',
+    role: 'VIEWER',
+  })
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setProjectDraft({ name: '', brand: '', asin: '', site: '', notes: '' })
+      setProjectEditOpen(false)
+      setProjectMembersOpen(false)
+      return
+    }
+
+    setProjectDraft({
+      name: selectedProject.name,
+      brand: selectedProject.brand,
+      asin: selectedProject.asin,
+      site: selectedProject.site,
+      notes: selectedProject.notes,
+    })
+    setProjectEditOpen(false)
+    setProjectMembersOpen(false)
+  }, [selectedProject])
+
+  useEffect(() => {
+    setFilterDraft({
+      category: assetFilters.category ?? '',
+      favorite: assetFilters.favorite === undefined ? '' : String(assetFilters.favorite),
+      kind: assetFilters.kind ?? '',
+    })
+  }, [assetFilters])
 
   const submitProject = () => {
     onCreateProject({
@@ -61,6 +145,47 @@ export function ProjectAssetsPanel({
     setName('')
     setBrand('')
     setAsin('')
+  }
+
+  const submitProjectEdit = () => {
+    if (!selectedProjectId) {
+      return
+    }
+
+    onUpdateProject(selectedProjectId, projectDraft)
+  }
+
+  const submitFilters = () => {
+    onUpdateAssetFilters({
+      category: filterDraft.category,
+      favorite: filterDraft.favorite === '' ? undefined : filterDraft.favorite === 'true',
+      kind: filterDraft.kind ? (filterDraft.kind as AssetKind) : undefined,
+    })
+  }
+
+  const clearFilters = () => {
+    setFilterDraft({ category: '', favorite: '', kind: '' })
+    onUpdateAssetFilters({})
+  }
+
+  const toggleProjectMembers = () => {
+    if (!selectedProjectId) {
+      return
+    }
+
+    const shouldOpen = !projectMembersOpen
+    setProjectMembersOpen(shouldOpen)
+    if (shouldOpen) {
+      onRefreshProjectMembers(selectedProjectId)
+    }
+  }
+
+  const submitProjectMember = () => {
+    if (!selectedProjectId) {
+      return
+    }
+
+    onAddProjectMember(selectedProjectId, memberDraft)
   }
 
   return (
@@ -113,6 +238,139 @@ export function ProjectAssetsPanel({
             ))}
           </select>
         </div>
+
+        {projectStatus === 'loading' ? (
+          <div className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-sm text-ink-500" role="status">
+            正在加载项目列表...
+          </div>
+        ) : null}
+
+        {projectStatus === 'error' ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
+            项目加载失败，请刷新项目列表后重试。
+          </div>
+        ) : null}
+
+        {!isLoadingProjects && projects.length === 0 ? (
+          <div className="rounded-md border border-dashed border-ink-300 bg-ink-50 px-3 py-3">
+            <p className="text-sm font-semibold text-ink-700">暂无项目</p>
+            <p className="mt-1 text-xs leading-5 text-ink-400">创建项目后即可上传并管理该商品的图片资产。</p>
+          </div>
+        ) : null}
+
+        {selectedProject ? (
+          <section className="rounded-lg border border-ink-200 bg-white p-3" aria-label="当前项目详情">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-ink-900">{selectedProject.name}</p>
+                <p className="mt-1 text-xs text-ink-500">
+                  {selectedProject.brand || '未填写品牌'} · {selectedProject.asin || '未填写 ASIN'} · {selectedProject.site || '未填写站点'}
+                </p>
+              </div>
+              <button
+                aria-label={`编辑项目 ${selectedProject.name}`}
+                className="icon-button h-8 w-8"
+                disabled={isUpdatingProject}
+                onClick={() => setProjectEditOpen((current) => !current)}
+                title="编辑项目"
+                type="button"
+              >
+                {projectEditOpen ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+              <span className="rounded border border-ink-200 bg-ink-50 px-2 py-1 font-semibold text-ink-600">{selectedProject.status}</span>
+              <span className="rounded border border-ink-200 bg-ink-50 px-2 py-1 text-ink-500">
+                更新 {new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(selectedProject.updatedAt))}
+              </span>
+            </div>
+            {selectedProject.notes ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-ink-500">{selectedProject.notes}</p> : null}
+
+            {projectEditOpen ? (
+              <form
+                className="mt-3 grid gap-2 border-t border-ink-100 pt-3"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  submitProjectEdit()
+                }}
+              >
+                <label className="field-label" htmlFor="project-edit-name">
+                  项目名称
+                </label>
+                <input
+                  className="field-input"
+                  disabled={isUpdatingProject}
+                  id="project-edit-name"
+                  onChange={(event) => setProjectDraft((current) => ({ ...current, name: event.target.value }))}
+                  value={projectDraft.name}
+                />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    aria-label="编辑项目品牌"
+                    className="field-input"
+                    disabled={isUpdatingProject}
+                    onChange={(event) => setProjectDraft((current) => ({ ...current, brand: event.target.value }))}
+                    placeholder="品牌"
+                    value={projectDraft.brand}
+                  />
+                  <input
+                    aria-label="编辑项目 ASIN"
+                    className="field-input"
+                    disabled={isUpdatingProject}
+                    onChange={(event) => setProjectDraft((current) => ({ ...current, asin: event.target.value }))}
+                    placeholder="ASIN"
+                    value={projectDraft.asin}
+                  />
+                </div>
+                <input
+                  aria-label="编辑项目站点"
+                  className="field-input"
+                  disabled={isUpdatingProject}
+                  onChange={(event) => setProjectDraft((current) => ({ ...current, site: event.target.value }))}
+                  placeholder="站点，例如 US"
+                  value={projectDraft.site}
+                />
+                <textarea
+                  aria-label="编辑项目备注"
+                  className="field-input min-h-20 resize-y"
+                  disabled={isUpdatingProject}
+                  onChange={(event) => setProjectDraft((current) => ({ ...current, notes: event.target.value }))}
+                  placeholder="备注"
+                  value={projectDraft.notes}
+                />
+                <Button disabled={isUpdatingProject || projectDraft.name.trim().length === 0} type="submit" variant="primary">
+                  {isUpdatingProject ? '保存中...' : '保存项目'}
+                </Button>
+              </form>
+            ) : null}
+
+            {canManageProjectMembers ? (
+              <div className="mt-3 border-t border-ink-100 pt-3">
+                <Button className="w-full" onClick={toggleProjectMembers} variant="secondary">
+                  {projectMembersOpen ? '收起项目成员' : '项目成员'}
+                </Button>
+                {projectMembersOpen ? (
+                  <ProjectMembersPanel
+                    actionUserId={projectMemberActionUserId}
+                    draft={memberDraft}
+                    error={projectMemberError}
+                    isSaving={isSavingProjectMember}
+                    members={projectMembers}
+                    onAdd={(event) => {
+                      event.preventDefault()
+                      submitProjectMember()
+                    }}
+                    onDraftChange={setMemberDraft}
+                    onRefresh={() => selectedProjectId && onRefreshProjectMembers(selectedProjectId)}
+                    onRemove={(userId) => selectedProjectId && onRemoveProjectMember(selectedProjectId, userId)}
+                    onUpdate={(userId, role) => selectedProjectId && onUpdateProjectMember(selectedProjectId, userId, { role })}
+                    status={projectMemberStatus}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <form
           className="grid gap-2"
@@ -190,12 +448,75 @@ export function ProjectAssetsPanel({
             {error}
           </div>
         ) : null}
+
+        <form
+          className="grid gap-2 rounded-lg border border-ink-200 bg-ink-50 p-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            submitFilters()
+          }}
+        >
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs font-semibold text-ink-500">
+              资产类型
+              <select
+                className="field-input bg-white"
+                disabled={!selectedProjectId || isLoadingAssets}
+                onChange={(event) => setFilterDraft((current) => ({ ...current, kind: event.target.value }))}
+                value={filterDraft.kind}
+              >
+                <option value="">全部</option>
+                <option value="REFERENCE">参考图</option>
+                <option value="GENERATED">生成图</option>
+                <option value="EDITED">编辑图</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-ink-500">
+              收藏
+              <select
+                className="field-input bg-white"
+                disabled={!selectedProjectId || isLoadingAssets}
+                onChange={(event) => setFilterDraft((current) => ({ ...current, favorite: event.target.value }))}
+                value={filterDraft.favorite}
+              >
+                <option value="">全部</option>
+                <option value="true">已收藏</option>
+                <option value="false">未收藏</option>
+              </select>
+            </label>
+          </div>
+          <label className="grid gap-1 text-xs font-semibold text-ink-500">
+            筛选分类
+            <input
+              className="field-input bg-white"
+              disabled={!selectedProjectId || isLoadingAssets}
+              onChange={(event) => setFilterDraft((current) => ({ ...current, category: event.target.value }))}
+              placeholder="例如 reference"
+              value={filterDraft.category}
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <Button disabled={!selectedProjectId || isLoadingAssets} type="submit" variant="secondary">
+              筛选资产
+            </Button>
+            <Button disabled={!selectedProjectId || isLoadingAssets} onClick={clearFilters} variant="ghost">
+              清除筛选
+            </Button>
+          </div>
+        </form>
       </div>
 
       <div className="flex-1 p-3 xl:overflow-y-auto">
         {isLoadingAssets ? <p className="py-8 text-center text-sm text-ink-400">正在加载项目资产...</p> : null}
 
-        {!isLoadingAssets && selectedProjectId && assets.length === 0 ? (
+        {!isLoadingAssets && assetStatus === 'error' ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-8 text-center">
+            <p className="text-sm font-medium text-red-700">资产加载失败</p>
+            <p className="mt-1 text-xs text-red-600">请检查筛选条件或刷新资产列表后重试。</p>
+          </div>
+        ) : null}
+
+        {!isLoadingAssets && assetStatus !== 'error' && selectedProjectId && assets.length === 0 ? (
           <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-8 text-center">
             <p className="text-sm font-medium text-ink-700">暂无项目资产</p>
             <p className="mt-1 text-xs text-ink-400">上传参考图后会显示在这里。</p>
@@ -225,6 +546,114 @@ export function ProjectAssetsPanel({
         </div>
       </div>
     </aside>
+  )
+}
+
+interface ProjectMembersPanelProps {
+  actionUserId: UserId | string | null
+  draft: { userId: string; role: ProjectMemberRole }
+  error: string | null
+  isSaving: boolean
+  members: ProjectMember[]
+  status: 'idle' | 'loading' | 'success' | 'error'
+  onAdd: (event: FormEvent<HTMLFormElement>) => void
+  onDraftChange: (draft: { userId: string; role: ProjectMemberRole }) => void
+  onRefresh: () => void
+  onRemove: (userId: UserId | string) => void
+  onUpdate: (userId: UserId | string, role: ProjectMemberRole) => void
+}
+
+function ProjectMembersPanel({
+  actionUserId,
+  draft,
+  error,
+  isSaving,
+  members,
+  status,
+  onAdd,
+  onDraftChange,
+  onRefresh,
+  onRemove,
+  onUpdate,
+}: ProjectMembersPanelProps) {
+  return (
+    <div className="mt-3 grid gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-ink-600">项目成员</p>
+        <button
+          className="text-xs font-semibold text-ink-500 hover:text-ink-900 disabled:text-ink-300"
+          disabled={status === 'loading'}
+          onClick={onRefresh}
+          type="button"
+        >
+          刷新
+        </button>
+      </div>
+
+      <form className="grid gap-2" onSubmit={onAdd}>
+        <input
+          aria-label="成员用户 ID"
+          className="field-input bg-white"
+          disabled={isSaving}
+          onChange={(event) => onDraftChange({ ...draft, userId: event.target.value })}
+          placeholder="用户 ID"
+          value={draft.userId}
+        />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+          <select
+            aria-label="成员角色"
+            className="field-input bg-white"
+            disabled={isSaving}
+            onChange={(event) => onDraftChange({ ...draft, role: event.target.value as ProjectMemberRole })}
+            value={draft.role}
+          >
+            <option value="OWNER">OWNER</option>
+            <option value="EDITOR">EDITOR</option>
+            <option value="VIEWER">VIEWER</option>
+          </select>
+          <Button disabled={isSaving || draft.userId.trim().length === 0} type="submit" variant="primary">
+            添加
+          </Button>
+        </div>
+      </form>
+
+      {error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {status === 'loading' ? <p className="text-sm text-ink-400">正在加载项目成员...</p> : null}
+      {status !== 'loading' && members.length === 0 ? <p className="text-sm text-ink-400">暂无项目成员。</p> : null}
+
+      <div className="grid gap-2">
+        {members.map((member) => (
+          <article className="rounded-md border border-ink-200 bg-white p-2" key={member.id}>
+            <p className="break-all text-xs font-semibold text-ink-800">{member.userId}</p>
+            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <select
+                aria-label={`项目成员角色 ${member.userId}`}
+                className="field-input bg-white"
+                disabled={isSaving && actionUserId === member.userId}
+                onChange={(event) => onUpdate(member.userId, event.target.value as ProjectMemberRole)}
+                value={member.role}
+              >
+                <option value="OWNER">OWNER</option>
+                <option value="EDITOR">EDITOR</option>
+                <option value="VIEWER">VIEWER</option>
+              </select>
+              <Button
+                disabled={isSaving && actionUserId === member.userId}
+                onClick={() => onRemove(member.userId)}
+                variant="danger"
+              >
+                移除
+              </Button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   )
 }
 
