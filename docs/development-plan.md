@@ -8,6 +8,8 @@ Routine development and feature verification must use the existing shared local 
 - Redis: `dev-redis`
 - MinIO: `dev-minio`
 
+The user has authorized future development tasks to use these shared local services for functional verification, including creating, updating, deleting, enqueueing, uploading, downloading, and cleaning up task-owned test data. Test data must be clearly attributable to the task or branch, and agents must not drop the project database, delete shared buckets, flush shared Redis, or remove unrelated data unless explicitly instructed.
+
 Do not create project-specific MySQL, Redis, or MinIO containers for ordinary feature work. `deploy/docker-compose.yml` is reserved for deployment verification; if it starts project containers, clean them up afterwards unless the user explicitly asks to keep them:
 
 ```bash
@@ -150,6 +152,7 @@ Suggested order:
 
 1. `P13-BE-RUNTIME-DEFAULTS`
    - Default Provider/model settings consumed by task creation when the request omits explicit IDs, or keep them unavailable if the product chooses explicit-only submission.
+   - Current contract: implement tenant `taskDefaults.{defaultProviderId,defaultModelId}`. Task creation may consume defaults only when both `providerId` and `modelId` are omitted; mixed explicit/default requests remain invalid.
 2. `P13-BE-CONCURRENCY-POLICY`
    - Tenant/user/provider/model concurrency policies loaded from settings and consumed by Worker limiters.
 3. `P13-BE-STORAGE-QUOTA-RETENTION`
@@ -250,4 +253,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start P13 with `P13-BE-RUNTIME-DEFAULTS` from latest `main`. Keep it serial until the default Provider/model contract is decided and backed by a real task-creation runtime consumer. Do not expose any writable runtime setting unless its consumer is implemented in the same task or already exists.
+Start P13 with `P13-BE-RUNTIME-DEFAULTS` from latest `main`. Keep it serial and implement the default Provider/model settings only because their runtime consumer is task creation. Do not expose any other writable runtime setting unless its consumer is implemented in the same task or already exists.

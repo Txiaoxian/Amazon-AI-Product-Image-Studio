@@ -365,12 +365,12 @@ Current P9 backend contract:
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` consumes these routes through `frontend/src/api/admin.ts`, keeps list reads paginated, and gates visible sections by `usage:read` or `audit:read`.
 
-Current P9 settings contract:
+Current settings contract:
 
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-The first active settings slice is intentionally narrow and runtime-backed:
+The active settings slices are intentionally narrow and runtime-backed:
 
 ```json
 {
@@ -379,6 +379,10 @@ The first active settings slice is intentionally narrow and runtime-backed:
     "maxWidth": 8192,
     "maxHeight": 8192,
     "maxPixels": 40000000
+  },
+  "taskDefaults": {
+    "defaultProviderId": "provider_123",
+    "defaultModelId": "model_123"
   }
 }
 ```
@@ -388,6 +392,13 @@ The first active settings slice is intentionally narrow and runtime-backed:
 - `PATCH /admin/system-settings` may update one or more fields under `uploadPolicy`; omitted fields keep their current effective values.
 - Tenant overrides must stay positive and may only narrow or match the environment-configured upload hard caps. Runtime asset validation remains the security boundary and consumes the effective tenant policy for request-body size, dimensions, and pixel-count checks.
 - Allowed MIME types remain configuration-owned security policy; the settings API must not make SVG or any non-allowlisted type writable.
-- `defaultProviderId`, `defaultModelId`, tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until task creation, worker limiting, quota enforcement, or cleanup jobs actually consume them.
+- P13 `taskDefaults` is the next active settings slice because task creation is the runtime consumer:
+  - `GET /admin/system-settings` returns `taskDefaults` with nullable `defaultProviderId` and `defaultModelId`.
+  - `PATCH /admin/system-settings` may update `taskDefaults` only when both IDs are supplied together, or clear both with `null` values.
+  - The backend must validate tenant ownership, enabled Provider, enabled model, and model ownership by Provider before saving defaults.
+  - Task creation may omit both `providerId` and `modelId`; in that case backend resolves the tenant defaults and then runs the same Provider/model/capability validation used for explicit requests.
+  - Task creation with only one of `providerId` or `modelId` omitted remains invalid to avoid ambiguous mixed-default requests.
+  - If defaults are absent, stale, disabled, deleted, cross-tenant, or capability-incompatible, default-backed task creation returns validation failure and must not enqueue a task or write a successful task operation log.
+- Tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until worker limiting, quota enforcement, or cleanup jobs actually consume them.
 - Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`. Frontend admin UI must consume this exact narrow surface and must not show deferred settings as active controls.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.

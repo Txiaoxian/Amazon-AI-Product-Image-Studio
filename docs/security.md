@@ -15,7 +15,7 @@ Remaining post-R12 security and hardening risks:
 
 - Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is now the only active writable slice and is backed by asset validation; default Provider/model IDs, tenant concurrency, storage quotas, and retention remain deferred until their task/worker/quota/cleanup consumers are explicit.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation. P13 opens only default Provider/model settings because task creation is the explicit runtime consumer. Tenant concurrency, storage quotas, and retention remain deferred until their worker/quota/cleanup consumers are explicit.
 
 Resolved transition item:
 

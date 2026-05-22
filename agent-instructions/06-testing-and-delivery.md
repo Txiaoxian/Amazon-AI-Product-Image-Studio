@@ -12,8 +12,11 @@
 
 - Routine development verification must use the shared local services in `docs/local-development.md`.
 - Use `dev-mysql8`, `dev-redis`, and `dev-minio` for local MySQL, Redis, and MinIO checks.
+- The user has authorized future development tasks to mutate shared local development data for verification. Agents may create, update, delete, enqueue, upload, download, and clean up task-owned test data in the shared local MySQL, Redis, and MinIO services.
+- Any local test data should be clearly namespaced or otherwise attributable to the task or branch. Cleanup must avoid unrelated data.
 - Do not start project-specific MySQL, Redis, or MinIO containers for ordinary feature validation.
 - Do not create project-specific Docker data volumes for ordinary feature validation.
+- Do not run broad destructive commands such as dropping the project database, deleting shared buckets, or running Redis `FLUSHALL` / `FLUSHDB` unless the user explicitly asks.
 - Do not copy real local service passwords into project files, tests, logs, or final answers.
 - `deploy/docker-compose.yml` may be used for deployment-specific verification only. If it starts project-specific containers, clean them up afterwards unless the user asks to keep them:
 

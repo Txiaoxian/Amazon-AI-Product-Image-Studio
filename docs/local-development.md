@@ -13,6 +13,7 @@ That global document is the source of truth for local service credentials. Do no
 ## Development policy
 
 - Use the existing global local services for feature development and validation.
+- The user has explicitly authorized future development tasks to use these shared local MySQL, Redis, and MinIO services for functional verification, including creating, reading, updating, and deleting project test data.
 - Do not start project-specific MySQL, Redis, or MinIO containers for normal backend, frontend, auth, asset, Provider, task, or SSE work.
 - Do not create project-specific Docker volumes for routine development validation.
 - `deploy/docker-compose.yml` remains the deployment topology and may be used for deployment-specific verification only.
@@ -81,6 +82,12 @@ docker compose -f /Volumes/wohenhaoqi/data/ApplicationsData/dev-env/compose/dock
 amazon_ai_image_studio
 ```
 
+- Test data policy:
+  - Agents may create, update, and delete rows in the project database for local feature validation.
+  - Prefer clearly namespaced IDs, emails, names, and metadata such as `codex_`, `p13_`, or the task branch name so test data is easy to identify.
+  - Do not truncate shared service schemas, drop the project database, drop unrelated tables, or delete data that is not clearly created for the current validation unless the user explicitly asks.
+  - Destructive cleanup should target only the task-owned test data and should be mentioned in the final handoff.
+
 - Create the project database if needed:
 
 ```bash
@@ -114,6 +121,11 @@ MYSQL_PWD='<read from global local dev document>' docker exec dev-mysql8 \
 docker exec dev-redis redis-cli ping
 ```
 
+- Test data policy:
+  - Agents may enqueue, inspect, and delete task-owned Redis keys or queue entries for local validation.
+  - Use project/task-specific queue names or key prefixes when adding temporary checks.
+  - Do not run broad `FLUSHALL` / `FLUSHDB` against shared Redis unless the user explicitly asks.
+
 ### MinIO
 
 - Container: `dev-minio`.
@@ -140,6 +152,11 @@ product-originals
 product-generated
 product-thumbnails
 ```
+
+- Test data policy:
+  - Agents may upload, download, and delete task-owned objects in the project buckets for local asset and worker validation.
+  - Use object keys that include a recognizable test prefix or task identifier when manually creating objects.
+  - Do not delete buckets or purge unrelated object prefixes unless the user explicitly asks.
 
 - Verify MinIO:
 

@@ -75,6 +75,15 @@
 
 如果任务无法在不破坏现有行为或不扩大禁止范围的前提下完成，子 agent 必须停止并报告冲突。
 
+## 本地环境验证授权
+
+- 后续开发任务默认可以使用 `docs/local-development.md` 中记录的共享本地 MySQL、Redis、MinIO 环境做功能验证。
+- 用户已授权 agent 在共享本地环境中对任务自有测试数据执行增删改查、入队、出队、上传、下载和清理操作。
+- 测试数据必须使用容易识别的前缀或命名，例如 `codex_`、阶段名、任务名或分支名。
+- 不得删除无关数据，不得 drop 项目数据库，不得删除共享 MinIO bucket，不得对共享 Redis 执行 `FLUSHALL` / `FLUSHDB`，除非用户明确要求。
+- 不得把本地真实密码、Access Key、Secret Key 写入仓库、日志、测试快照或最终交付。
+- 如果任务使用了共享本地服务，最终交付必须说明创建/修改了哪些类别的测试数据，以及是否已清理。
+
 ## 当前状态
 
 R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/资产工作流打磨、后端项目成员约束均已 review、修复、合并并完成整批回归。
@@ -143,6 +152,7 @@ R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/�
 
 1. `P13-BE-RUNTIME-DEFAULTS`
    - 决定并实现默认 Provider/模型行为；如果产品选择显式选择模型，则继续保持显式-only 任务创建。
+   - 当前合同已确定：实现 `taskDefaults.{defaultProviderId,defaultModelId}`，并让任务创建在 `providerId` 与 `modelId` 同时省略时消费该默认配置；只省略其中一个仍为非法请求。
 2. `P13-BE-CONCURRENCY-POLICY`
    - 将租户/用户/Provider/模型并发设置加载到 Worker 限流器。
 3. `P13-BE-STORAGE-QUOTA-RETENTION`
@@ -205,7 +215,7 @@ latest main
 - `P12-FE-PROJECT-WORKFLOW-POLISH` 已完成并合并。
 - `P12-BE-PROJECT-MEMBER-HARDENING` 已完成并合并。
 - `R12` 已完成。
-- 下一步串行执行 `P13-BE-RUNTIME-DEFAULTS`。该任务必须先明确默认 Provider/模型是否进入任务创建路径；如果实现默认值，必须修改真实 task 创建运行时消费者并补齐测试。若产品继续选择显式-only 提交，则不要暴露可写默认 Provider/模型设置。
+- 下一步串行执行 `P13-BE-RUNTIME-DEFAULTS`。该任务必须实现真实 task 创建运行时消费者：`providerId` 与 `modelId` 同时省略时解析租户 `taskDefaults`，并继续执行 Provider/model 启用状态、同租户、模型归属、能力、参数和资产校验。只省略其中一个 ID 必须继续失败。
 - 在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
 
 ## 标准验证命令

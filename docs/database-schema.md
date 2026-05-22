@@ -183,14 +183,16 @@ Stores tenant-scoped settings.
 
 Key fields: `id`, `tenant_id`, `key`, `value_json`, `created_at`, `updated_at`.
 
-P9 implementation notes:
+Implementation notes:
 
 - `(tenant_id, key)` must be unique.
 - The first active key is `upload_policy`.
 - `upload_policy.value_json` is a bounded object with `maxFileSizeBytes`, `maxWidth`, `maxHeight`, and `maxPixels`.
 - Stored upload-policy values are tenant overrides only; effective runtime values fall back to environment-configured upload limits when no override exists.
 - Tenant upload-policy overrides may only narrow or match the environment-configured hard caps and are consumed by backend asset upload validation before file persistence.
-- Do not persist `default_provider_id`, `default_model_id`, tenant concurrency, storage quota, or log retention settings until their runtime consumers are deliberately in scope.
+- P13 may add the active key `task_defaults` because the runtime consumer is task creation. `task_defaults.value_json` stores `defaultProviderId` and `defaultModelId` for the tenant.
+- `task_defaults` rows must be tenant scoped. Task creation must revalidate the referenced Provider/model on every default-backed task create, including tenant ownership, enabled state, model ownership by Provider, and model capability support.
+- Do not persist tenant concurrency, storage quota, or log retention settings until their runtime consumers are deliberately in scope.
 - Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` has merged the `system_settings` model/migration and the first active `upload_policy` runtime path.
 
 ## Indexing expectations
