@@ -56,7 +56,7 @@ User and role:
 - `role:read`
 - `role:manage`
 
-P11 backend user-admin role mapping:
+P11 user-admin role mapping:
 
 - User list/detail require tenant admin access or `user:read`.
 - User create requires tenant admin access or `user:create`.
@@ -67,6 +67,8 @@ P11 backend user-admin role mapping:
 - Role and permission reads require tenant admin access or `role:read`.
 - User-admin object APIs must always filter by `tenant_id`; cross-tenant user and role IDs must not leak existence.
 - The backend must reject self-disable and any update that would remove the tenant's last active admin.
+- The frontend user/role admin panel must mirror these boundaries: do not load `/users` without `user:read`, do not load `/roles` or `/permissions` without `role:read`, do not submit `roleIds` without `role:manage`, do not expose status actions without `user:disable`, and disable current-user status actions in the UI.
+- Created-user passwords are transient UI input only. They must not be written to localStorage, sessionStorage, IndexedDB, logs, or rendered after successful creation.
 
 Project:
 

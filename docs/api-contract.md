@@ -89,7 +89,7 @@ Error:
 
 All user APIs require tenant scope and appropriate RBAC permissions.
 
-P11 backend implementation status:
+P11 implementation status:
 
 - `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
 - User responses include safe public fields only: `id`, `tenantId`, `email`, `displayName`, `status`, `lastLoginAt`, timestamps, and role summaries. They must not include `passwordHash`, JWT, CSRF token, Cookie, Authorization header, or internal sensitive fields.
@@ -99,6 +99,7 @@ P11 backend implementation status:
 - `POST /users/{userId}/roles` requires tenant admin access or `role:manage`, validates all role IDs are active roles in the caller tenant, and replaces roles transactionally.
 - The backend rejects self-disable and any operation that would remove the last active admin in a tenant.
 - User creation, update, disable/enable, and role replacement write redacted operation logs.
+- The frontend user/role admin UI consumes these endpoints through the shared API client, sends CSRF headers on writes, gates data loading and controls by permissions, and keeps initial passwords as transient form input only.
 
 ## RBAC APIs
 
