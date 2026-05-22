@@ -320,7 +320,7 @@ describe('backend history asset source', () => {
 
     render(<App />)
 
-    await screen.findByText('Summer Launch')
+    await screen.findByRole('option', { name: 'Summer Launch' })
     await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
     expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
 

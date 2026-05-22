@@ -249,6 +249,17 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
   }
 
+  const handleUpdateProject = async (
+    projectId: Asset['projectId'],
+    request: { name?: string; brand?: string; asin?: string; site?: string; notes?: string },
+  ) => {
+    const project = await projectAssets.updateProject(projectId, request)
+
+    if (project) {
+      setNotice(`已更新项目：${project.name}`)
+    }
+  }
+
   const handleUploadReferences = async (files: FileList) => {
     const result = await projectAssets.uploadReferences(files)
 
@@ -289,6 +300,19 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       if (assetDetail?.id === asset.id) {
         setAssetDetail(null)
       }
+      await projectAssets.refreshAssets()
+    }
+  }
+
+  const handleUpdateAsset = async (
+    asset: Asset,
+    request: { filename?: string; category?: string; isFavorite?: boolean },
+  ) => {
+    const updated = await projectAssets.updateAsset(asset, request)
+
+    if (updated) {
+      setAssetDetail(updated)
+      setNotice('资产元数据已更新。')
     }
   }
 
@@ -396,11 +420,14 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         <div className="flex min-h-0 flex-col gap-3">
           <ProjectAssetsPanel
             actionAssetId={projectAssets.actionAssetId}
+            assetFilters={projectAssets.assetFilters}
+            assetStatus={projectAssets.assetStatus}
             assets={projectAssets.assets}
             error={projectAssets.error}
             isCreatingProject={projectAssets.isCreatingProject}
             isLoadingAssets={projectAssets.isLoadingAssets}
             isLoadingProjects={projectAssets.isLoadingProjects}
+            isUpdatingProject={projectAssets.isUpdatingProject}
             isUploadingAsset={projectAssets.isUploadingAsset}
             onCreateProject={handleCreateProject}
             onDeleteAsset={handleDeleteAsset}
@@ -410,9 +437,13 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
             onRefreshProjects={() => void projectAssets.refreshProjects()}
             onSelectProject={projectAssets.selectProject}
             onToggleFavorite={(asset) => void projectAssets.toggleFavorite(asset)}
+            onUpdateAssetFilters={projectAssets.updateAssetFilters}
+            onUpdateProject={(projectId, request) => void handleUpdateProject(projectId, request)}
             onUploadReferences={(files) => void handleUploadReferences(files)}
             onUseAssetAsReference={(asset) => void handleUseAssetAsReference(asset)}
+            projectStatus={projectAssets.projectStatus}
             projects={projectAssets.projects}
+            selectedProject={projectAssets.selectedProject}
             selectedProjectId={projectAssets.selectedProjectId}
           />
 
@@ -485,7 +516,9 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         isActionPending={Boolean(assetDetail && projectAssets.actionAssetId === assetDetail.id)}
         isOpen={Boolean(assetDetail)}
         onClose={() => setAssetDetail(null)}
+        onDelete={(asset) => void handleDeleteAsset(asset)}
         onDownload={(asset) => void handleDownloadAsset(asset)}
+        onUpdateAsset={(asset, request) => void handleUpdateAsset(asset, request)}
         onUseAsReference={(asset) => void handleUseAssetAsReference(asset)}
       />
     </AppShell>
