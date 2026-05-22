@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P12 Project Member Hardening Merge
+## Current State After R12 Seller Workflow Review
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -34,7 +34,7 @@ Completed phases:
 | P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
-| P12 | In progress | Frontend unified history, seller project/asset workflow polish, and backend project-member invariant hardening are merged. R12 remains. |
+| P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -57,6 +57,8 @@ R11 validation passed:
 `P12-FE-PROJECT-WORKFLOW-POLISH` was reviewed, fixed, and merged. The seller workspace now supports project edit, asset filters, asset metadata edit, project member entry points backed by real member APIs, upload/project-switch stale protection, and filtered-list consistency after favorite or metadata mutations. The task passed frontend lint, type-check, targeted project/asset tests, full frontend tests, build, and whitespace checks. Non-blocking follow-up: member remove success and member update/remove error paths can receive more granular frontend tests when the project-member backend invariants are hardened.
 
 `P12-BE-PROJECT-MEMBER-HARDENING` was reviewed, fixed, and merged. Backend project member write paths now prevent deleting or downgrading the final `OWNER`, keep owner-transfer paths valid when another `OWNER` remains, preserve tenant/RBAC/project-role authorization, and verify blocked writes do not create successful operation logs. Validation passed backend project-route focused tests, full backend tests, race tests, vet, API/Worker builds, and whitespace checks. Non-blocking follow-up: MySQL-backed concurrent owner-mutation coverage can be added in later integration or E2E work.
+
+R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no blocking issues. Validation passed frontend lint, type-check, tests, build, backend tests, race tests, vet, API/Worker builds, Docker Compose config, whitespace checks, and frontend forbidden-pattern scans for Provider direct calls, Provider key storage, task polling, and sensitive browser storage. Non-blocking follow-ups remain: prefer safe same-origin thumbnail URLs for history cards when available, add MySQL-backed concurrent owner-mutation coverage during later integration/E2E work, and keep P13 writable settings blocked until each setting has a real runtime consumer.
 
 ## Completed Platform Capabilities
 
@@ -136,8 +138,9 @@ Suggested order:
    - Completed and merged. Backend member update/delete paths now preserve at least one project `OWNER` and keep blocked attempts out of successful operation logs.
 4. `R12`
    - End-to-end seller workflow review.
+   - Completed. No blocking issues found across unified history, seller project/asset workflow, project member APIs, last-`OWNER` protection, permissions, operation logs, and forbidden frontend patterns.
 
-Parallelism: P12 implementation tasks are complete. Run `R12` from latest `main` before starting P13.
+Parallelism: P12 is complete. Move to P13 serially because runtime settings must not be exposed before their backend consumers exist.
 
 ### P13: Runtime Settings, Quotas, And Storage Lifecycle
 
@@ -247,4 +250,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `R12` from latest `main` to review and regress the complete seller workflow and P12 code range. Do not start P13 writable settings until R12 is complete and every proposed setting has a real runtime consumer.
+Start P13 with `P13-BE-RUNTIME-DEFAULTS` from latest `main`. Keep it serial until the default Provider/model contract is decided and backed by a real task-creation runtime consumer. Do not expose any writable runtime setting unless its consumer is implemented in the same task or already exists.

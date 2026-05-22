@@ -17,9 +17,9 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after R10
+## Current state after R12
 
-The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R10 re-verified Compose config after P10 runtime hardening. P5-P10 platform features should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
+The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. Platform feature work should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
 
 Current verified state:
 
@@ -27,9 +27,9 @@ Current verified state:
 - `docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend` passes.
 - `docker compose -f deploy/docker-compose.yml up -d` reaches healthy states for `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, and `frontend`.
 - Frontend `/api/` proxy reaches `backend-api:8080`, and the frontend Nginx config contains no AI Provider or relay proxy.
-- Frontend local lint, type-check, tests, and build pass after P9 deployment validation.
-- Backend `go test`, race tests, `go vet`, API build, and worker build pass after P9 deployment validation.
-- R10 validation confirmed `docker compose -f deploy/docker-compose.yml config` still passes after Worker pool, SSE bridge lifecycle, Provider/model lifecycle, frontend admin hardening, and backend history query changes.
+- Frontend local lint, type-check, tests, and build pass after R12 validation.
+- Backend `go test`, race tests, `go vet`, API build, and worker build pass after R12 validation.
+- R12 validation confirmed `docker compose -f deploy/docker-compose.yml config` still passes after unified frontend history, seller project/asset workflow polish, and backend project-member last-`OWNER` hardening.
 - Shared local `dev-mysql8`, `dev-redis`, and `dev-minio` are the expected routine validation services and were verified reachable in R5.
 
 Known runtime notes:

@@ -15,14 +15,15 @@ The platform helps sellers:
 
 ## Current state
 
-The repository has been platformized through R10:
+The repository has been platformized through R12:
 
 - The original React + TypeScript + Vite + Tailwind frontend now lives under `frontend/`.
 - The Go + Gin + GORM backend now lives under `backend/` with API and Worker entrypoints.
 - Docker Compose deployment assets live under `deploy/`.
-- Authentication, RBAC, tenant isolation, projects, assets, Provider/model management, task APIs, Redis queueing, Worker execution, SSE, usage/audit reads, upload-policy settings, and P10 runtime hardening are implemented.
+- Authentication, RBAC, tenant isolation, tenant user/role administration, projects, project members, assets, Provider/model management, task APIs, Redis queueing, Worker execution, SSE, unified project history, usage/audit reads, upload-policy settings, and runtime hardening through P12 are implemented.
 - Production generation/edit flows go through backend task APIs, backend Provider Adapters, Redis queueing, Worker execution, MinIO assets, and SSE. The browser must not call AI Providers directly.
 - Browser Provider adapters, normal-user Provider API key/API URL settings, and IndexedDB-backed production history/image paths have been removed or retired from the production import graph.
+- Seller-facing project workflows now include backend-backed project edit, asset filtering, asset metadata edit, project member entry points, unified history, authorized detail/download/re-edit, and backend last-`OWNER` protection for member writes.
 - IndexedDB may still support non-sensitive local prompt-template convenience data and tests; it must not be reintroduced as platform history or image truth.
 
 The existing frontend UI concepts should still be preserved and evolved. Do not rewrite the UI from scratch unless a later task explicitly authorizes a replacement.

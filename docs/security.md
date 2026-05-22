@@ -1,17 +1,17 @@
 # Security Plan
 
-## Current transition risks after P12 unified history
+## Current transition risks after R12 seller workflow review
 
-The current `main` branch has completed P10 runtime, admin, and backend history-query hardening plus R10 review, merged the P11 backend/frontend user-admin work, and merged the P12 frontend unified-history migration. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, and P12 seller workflow/history work through R12 review. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
-| Risk | Previous location | Current status after P12 unified history | Acceptance check |
+| Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
 | Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | Resolved. Normal Provider settings were removed; Provider keys are submitted only through backend Provider management forms and are not persisted in browser storage. | Static scan and tests must continue to show no Provider API key/API URL persistence in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
 | Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, old browser Provider adapters | Resolved. Browser Provider adapter files and frontend Provider registry/types were removed; workbench generation creates backend tasks only. | Browser generation flow creates backend tasks only; no Provider `Authorization` header or direct Provider host appears in production frontend code. |
 | Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
 | Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
-Remaining post-P12 unified-history security and hardening risks:
+Remaining post-R12 security and hardening risks:
 
 - Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
@@ -42,6 +42,9 @@ Resolved transition item:
 - P11 frontend user/role admin UI now gates entry, user reads, role/permission reads, create/update/disable/enable, and role assignment by the current session permissions. It sends CSRF headers through the shared API client, does not call user-admin endpoints when permissions are absent, disables current-user status actions, avoids rendering unsafe response fields, and keeps created-user passwords out of localStorage, sessionStorage, IndexedDB, and post-success UI. The task passed frontend lint, type-check, targeted tests, full tests, build, and whitespace checks.
 - R11 reviewed the complete P11 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, P11 frontend/backend sensitive-pattern scans, and whitespace checks.
 - P12 frontend unified-history migration now consumes the backend-owned, tenant-scoped `GET /projects/{projectId}/history` feed directly. The browser no longer builds production history by joining task lists with generated/edited asset lists. The UI preserves project-switch stale-response protection, authorized detail/download/re-edit, backend `editSourceAssetId`, non-leaky history errors, and unsafe response-field suppression.
+- P12 frontend project/asset workflow polish now uses backend APIs for project edit, asset filtering, asset metadata edit, member list/add/update/remove entry points, reference upload, download, delete, favorite, and use-as-reference. It preserves CSRF write requests, stale project-switch protections, and filtered-list consistency without adding Provider direct calls, browser Provider key storage, or task polling.
+- P12 backend project-member hardening now rejects deleting or downgrading the final project `OWNER`, allows owner transfer only after another `OWNER` remains, preserves tenant/RBAC/project-role checks, and verifies rejected writes do not create successful operation logs.
+- R12 reviewed the complete P12 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
 
 P5 review hardening backlog:
 
@@ -171,12 +174,12 @@ P8 migration security requirements:
 - Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
 - Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
 
-Current R10 frontend security status:
+Current R12 frontend security status:
 
 - Production workbench generation/edit flows create backend tasks and use SSE for status.
-- Static scans through R10 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, or polling loop.
+- Static scans through R12 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, sensitive browser storage, or polling loop.
 - Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths. Frontend production history now consumes the P10/P12 unified backend history endpoint directly.
+- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths. Frontend production history now consumes the unified backend history endpoint directly.
 
 ## Upload defense
 

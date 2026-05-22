@@ -77,7 +77,7 @@
 
 ## 当前状态
 
-R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理任务均已 review、合并并完成整批回归。`P12-FE-UNIFIED-HISTORY`、`P12-FE-PROJECT-WORKFLOW-POLISH` 与 `P12-BE-PROJECT-MEMBER-HARDENING` 均已 review、修复并合并。
+R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/资产工作流打磨、后端项目成员约束均已 review、修复、合并并完成整批回归。
 
 已完成的平台基础：
 
@@ -91,6 +91,7 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 - 前端历史已改为消费 `GET /api/v1/projects/{projectId}/history`。
 - 前端项目/资产工作流已完成一轮产品化打磨：项目编辑、资产筛选、资产元数据编辑、项目成员入口、上传切项目 stale 保护和筛选后列表一致性均已合并。
 - 后端项目成员写路径已补齐最后一个 `OWNER` 保护：不能删除或降级项目最后一个 `OWNER`，但允许先新增或提升另一个 `OWNER` 后再完成 owner 转移。
+- R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略之外的运行时设置，在有真实运行时消费者前，不得暴露为可写配置。
 - 存储清理、保留周期、配额、缩略图策略和 orphan cleanup 仍需实现。
@@ -132,6 +133,7 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
    - 已完成并合并。后端 member update/delete 路径会保留至少一个项目 `OWNER`，并验证被拒绝的写入不会记录成功 operation log。
 4. `R12`
    - 卖家工作流 review 和回归。
+   - 已完成。未发现阻塞问题；通过前端 lint/type-check/test/build、后端 test/race/vet/build、Compose config、whitespace 检查和前端禁止模式扫描。
 
 ### P13：运行时设置、配额与存储生命周期
 
@@ -182,12 +184,12 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 ## 下一个建议生成的任务
 
-除非用户选择其他顺序，否则下一个任务应生成 `R12`，对 P12 全部代码做 review、回归和文档对齐。
+除非用户选择其他顺序，否则下一个任务应生成 `P13-BE-RUNTIME-DEFAULTS`。
 
 推荐分支：
 
 ```text
-codex/r12-seller-workflow-regression-review
+codex/p13-backend-runtime-defaults
 ```
 
 推荐起始分支：
@@ -202,8 +204,9 @@ latest main
 - `P12-FE-UNIFIED-HISTORY` 已完成并合并。
 - `P12-FE-PROJECT-WORKFLOW-POLISH` 已完成并合并。
 - `P12-BE-PROJECT-MEMBER-HARDENING` 已完成并合并。
-- 下一步串行执行 `R12`。R12 需要覆盖卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界和 P12 文档状态。
-- 在 R12 完成前不要开始 P13；在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
+- `R12` 已完成。
+- 下一步串行执行 `P13-BE-RUNTIME-DEFAULTS`。该任务必须先明确默认 Provider/模型是否进入任务创建路径；如果实现默认值，必须修改真实 task 创建运行时消费者并补齐测试。若产品继续选择显式-only 提交，则不要暴露可写默认 Provider/模型设置。
+- 在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
 
 ## 标准验证命令
 

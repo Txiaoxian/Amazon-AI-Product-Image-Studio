@@ -35,7 +35,7 @@ The P1 frontend mechanical move is complete. Do not move backend code under `fro
 4. Backend persists the task in MySQL and enqueues it in Redis.
 5. Worker claims the task, applies runtime concurrency limits, calls the selected Provider Adapter, stores outputs in MinIO, and writes task events to MySQL.
 6. Frontend receives task events over SSE and updates UI without polling.
-7. Project history currently uses backend task/assets data in the frontend; the P10 backend unified history endpoint exists and should be consumed by a later frontend migration task.
+7. Project history must use the backend unified history endpoint; do not rebuild the production history feed by joining task and asset lists in the browser.
 
 ## Hard architecture rules
 
