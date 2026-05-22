@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P12 Unified History Merge
+## Current State After P12 Project Workflow Polish Merge
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -34,7 +34,7 @@ Completed phases:
 | P9 | Complete | Audit/usage reads, upload-policy settings, production secret guards, security/deploy regression. |
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
-| P12 | In progress | Frontend history now consumes the backend unified project history endpoint. Project workflow polish and project-member hardening remain. |
+| P12 | In progress | Frontend unified history and seller project/asset workflow polish are merged. Backend project-member invariant hardening and R12 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -54,6 +54,8 @@ R11 validation passed:
 
 `P12-FE-UNIFIED-HISTORY` was reviewed and merged. The frontend history production path now uses `GET /api/v1/projects/{projectId}/history` instead of joining task and asset lists in the browser. The task passed frontend lint, type-check, targeted history/API tests, full frontend tests, build, and whitespace checks. Non-blocking follow-up: history thumbnails currently use authorized asset download URLs; later polish can prefer safe same-origin thumbnail URLs when available.
 
+`P12-FE-PROJECT-WORKFLOW-POLISH` was reviewed, fixed, and merged. The seller workspace now supports project edit, asset filters, asset metadata edit, project member entry points backed by real member APIs, upload/project-switch stale protection, and filtered-list consistency after favorite or metadata mutations. The task passed frontend lint, type-check, targeted project/asset tests, full frontend tests, build, and whitespace checks. Non-blocking follow-up: member remove success and member update/remove error paths can receive more granular frontend tests when the project-member backend invariants are hardened.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -67,6 +69,7 @@ The current `main` branch supports:
 - Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
 - Frontend workbench submission through backend task APIs and SSE only.
 - Frontend history reads backend-owned project history from `GET /projects/{projectId}/history`, with pagination, generated/edited filtering, stale-response protection, authorized detail/download, and backend `editSourceAssetId` re-edit.
+- Seller workspace project/asset workflow supports project edit, reference upload, asset filtering, asset metadata edit, favorite/delete/download/detail/use-as-reference, and project member list/add/update/remove entry points through backend APIs.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
@@ -125,12 +128,13 @@ Suggested order:
 2. `P12-FE-PROJECT-WORKFLOW-POLISH`
    - Improve project creation/editing/member entry points and asset management ergonomics.
    - Keep the existing UI concepts; do not rewrite the app shell.
+   - Completed and merged. Project edit, asset filters, asset metadata edit, project member API entry points, and project-switch stale-state protections are now in the frontend.
 3. `P12-BE-PROJECT-MEMBER-HARDENING`
    - Add missing project-member invariants such as preventing loss of the last `OWNER` where appropriate.
 4. `R12`
    - End-to-end seller workflow review.
 
-Parallelism: `P12-FE-UNIFIED-HISTORY` is complete. Next run `P12-FE-PROJECT-WORKFLOW-POLISH` serially because it touches the main seller workspace UI. `P12-BE-PROJECT-MEMBER-HARDENING` can follow or run later in an independent backend worktree after the frontend polish scope is stable.
+Parallelism: `P12-FE-UNIFIED-HISTORY` and `P12-FE-PROJECT-WORKFLOW-POLISH` are complete. Next run `P12-BE-PROJECT-MEMBER-HARDENING` serially because it changes backend project-member invariants and authorization-sensitive write paths. Run `R12` after it merges.
 
 ### P13: Runtime Settings, Quotas, And Storage Lifecycle
 
@@ -240,4 +244,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Continue P12 with `P12-FE-PROJECT-WORKFLOW-POLISH` from latest `main`. Keep it focused on project selection/editing/member entry points and asset management ergonomics; do not start P13 writable settings until every proposed setting has a real runtime consumer.
+Continue P12 with `P12-BE-PROJECT-MEMBER-HARDENING` from latest `main`. Keep it focused on backend project-member invariants such as last-owner protection, role transition validation, tenant/object authorization, and operation-log coverage. Do not start P13 writable settings until every proposed setting has a real runtime consumer.

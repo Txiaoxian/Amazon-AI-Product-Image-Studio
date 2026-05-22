@@ -77,7 +77,7 @@
 
 ## 当前状态
 
-R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理任务均已 review、合并并完成整批回归。`P12-FE-UNIFIED-HISTORY` 已 review 并合并。
+R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理任务均已 review、合并并完成整批回归。`P12-FE-UNIFIED-HISTORY` 与 `P12-FE-PROJECT-WORKFLOW-POLISH` 均已 review、修复并合并。
 
 已完成的平台基础：
 
@@ -88,7 +88,8 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 当前已知后续项：
 
-- 前端历史已改为消费 `GET /api/v1/projects/{projectId}/history`；后续项目/资产工作流仍需产品化打磨。
+- 前端历史已改为消费 `GET /api/v1/projects/{projectId}/history`。
+- 前端项目/资产工作流已完成一轮产品化打磨：项目编辑、资产筛选、资产元数据编辑、项目成员入口、上传切项目 stale 保护和筛选后列表一致性均已合并。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略之外的运行时设置，在有真实运行时消费者前，不得暴露为可写配置。
 - 存储清理、保留周期、配额、缩略图策略和 orphan cleanup 仍需实现。
@@ -124,6 +125,7 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
    - 已完成并合并。历史列表不再由浏览器 join tasks/assets 生成。
 2. `P12-FE-PROJECT-WORKFLOW-POLISH`
    - 改进项目选择、编辑、成员入口和资产管理体验。
+   - 已完成并合并。前端项目/资产工作流已接入真实后端项目成员 API，并修复项目切换与筛选状态一致性问题。
 3. `P12-BE-PROJECT-MEMBER-HARDENING`
    - 根据产品规则补齐项目成员约束，例如最后一个 `OWNER` 保护。
 4. `R12`
@@ -178,12 +180,12 @@ R11 已完成，未发现阻塞问题。P11 后端和前端用户/角色管理�
 
 ## 下一个建议生成的任务
 
-除非用户选择其他顺序，否则下一个任务应生成 `P12-FE-PROJECT-WORKFLOW-POLISH`。
+除非用户选择其他顺序，否则下一个任务应生成 `P12-BE-PROJECT-MEMBER-HARDENING`。
 
 推荐分支：
 
 ```text
-codex/p12-frontend-project-workflow-polish
+codex/p12-backend-project-member-hardening
 ```
 
 推荐起始分支：
@@ -196,8 +198,8 @@ latest main
 
 - P11 后端与前端用户/角色管理已完成、合并并通过 R11。
 - `P12-FE-UNIFIED-HISTORY` 已完成并合并。
-- 下一步串行执行 `P12-FE-PROJECT-WORKFLOW-POLISH`，因为它会触碰卖家侧主工作区、项目选择和资产操作体验。
-- `P12-BE-PROJECT-MEMBER-HARDENING` 可在前端 polish 稳定后再考虑并行或串行推进。
+- `P12-FE-PROJECT-WORKFLOW-POLISH` 已完成并合并。
+- 下一步串行执行 `P12-BE-PROJECT-MEMBER-HARDENING`，因为它会触碰 backend 项目成员写路径、对象级授权和审计日志，不应与其他后端权限任务并行。
 - 在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
 
 ## 标准验证命令
