@@ -14,7 +14,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P11 Identity Administration
+## Current State After R11 Identity Administration Review
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -35,7 +35,21 @@ Completed phases:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 
-R10 found no blocking issues. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified. Frontend lint, type-check, targeted tests, full tests, build, and whitespace checks passed for the P11 frontend task.
+R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
+
+R11 validation passed:
+
+- `cd frontend && npm run lint`
+- `cd frontend && npm run type-check`
+- `cd frontend && npm run test`
+- `cd frontend && npm run build`
+- `cd backend && go test ./...`
+- `cd backend && go test -race ./...`
+- `cd backend && go vet ./...`
+- `cd backend && go build ./cmd/api ./cmd/worker`
+- `docker compose -f deploy/docker-compose.yml config`
+- `git diff --check 2b186fb..HEAD`
+- Focused P11 frontend/backend sensitive-pattern scans for forbidden browser storage, polling, Provider direct calls, unsafe response fields, and secret markers.
 
 ## Completed Platform Capabilities
 
@@ -90,7 +104,7 @@ Suggested order:
    - Admin UI for users, roles, permissions, status changes, and role assignment.
    - Completed and merged. It consumes the merged backend contracts, gates UI and data loading by permissions, avoids rendering unsafe response fields, keeps created-user passwords transient, and uses `/disable`, `/enable`, and `/roles` write endpoints with CSRF.
 3. `R11`
-   - Task-level review completed for backend and frontend slices. A broader release-style R11 can still be run before P12 if desired, but no blocking P11 issue is currently open.
+   - Completed. Full P11-range review and regression found no blocking issues.
 
 Parallelism: P11 is complete. Move to P12 from latest `main`.
 
