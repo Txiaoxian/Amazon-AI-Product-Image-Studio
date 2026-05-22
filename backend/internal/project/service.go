@@ -598,6 +598,11 @@ func (s *Service) updateMember(ctx context.Context, principal auth.Principal, pr
 		if err != nil {
 			return err
 		}
+		if current.Role == RoleOwner && input.Role != RoleOwner {
+			if err := ensureAnotherOwnerRemains(ctx, repo, scope, record.ID, current.UserID); err != nil {
+				return err
+			}
+		}
 
 		updated, err = repo.UpdateMember(ctx, scope, record.ID, input.UserID, input.Role, s.now())
 		if err != nil {
@@ -651,6 +656,11 @@ func (s *Service) removeMember(ctx context.Context, principal auth.Principal, pr
 		if err != nil {
 			return err
 		}
+		if current.Role == RoleOwner {
+			if err := ensureAnotherOwnerRemains(ctx, repo, scope, record.ID, current.UserID); err != nil {
+				return err
+			}
+		}
 		if err := repo.DeleteMember(ctx, scope, record.ID, userID); err != nil {
 			return err
 		}
@@ -670,6 +680,24 @@ func (s *Service) removeMember(ctx context.Context, principal auth.Principal, pr
 			},
 		})
 	})
+}
+
+func ensureAnotherOwnerRemains(ctx context.Context, repo Repository, scope tenant.Scope, projectID string, targetUserID string) error {
+	owners, err := repo.LockProjectOwners(ctx, scope, projectID)
+	if err != nil {
+		return err
+	}
+	targetIsOwner := false
+	for _, owner := range owners {
+		if owner.UserID == targetUserID {
+			targetIsOwner = true
+			break
+		}
+	}
+	if len(owners) == 0 || (targetIsOwner && len(owners) <= 1) {
+		return ErrConflict
+	}
+	return nil
 }
 
 func ensureTargetUser(ctx context.Context, repo Repository, scope tenant.Scope, userID string) error {

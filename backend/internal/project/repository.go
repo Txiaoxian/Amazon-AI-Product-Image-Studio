@@ -10,6 +10,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -186,6 +187,30 @@ func (r Repository) FindMember(ctx context.Context, scope tenant.Scope, projectI
 		return database.ProjectMember{}, ErrNotFound
 	}
 	return record, err
+}
+
+func (r Repository) LockProjectOwners(ctx context.Context, scope tenant.Scope, projectID string) ([]database.ProjectMember, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, ErrValidation
+	}
+
+	query := db.Model(&database.ProjectMember{}).
+		Where("tenant_id = ? AND project_id = ? AND role = ?", scope.ID(), projectID, RoleOwner).
+		Order("user_id ASC")
+	if db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+
+	var records []database.ProjectMember
+	if err := query.Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 func (r Repository) CreateMember(ctx context.Context, scope tenant.Scope, record *database.ProjectMember) error {

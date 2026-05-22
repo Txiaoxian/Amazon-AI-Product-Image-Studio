@@ -206,6 +206,240 @@ func TestProjectRoutesRequireRBACAndProjectRoleForNormalUsers(t *testing.T) {
 	}
 }
 
+func TestProjectMemberRoutesRejectRemovingOrDowngradingLastOwner(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	projectID := createProjectForTest(t, router, adminSession, "Last Owner Guard")
+
+	deleteLogsBefore := countProjectOperationLogs(t, db, "project_member.delete")
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/projects/"+projectID+"/members/"+adminSession.userID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusConflict {
+		t.Fatalf("delete last owner status = %d, want %d: %s", deleteResponse.Code, http.StatusConflict, deleteResponse.Body.String())
+	}
+	assertProjectMemberRole(t, db, adminSession.tenantID, projectID, adminSession.userID, project.RoleOwner)
+	if got := countProjectOperationLogs(t, db, "project_member.delete"); got != deleteLogsBefore {
+		t.Fatalf("blocked last owner delete wrote operation log count = %d, want %d", got, deleteLogsBefore)
+	}
+
+	updateLogsBefore := countProjectOperationLogs(t, db, "project_member.update")
+	downgradeResponse := performJSON(router, http.MethodPatch, "/api/v1/projects/"+projectID+"/members/"+adminSession.userID, map[string]string{
+		"role": "EDITOR",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if downgradeResponse.Code != http.StatusConflict {
+		t.Fatalf("downgrade last owner status = %d, want %d: %s", downgradeResponse.Code, http.StatusConflict, downgradeResponse.Body.String())
+	}
+	assertProjectMemberRole(t, db, adminSession.tenantID, projectID, adminSession.userID, project.RoleOwner)
+	if got := countProjectOperationLogs(t, db, "project_member.update"); got != updateLogsBefore {
+		t.Fatalf("blocked last owner downgrade wrote operation log count = %d, want %d", got, updateLogsBefore)
+	}
+
+	noopResponse := performJSON(router, http.MethodPatch, "/api/v1/projects/"+projectID+"/members/"+adminSession.userID, map[string]string{
+		"role": "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if noopResponse.Code != http.StatusOK {
+		t.Fatalf("last owner update to OWNER status = %d, want %d: %s", noopResponse.Code, http.StatusOK, noopResponse.Body.String())
+	}
+	assertProjectMemberRole(t, db, adminSession.tenantID, projectID, adminSession.userID, project.RoleOwner)
+}
+
+func TestProjectMemberRoutesAllowOwnerTransferWhenAnotherOwnerRemains(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+
+	deleteProjectID := createProjectForTest(t, router, adminSession, "Delete One Owner")
+	seedActiveUser(t, db, adminSession.tenantID, "owner-delete-user", "owner-delete@example.com", "Owner Delete", "owner-delete-password-123")
+	addOwnerResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+deleteProjectID+"/members", map[string]string{
+		"userId": "owner-delete-user",
+		"role":   "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addOwnerResponse.Code != http.StatusCreated {
+		t.Fatalf("add owner for delete status = %d, want %d: %s", addOwnerResponse.Code, http.StatusCreated, addOwnerResponse.Body.String())
+	}
+	deleteLogsBefore := countProjectOperationLogs(t, db, "project_member.delete")
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/projects/"+deleteProjectID+"/members/owner-delete-user", nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete one of two owners status = %d, want %d: %s", deleteResponse.Code, http.StatusOK, deleteResponse.Body.String())
+	}
+	assertProjectMemberMissing(t, db, adminSession.tenantID, deleteProjectID, "owner-delete-user")
+	assertProjectMemberRole(t, db, adminSession.tenantID, deleteProjectID, adminSession.userID, project.RoleOwner)
+	if got := countProjectOperationLogs(t, db, "project_member.delete"); got != deleteLogsBefore+1 {
+		t.Fatalf("successful owner delete operation log count = %d, want %d", got, deleteLogsBefore+1)
+	}
+
+	downgradeProjectID := createProjectForTest(t, router, adminSession, "Downgrade One Owner")
+	seedActiveUser(t, db, adminSession.tenantID, "owner-downgrade-user", "owner-downgrade@example.com", "Owner Downgrade", "owner-downgrade-password-123")
+	addDowngradeOwnerResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+downgradeProjectID+"/members", map[string]string{
+		"userId": "owner-downgrade-user",
+		"role":   "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addDowngradeOwnerResponse.Code != http.StatusCreated {
+		t.Fatalf("add owner for downgrade status = %d, want %d: %s", addDowngradeOwnerResponse.Code, http.StatusCreated, addDowngradeOwnerResponse.Body.String())
+	}
+	updateLogsBefore := countProjectOperationLogs(t, db, "project_member.update")
+	downgradeResponse := performJSON(router, http.MethodPatch, "/api/v1/projects/"+downgradeProjectID+"/members/owner-downgrade-user", map[string]string{
+		"role": "VIEWER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if downgradeResponse.Code != http.StatusOK {
+		t.Fatalf("downgrade one of two owners status = %d, want %d: %s", downgradeResponse.Code, http.StatusOK, downgradeResponse.Body.String())
+	}
+	assertProjectMemberRole(t, db, adminSession.tenantID, downgradeProjectID, "owner-downgrade-user", project.RoleViewer)
+	assertProjectMemberRole(t, db, adminSession.tenantID, downgradeProjectID, adminSession.userID, project.RoleOwner)
+	if got := countProjectOperationLogs(t, db, "project_member.update"); got != updateLogsBefore+1 {
+		t.Fatalf("successful owner downgrade operation log count = %d, want %d", got, updateLogsBefore+1)
+	}
+
+	transferProjectID := createProjectForTest(t, router, adminSession, "Transfer Owner")
+	seedActiveUser(t, db, adminSession.tenantID, "new-owner-user", "new-owner@example.com", "New Owner", "new-owner-password-123")
+	addNewOwnerResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+transferProjectID+"/members", map[string]string{
+		"userId": "new-owner-user",
+		"role":   "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addNewOwnerResponse.Code != http.StatusCreated {
+		t.Fatalf("add second owner status = %d, want %d: %s", addNewOwnerResponse.Code, http.StatusCreated, addNewOwnerResponse.Body.String())
+	}
+	removeOriginalResponse := performJSON(router, http.MethodDelete, "/api/v1/projects/"+transferProjectID+"/members/"+adminSession.userID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if removeOriginalResponse.Code != http.StatusOK {
+		t.Fatalf("delete original owner after transfer status = %d, want %d: %s", removeOriginalResponse.Code, http.StatusOK, removeOriginalResponse.Body.String())
+	}
+	assertProjectMemberMissing(t, db, adminSession.tenantID, transferProjectID, adminSession.userID)
+	assertProjectMemberRole(t, db, adminSession.tenantID, transferProjectID, "new-owner-user", project.RoleOwner)
+}
+
+func TestProjectMemberRoutesValidationTenantAndRBACRegressions(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	projectID := createProjectForTest(t, router, adminSession, "Member Guard Regressions")
+
+	seedActiveUser(t, db, adminSession.tenantID, "duplicate-user", "duplicate@example.com", "Duplicate User", "duplicate-password-123")
+	addResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "duplicate-user",
+		"role":   "EDITOR",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addResponse.Code != http.StatusCreated {
+		t.Fatalf("add duplicate base member status = %d, want %d: %s", addResponse.Code, http.StatusCreated, addResponse.Body.String())
+	}
+	duplicateResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "duplicate-user",
+		"role":   "VIEWER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if duplicateResponse.Code != http.StatusConflict {
+		t.Fatalf("duplicate member status = %d, want %d: %s", duplicateResponse.Code, http.StatusConflict, duplicateResponse.Body.String())
+	}
+
+	invalidRoleResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "duplicate-user",
+		"role":   "ADMIN",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if invalidRoleResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid role status = %d, want %d: %s", invalidRoleResponse.Code, http.StatusUnprocessableEntity, invalidRoleResponse.Body.String())
+	}
+
+	missingUserResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "missing-user",
+		"role":   "VIEWER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if missingUserResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing target user status = %d, want %d: %s", missingUserResponse.Code, http.StatusUnprocessableEntity, missingUserResponse.Body.String())
+	}
+
+	seedInactiveUser(t, db, adminSession.tenantID, "inactive-user", "inactive@example.com", "Inactive User")
+	inactiveUserResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "inactive-user",
+		"role":   "VIEWER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if inactiveUserResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("inactive target user status = %d, want %d: %s", inactiveUserResponse.Code, http.StatusUnprocessableEntity, inactiveUserResponse.Body.String())
+	}
+
+	seedOtherTenantProject(t, db)
+	crossTenantCases := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{
+			name:   "add",
+			method: http.MethodPost,
+			path:   "/api/v1/projects/project-tenant-b/members",
+			body: map[string]string{
+				"userId": adminSession.userID,
+				"role":   "VIEWER",
+			},
+		},
+		{
+			name:   "update",
+			method: http.MethodPatch,
+			path:   "/api/v1/projects/project-tenant-b/members/user-tenant-b",
+			body:   map[string]string{"role": "VIEWER"},
+		},
+		{
+			name:   "delete",
+			method: http.MethodDelete,
+			path:   "/api/v1/projects/project-tenant-b/members/user-tenant-b",
+		},
+	}
+	for _, tc := range crossTenantCases {
+		response := performJSON(router, tc.method, tc.path, tc.body, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("cross-tenant member %s status = %d, want %d: %s", tc.name, response.Code, http.StatusNotFound, response.Body.String())
+		}
+		for _, forbidden := range []string{"tenant-b", "project-tenant-b", "user-tenant-b"} {
+			if strings.Contains(response.Body.String(), forbidden) {
+				t.Fatalf("cross-tenant member %s leaked %q: %s", tc.name, forbidden, response.Body.String())
+			}
+		}
+	}
+
+	seedActiveUser(t, db, adminSession.tenantID, "manager-user", "manager@example.com", "Manager User", "manager-password-123")
+	assignRoleWithPermissions(t, db, adminSession.tenantID, "manager-user", "member-manager", []string{"project:read", "project:member:manage"})
+	addManagerResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "manager-user",
+		"role":   "VIEWER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addManagerResponse.Code != http.StatusCreated {
+		t.Fatalf("add manager member status = %d, want %d: %s", addManagerResponse.Code, http.StatusCreated, addManagerResponse.Body.String())
+	}
+	managerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "manager@example.com", "manager-password-123")
+	seedActiveUser(t, db, adminSession.tenantID, "manager-target-user", "manager-target@example.com", "Manager Target", "manager-target-password-123")
+	nonOwnerManageResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "manager-target-user",
+		"role":   "VIEWER",
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if nonOwnerManageResponse.Code != http.StatusForbidden {
+		t.Fatalf("member manager non-owner add status = %d, want %d: %s", nonOwnerManageResponse.Code, http.StatusForbidden, nonOwnerManageResponse.Body.String())
+	}
+	promoteManagerResponse := performJSON(router, http.MethodPatch, "/api/v1/projects/"+projectID+"/members/manager-user", map[string]string{
+		"role": "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if promoteManagerResponse.Code != http.StatusOK {
+		t.Fatalf("promote manager status = %d, want %d: %s", promoteManagerResponse.Code, http.StatusOK, promoteManagerResponse.Body.String())
+	}
+	ownerWithRBACManageResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "manager-target-user",
+		"role":   "VIEWER",
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if ownerWithRBACManageResponse.Code != http.StatusCreated {
+		t.Fatalf("member manager owner add status = %d, want %d: %s", ownerWithRBACManageResponse.Code, http.StatusCreated, ownerWithRBACManageResponse.Body.String())
+	}
+
+	seedActiveUser(t, db, adminSession.tenantID, "owner-no-rbac-user", "owner-no-rbac@example.com", "Owner No RBAC", "owner-no-rbac-password-123")
+	assignRole(t, db, adminSession.tenantID, "owner-no-rbac-user", "limited")
+	addOwnerNoRBACResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "owner-no-rbac-user",
+		"role":   "OWNER",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if addOwnerNoRBACResponse.Code != http.StatusCreated {
+		t.Fatalf("add owner without RBAC status = %d, want %d: %s", addOwnerNoRBACResponse.Code, http.StatusCreated, addOwnerNoRBACResponse.Body.String())
+	}
+	ownerNoRBACSession := loginProjectRouteUser(t, router, adminSession.tenantID, "owner-no-rbac@example.com", "owner-no-rbac-password-123")
+	seedActiveUser(t, db, adminSession.tenantID, "owner-no-rbac-target-user", "owner-no-rbac-target@example.com", "Owner No RBAC Target", "owner-no-rbac-target-password-123")
+	ownerNoRBACManageResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/members", map[string]string{
+		"userId": "owner-no-rbac-target-user",
+		"role":   "VIEWER",
+	}, ownerNoRBACSession.cookies, ownerNoRBACSession.csrfHeader())
+	if ownerNoRBACManageResponse.Code != http.StatusForbidden {
+		t.Fatalf("owner without RBAC add status = %d, want %d: %s", ownerNoRBACManageResponse.Code, http.StatusForbidden, ownerNoRBACManageResponse.Body.String())
+	}
+}
+
 type projectRouteSession struct {
 	tenantID string
 	userID   string
@@ -327,6 +561,112 @@ func assignRole(t *testing.T, db *gorm.DB, tenantID string, userID string, roleC
 	}).Error; err != nil {
 		t.Fatalf("assign role %s to %s: %v", roleCode, userID, err)
 	}
+}
+
+func assignRoleWithPermissions(t *testing.T, db *gorm.DB, tenantID string, userID string, roleCode string, permissionCodes []string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	role := database.Role{
+		ID:          "role-" + roleCode,
+		TenantID:    tenantID,
+		Code:        roleCode,
+		Name:        roleCode,
+		Description: "Project member route test role",
+		Status:      auth.RoleStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := db.Create(&role).Error; err != nil {
+		t.Fatalf("seed role %s: %v", roleCode, err)
+	}
+	for _, code := range permissionCodes {
+		var permission database.Permission
+		if err := db.Where("code = ?", code).First(&permission).Error; err != nil {
+			t.Fatalf("find permission %s: %v", code, err)
+		}
+		if err := db.Create(&database.RolePermission{
+			ID:           "role-permission-" + roleCode + "-" + code,
+			TenantID:     tenantID,
+			RoleID:       role.ID,
+			PermissionID: permission.ID,
+			CreatedAt:    now,
+		}).Error; err != nil {
+			t.Fatalf("assign permission %s to role %s: %v", code, roleCode, err)
+		}
+	}
+	if err := db.Create(&database.UserRole{
+		ID:        "user-role-" + userID + "-" + roleCode,
+		TenantID:  tenantID,
+		UserID:    userID,
+		RoleID:    role.ID,
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("assign role %s to %s: %v", roleCode, userID, err)
+	}
+}
+
+func seedInactiveUser(t *testing.T, db *gorm.DB, tenantID string, userID string, email string, displayName string) {
+	t.Helper()
+
+	if err := db.Create(&database.User{
+		ID:           userID,
+		TenantID:     tenantID,
+		Email:        email,
+		DisplayName:  displayName,
+		PasswordHash: "inactive-password-hash",
+		Status:       "DISABLED",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("seed inactive user %s: %v", userID, err)
+	}
+}
+
+func createProjectForTest(t *testing.T, router http.Handler, session projectRouteSession, name string) string {
+	t.Helper()
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects", map[string]string{
+		"name": name,
+	}, session.cookies, session.csrfHeader())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create project %q status = %d, want %d: %s", name, response.Code, http.StatusCreated, response.Body.String())
+	}
+	return stringField(t, decodeData(t, response), "id")
+}
+
+func assertProjectMemberRole(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string, role string) {
+	t.Helper()
+
+	var member database.ProjectMember
+	if err := db.Where("tenant_id = ? AND project_id = ? AND user_id = ?", tenantID, projectID, userID).First(&member).Error; err != nil {
+		t.Fatalf("load project member %s/%s: %v", projectID, userID, err)
+	}
+	if member.Role != role {
+		t.Fatalf("member %s/%s role = %q, want %q", projectID, userID, member.Role, role)
+	}
+}
+
+func assertProjectMemberMissing(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string) {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&database.ProjectMember{}).Where("tenant_id = ? AND project_id = ? AND user_id = ?", tenantID, projectID, userID).Count(&count).Error; err != nil {
+		t.Fatalf("count project member %s/%s: %v", projectID, userID, err)
+	}
+	if count != 0 {
+		t.Fatalf("member %s/%s exists, want missing", projectID, userID)
+	}
+}
+
+func countProjectOperationLogs(t *testing.T, db *gorm.DB, action string) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&database.OperationLog{}).Where("action = ?", action).Count(&count).Error; err != nil {
+		t.Fatalf("count operation logs %s: %v", action, err)
+	}
+	return count
 }
 
 func seedOtherTenantProject(t *testing.T, db *gorm.DB) {
