@@ -72,7 +72,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		startTaskEventSubscriber(options.LifecycleContext, taskEventSubscriber, eventBroker, options.Logger)
 	}
 	taskService := task.NewService(options.Database, options.Logger, taskEnqueuer(options), task.WithEventPublisher(eventPublisher))
-	settingsService := settings.NewService(options.Database, options.Logger, options.Config.Upload)
+	settingsService := settings.NewService(options.Database, options.Logger, options.Config.Upload, options.Config.Queue)
 
 	RegisterRoutes(
 		router,

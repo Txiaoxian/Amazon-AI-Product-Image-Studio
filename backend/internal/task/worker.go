@@ -16,6 +16,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
 	providerpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
@@ -30,6 +31,8 @@ const (
 	defaultWorkerConcurrency = 1
 	maxWorkerConcurrency     = 256
 )
+
+var errTaskConcurrencyPolicyUnavailable = errors.New("task concurrency policy unavailable")
 
 type claimAction int
 
@@ -358,7 +361,13 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 		return ProcessResult{Action: claimActionAck}, nil
 	}
 
-	lease, err := p.acquireConcurrency(ctx, snapshot)
+	lease, err := p.acquireConcurrency(ctx, scope, snapshot)
+	if errors.Is(err, settings.ErrStoredTaskConcurrencyInvalid) {
+		if failErr := p.failEligibleTask(ctx, scope, snapshot.Task.ID, "TASK_CONFIGURATION_INVALID", "Task configuration is no longer available."); failErr != nil {
+			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr
+		}
+		return ProcessResult{Action: claimActionAck}, nil
+	}
 	if errors.Is(err, queue.ErrConcurrencyLimited) {
 		return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, nil
 	}
@@ -543,20 +552,32 @@ func (p *WorkerProcessor) scopeForTask(ctx context.Context, taskID string) (tena
 	return tenant.NewScope(tenantID)
 }
 
-func (p *WorkerProcessor) acquireConcurrency(ctx context.Context, snapshot ExecutionContext) (queue.ConcurrencyLease, error) {
+func (p *WorkerProcessor) acquireConcurrency(ctx context.Context, scope tenant.Scope, snapshot ExecutionContext) (queue.ConcurrencyLease, error) {
 	if p.limiter == nil {
 		return queue.ConcurrencyLease{}, nil
 	}
-	providerLimit := p.options.ProviderConcurrency
+	policy, err := settings.LoadTaskConcurrency(ctx, settings.NewRepository(p.db), scope, settings.TaskConcurrency{
+		TenantLimit:   p.options.TenantConcurrency,
+		UserLimit:     p.options.UserConcurrency,
+		ProviderLimit: p.options.ProviderConcurrency,
+		ModelLimit:    p.options.ModelConcurrency,
+	})
+	if err != nil {
+		if !errors.Is(err, settings.ErrStoredTaskConcurrencyInvalid) {
+			return queue.ConcurrencyLease{}, errTaskConcurrencyPolicyUnavailable
+		}
+		return queue.ConcurrencyLease{}, err
+	}
+	providerLimit := policy.ProviderLimit
 	if snapshot.Provider.ConcurrencyLimit > 0 && snapshot.Provider.ConcurrencyLimit < providerLimit {
 		providerLimit = snapshot.Provider.ConcurrencyLimit
 	}
 	dimensions := []queue.ConcurrencyDimension{
 		{Name: "global", Value: "all", Limit: p.options.GlobalConcurrency},
-		{Name: "tenant", Value: snapshot.Task.TenantID, Limit: p.options.TenantConcurrency},
-		{Name: "user", Value: snapshot.Task.CreatedBy, Limit: p.options.UserConcurrency},
+		{Name: "tenant", Value: snapshot.Task.TenantID, Limit: policy.TenantLimit},
+		{Name: "user", Value: snapshot.Task.CreatedBy, Limit: policy.UserLimit},
 		{Name: "provider", Value: snapshot.Task.ProviderID, Limit: providerLimit},
-		{Name: "model", Value: snapshot.Task.ModelID, Limit: p.options.ModelConcurrency},
+		{Name: "model", Value: snapshot.Task.ModelID, Limit: policy.ModelLimit},
 	}
 	return p.limiter.Acquire(ctx, dimensions, p.options.ConcurrencyLeaseTTL, p.now())
 }
