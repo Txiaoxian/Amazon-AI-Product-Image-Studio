@@ -16,11 +16,11 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After R12 Seller Workflow Review
+## Current State During P13 Runtime Settings Work
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
-Completed phases:
+Phase status:
 
 | Phase | Status | Result |
 | --- | --- | --- |
@@ -37,6 +37,7 @@ Completed phases:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
+| P13 | In progress | Runtime-backed tenant task defaults are merged; hardening, concurrency policy, storage lifecycle, frontend settings, and R13 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -62,6 +63,10 @@ R11 validation passed:
 
 R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no blocking issues. Validation passed frontend lint, type-check, tests, build, backend tests, race tests, vet, API/Worker builds, Docker Compose config, whitespace checks, and frontend forbidden-pattern scans for Provider direct calls, Provider key storage, task polling, and sensitive browser storage. Non-blocking follow-ups remain: prefer safe same-origin thumbnail URLs for history cards when available, add MySQL-backed concurrent owner-mutation coverage during later integration/E2E work, and keep P13 writable settings blocked until each setting has a real runtime consumer.
 
+`P13-BE-RUNTIME-DEFAULTS` was reviewed and merged. The backend now exposes tenant `taskDefaults.{defaultProviderId,defaultModelId}` through the existing system-settings contract and consumes it only when task creation omits both Provider/model IDs. Explicit pairs remain unchanged; mixed explicit/default requests, absent or cleared defaults, invalid Provider/model ownership or enabled state, and capability-invalid default-backed submissions fail without task creation, enqueueing, or a successful `task.create` log. Validation passed focused settings/task/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
+
+P13 review found one non-blocking hardening item that must be completed before adding further writable settings: if a `task_defaults` row is malformed or contains only one ID due to manual database mutation or legacy corruption, a default-backed task currently crosses package error boundaries as an internal error. The next serial task must make this path fail closed as `422 VALIDATION_ERROR` with no queue or audit side effects, while keeping explicit Provider/model submissions independent of unreadable defaults.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -77,6 +82,7 @@ The current `main` branch supports:
 - Frontend history reads backend-owned project history from `GET /projects/{projectId}/history`, with pagination, generated/edited filtering, stale-response protection, authorized detail/download, and backend `editSourceAssetId` re-edit.
 - Seller workspace project/asset workflow supports project edit, reference upload, asset filtering, asset metadata edit, favorite/delete/download/detail/use-as-reference, and project member list/add/update/remove entry points through backend APIs.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
+- Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, and task creation resolves that pair only when both IDs are omitted.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -151,15 +157,18 @@ Goal: make admin settings honest and operational by connecting every writable fi
 Suggested order:
 
 1. `P13-BE-RUNTIME-DEFAULTS`
-   - Default Provider/model settings consumed by task creation when the request omits explicit IDs, or keep them unavailable if the product chooses explicit-only submission.
-   - Current contract: implement tenant `taskDefaults.{defaultProviderId,defaultModelId}`. Task creation may consume defaults only when both `providerId` and `modelId` are omitted; mixed explicit/default requests remain invalid.
-2. `P13-BE-CONCURRENCY-POLICY`
+   - Completed and merged. Tenant `taskDefaults.{defaultProviderId,defaultModelId}` are stored through system settings and consumed by task creation only when both `providerId` and `modelId` are omitted.
+   - Review passed for normal API-produced state; malformed persisted default rows require the focused hardening task below.
+2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
+   - Normalize malformed or one-sided persisted `task_defaults` failures to the public task validation contract.
+   - Default-backed requests must return `422 VALIDATION_ERROR` with no task, enqueue, event, or successful operation log; explicit Provider/model submissions must remain unaffected by corrupted unused defaults.
+3. `P13-BE-CONCURRENCY-POLICY`
    - Tenant/user/provider/model concurrency policies loaded from settings and consumed by Worker limiters.
-3. `P13-BE-STORAGE-QUOTA-RETENTION`
+4. `P13-BE-STORAGE-QUOTA-RETENTION`
    - Storage quota accounting, log/asset retention policy, orphan cleanup, and independent cleanup context/job.
-4. `P13-FE-SYSTEM-SETTINGS`
+5. `P13-FE-SYSTEM-SETTINGS`
    - Frontend admin UI only for settings that are active and runtime-backed.
-5. `R13`
+6. `R13`
    - Settings/quotas/storage lifecycle review.
 
 Parallelism: mostly serial because settings fields must not be exposed before runtime consumers exist.
@@ -253,4 +262,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start P13 with `P13-BE-RUNTIME-DEFAULTS` from latest `main`. Keep it serial and implement the default Provider/model settings only because their runtime consumer is task creation. Do not expose any other writable runtime setting unless its consumer is implemented in the same task or already exists.
+Run `P13-BE-RUNTIME-DEFAULTS-HARDENING` serially from latest `main` before opening any additional writable settings. It must close the malformed persisted-default error mapping found in review without changing the active settings fields or task success semantics. After that review is merged, define the exact runtime-backed concurrency policy contract before implementing it.

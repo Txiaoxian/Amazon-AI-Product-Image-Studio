@@ -190,10 +190,11 @@ Implementation notes:
 - `upload_policy.value_json` is a bounded object with `maxFileSizeBytes`, `maxWidth`, `maxHeight`, and `maxPixels`.
 - Stored upload-policy values are tenant overrides only; effective runtime values fall back to environment-configured upload limits when no override exists.
 - Tenant upload-policy overrides may only narrow or match the environment-configured hard caps and are consumed by backend asset upload validation before file persistence.
-- P13 may add the active key `task_defaults` because the runtime consumer is task creation. `task_defaults.value_json` stores `defaultProviderId` and `defaultModelId` for the tenant.
+- P13 has added the active key `task_defaults` because the runtime consumer is task creation. `task_defaults.value_json` stores `defaultProviderId` and `defaultModelId` for the tenant.
 - `task_defaults` rows must be tenant scoped. Task creation must revalidate the referenced Provider/model on every default-backed task create, including tenant ownership, enabled state, model ownership by Provider, and model capability support.
+- Malformed, partial, or otherwise invalid stored `task_defaults` values must fail closed for default-backed task creation; they must not create tasks, events, enqueue work, or successful operation logs. Explicit Provider/model task requests must not require reading unused defaults.
 - Do not persist tenant concurrency, storage quota, or log retention settings until their runtime consumers are deliberately in scope.
-- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` has merged the `system_settings` model/migration and the first active `upload_policy` runtime path.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` merged the `task_defaults` storage/read/write path and normal task-creation runtime consumer; malformed-row fail-closed handling remains the immediate hardening follow-up.
 
 ## Indexing expectations
 

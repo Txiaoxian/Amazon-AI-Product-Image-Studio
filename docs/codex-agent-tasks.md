@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/资产工作流打磨、后端项目成员约束均已 review、修复、合并并完成整批回归。
+R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并合并，P13 仍在进行中。
 
 已完成的平台基础：
 
@@ -94,6 +94,8 @@ R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/�
 - P4-P6：数据库、租户、认证、RBAC、项目、资产、Provider/模型管理。
 - P7-P8：任务队列、Worker、Provider Adapter 运行时、SSE、前端后端化。
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
+- P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
+- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写与任务创建真实消费路径。
 
 当前已知后续项：
 
@@ -102,7 +104,8 @@ R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/�
 - 后端项目成员写路径已补齐最后一个 `OWNER` 保护：不能删除或降级项目最后一个 `OWNER`，但允许先新增或提升另一个 `OWNER` 后再完成 owner 转移。
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
-- 上传策略之外的运行时设置，在有真实运行时消费者前，不得暴露为可写配置。
+- 上传策略与 `taskDefaults` 已有真实运行时消费者；其他运行时设置在消费者落地前不得暴露为可写配置。
+- `P13-BE-RUNTIME-DEFAULTS` review 的非阻塞遗留：手工或历史写入的非法 `task_defaults` 行在缺省任务创建路径需要统一 fail closed 为 `422`，且不能产生任务、队列或成功审计副作用。
 - 存储清理、保留周期、配额、缩略图策略和 orphan cleanup 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -151,15 +154,16 @@ R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/�
 建议任务：
 
 1. `P13-BE-RUNTIME-DEFAULTS`
-   - 决定并实现默认 Provider/模型行为；如果产品选择显式选择模型，则继续保持显式-only 任务创建。
-   - 当前合同已确定：实现 `taskDefaults.{defaultProviderId,defaultModelId}`，并让任务创建在 `providerId` 与 `modelId` 同时省略时消费该默认配置；只省略其中一个仍为非法请求。
-2. `P13-BE-CONCURRENCY-POLICY`
+   - 已完成并合并。`taskDefaults.{defaultProviderId,defaultModelId}` 已通过系统设置 API 读写；任务创建仅在两个 ID 同时省略时解析默认配置，且继续执行现有 Provider/模型/能力/资产校验。
+2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
+   - 关闭 review 发现的非法持久化默认配置错误映射缺口：缺省请求安全返回 `422` 且无副作用，显式 Provider/模型请求不受未使用的损坏默认配置影响。
+3. `P13-BE-CONCURRENCY-POLICY`
    - 将租户/用户/Provider/模型并发设置加载到 Worker 限流器。
-3. `P13-BE-STORAGE-QUOTA-RETENTION`
+4. `P13-BE-STORAGE-QUOTA-RETENTION`
    - 存储配额、保留周期、orphan cleanup 和独立 cleanup context/job。
-4. `P13-FE-SYSTEM-SETTINGS`
+5. `P13-FE-SYSTEM-SETTINGS`
    - 仅为已经运行时生效的设置提供前端 admin UI。
-5. `R13`
+6. `R13`
    - 设置和存储生命周期 review。
 
 ### P14：Provider、模型、用量与成本运营
@@ -192,31 +196,122 @@ R12 已完成，未发现阻塞问题。P12 前端统一历史、前端项目/�
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个建议生成的任务
+## 下一个任务包：P13-BE-RUNTIME-DEFAULTS-HARDENING
 
-除非用户选择其他顺序，否则下一个任务应生成 `P13-BE-RUNTIME-DEFAULTS`。
+### 调度决策
 
-推荐分支：
+- 本任务串行执行，不与并发政策、存储生命周期或前端设置任务并行。
+- 理由：它修复已合并运行时设置路径的错误合同边界；继续增加设置字段前必须先保证当前活动设置 fail closed。
+- 本任务不增加任何新的可写系统设置字段，也不更改公共 API 成功响应结构。
 
-```text
-codex/p13-backend-runtime-defaults
+### 任务信息
+
+- 任务名称：`P13-BE-RUNTIME-DEFAULTS-HARDENING`
+- 目标：将损坏的租户 `task_defaults` 持久化值在缺省任务创建路径中的表现固定为标准、无泄漏、无副作用的 `422 VALIDATION_ERROR`，同时证明显式 Provider/模型提交不读取未使用的损坏默认配置。
+- 推荐线程名：`P13-BE-RUNTIME-DEFAULTS-HARDENING`
+- 推荐分支名：`codex/p13-backend-runtime-defaults-hardening`
+- 起始分支：包含 `P13-BE-RUNTIME-DEFAULTS` 与本任务公共合同文档更新的最新 `main`
+- 前置依赖：`P13-BE-RUNTIME-DEFAULTS` 已合并；`docs/api-contract.md` 和 `docs/database-schema.md` 已冻结非法持久化默认配置的 fail-closed 合同。
+
+### 允许修改文件
+
+- `backend/internal/task/**`
+- `backend/internal/settings/**`，仅在需要统一或暴露可判定的验证错误类型时修改
+- `backend/internal/api/*task*_test.go`
+- `backend/internal/api/*system_settings*_test.go`，仅当需要证明原设置 API 错误行为未退化
+
+### 禁止修改文件
+
+- `frontend/**`
+- `deploy/**`
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/internal/provider/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/model/**`
+- `backend/internal/queue/**`
+- `backend/internal/sse/**`
+- `backend/internal/asset/**`
+- `backend/internal/database/**`
+- 任何新的设置字段、迁移、Worker 限流逻辑或无关重构
+
+### 具体开发内容
+
+1. 先新增能够复现 review 问题的 API 回归测试，再做最小修复。
+2. 在任务创建解析 `taskDefaults` 的边界，将 `settings` 包报告的已存储默认配置验证失败映射为任务 API 的标准验证失败，不向客户端暴露内部存储内容。
+3. 覆盖非法 JSON、只有一个 ID、含未知字段或空 ID 等损坏存储值；这些行只能通过测试种子或模拟历史脏数据建立，不得放宽设置写接口。
+4. 证明请求显式提供合法 `providerId` 与 `modelId` 时不读取 `task_defaults`，即使数据库内默认配置损坏仍能沿原路径创建任务。
+5. 保持现有合法默认配置、clear、禁用/删除/跨租户/能力不兼容失败路径不变。
+
+### 必须保持的现有行为
+
+- 合法 `taskDefaults` 仅在任务请求同时省略 `providerId` 与 `modelId` 时生效。
+- 显式提供成对 Provider/模型 ID 的任务创建语义不变。
+- 只提供一个 ID、缺少默认值、默认对象失效或 capability 不匹配继续返回 `422` 且无任务创建副作用。
+- 系统设置写接口继续拒绝非成对、跨租户、禁用、归属错误或未知字段的默认值。
+- Cookie、CSRF、tenant/RBAC、任务审计、Redis 队列、SSE 与 Provider Adapter 安全边界不得改变。
+
+### 允许的中间态
+
+- `taskDefaults` 已为活动、可写、运行时生效的设置项；前端尚未提供配置界面，可以继续仅由 API 管理。
+- 并发、配额和保留周期字段继续不出现在活动可写设置响应或写入面。
+
+### 禁止的半迁移状态
+
+- 将损坏的默认配置当成服务器 `500` 返回给缺省任务请求，或将原始配置内容暴露给客户端/日志。
+- 在验证失败后创建任务、事件、Redis 入队项或成功的 `task.create` 操作日志。
+- 为避开错误而回退到任意 Provider/模型、跨租户对象或未校验 capability 的默认值。
+- 让显式任务创建因未使用的损坏 `task_defaults` 行而失败。
+- 扩展系统设置字段、前端 UI、迁移或 Worker 限流范围。
+
+### 失败模式与边界场景
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| 两个 ID 均省略，`task_defaults.value_json` 为非法 JSON | `422 VALIDATION_ERROR`；无任务/事件/入队/成功操作日志 | 是 |
+| 两个 ID 均省略，持久化值只有 Provider ID 或只有 Model ID | `422 VALIDATION_ERROR`；无副作用 | 是 |
+| 两个 ID 均省略，持久化值含未知字段或空 ID | `422 VALIDATION_ERROR`；无副作用 | 是 |
+| 两个 ID 均显式提供且合法，但存储默认值损坏 | 正常创建并入队；不依赖默认值 | 是 |
+| 合法默认配置缺省创建 | 保持当前成功行为 | 回归现有测试 |
+| absent/cleared/disabled/deleted/cross-tenant/capability-invalid 默认配置 | 保持当前 `422` 且无副作用行为 | 回归现有测试 |
+
+### 安全要求
+
+- 不解密、不读取、不记录 Provider API Key 或任何凭据。
+- 错误响应与日志不得包含 `value_json` 原文、Provider/模型跨租户详情、Authorization、Cookie、token、base64 或内部错误栈。
+- 所有默认设置读取和任务对象操作继续按 `tenant_id` 过滤。
+- 不引入 frontend Provider 直连、轮询或任何浏览器存储行为。
+
+### 必须新增或更新的回归测试
+
+- 在 `backend/internal/api/*task*_test.go` 新增默认配置损坏矩阵测试，至少覆盖非法 JSON、单边 ID、未知字段或空 ID，并逐项断言 `422` 与无副作用。
+- 新增显式成对 Provider/模型 ID 在损坏默认行存在时仍成功创建并入队的测试。
+- 保留并运行已有合法默认值、clear、禁用/删除/跨租户/能力不兼容、CSRF/RBAC 和操作日志脱敏测试。
+
+### 验收标准
+
+- 损坏的存储默认配置不再导致缺省任务创建返回 `500`。
+- 缺省失败路径统一返回标准 `422 VALIDATION_ERROR`，不创建任务、事件、队列项或成功操作日志。
+- 显式 Provider/模型任务创建不受损坏但未使用的默认设置影响。
+- 未新增可写设置字段、迁移、前端/部署代码或敏感数据暴露。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/api ./internal/task ./internal/settings -count=1
+go test ./... -count=1
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
 ```
 
-推荐起始分支：
-
-```text
-latest main
-```
-
-串行/并行策略：
-
-- P11 后端与前端用户/角色管理已完成、合并并通过 R11。
-- `P12-FE-UNIFIED-HISTORY` 已完成并合并。
-- `P12-FE-PROJECT-WORKFLOW-POLISH` 已完成并合并。
-- `P12-BE-PROJECT-MEMBER-HARDENING` 已完成并合并。
-- `R12` 已完成。
-- 下一步串行执行 `P13-BE-RUNTIME-DEFAULTS`。该任务必须实现真实 task 创建运行时消费者：`providerId` 与 `modelId` 同时省略时解析租户 `taskDefaults`，并继续执行 Provider/model 启用状态、同租户、模型归属、能力、参数和资产校验。只省略其中一个 ID 必须继续失败。
-- 在每个设置字段都有明确运行时消费者前，不要开始 P13 可写设置任务。
+如使用共享本地 MySQL、Redis 或 MinIO 做额外验证，必须按 `docs/local-development.md` 使用任务命名空间数据，并在交付中记录清理结果；本任务不得另起项目专属依赖容器。
 
 ## 标准验证命令
 

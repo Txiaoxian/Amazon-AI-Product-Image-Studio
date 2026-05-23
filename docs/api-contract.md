@@ -191,8 +191,8 @@ Task request fields for P7:
 
 - `type`: `IMAGE_GENERATION` or `IMAGE_EDIT`.
 - `prompt`: required text prompt.
-- `providerId`: required Provider ID in the current tenant.
-- `modelId`: required model ID in the current tenant and owned by the Provider.
+- `providerId`: Provider ID in the current tenant. Starting with P13, it may be omitted only together with `modelId`, in which case backend resolves tenant `taskDefaults`.
+- `modelId`: Model ID in the current tenant and owned by the Provider. Starting with P13, it may be omitted only together with `providerId`.
 - `imageType`: optional ecommerce image category such as `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, or `COMPARISON`.
 - `referenceAssetIds`: optional list of project asset IDs for generation/edit references.
 - `editSourceAssetId`: required for edit tasks when the selected model needs an edit source.
@@ -221,6 +221,7 @@ Current P7 implementation status:
 - Task event replay cursor is `task_events.sequence`; `task_events.id` is derived from that sequence and is safe to use as the SSE `id`.
 - Backend now implements SSE long connections, Worker execution, real Provider runtime execution, generated/edited output asset creation, usage records, and API call logs.
 - Frontend now has task API wrappers and SSE client/reducer contract utilities. Workbench backendization is still deferred to P8.
+- P13 extends task creation with runtime-backed tenant defaults: when both Provider/model IDs are absent, backend resolves `taskDefaults` and applies the same validation and enqueue contract; explicit requests remain valid without consulting defaults.
 
 P8 workbench contract:
 
@@ -399,6 +400,8 @@ The active settings slices are intentionally narrow and runtime-backed:
   - Task creation may omit both `providerId` and `modelId`; in that case backend resolves the tenant defaults and then runs the same Provider/model/capability validation used for explicit requests.
   - Task creation with only one of `providerId` or `modelId` omitted remains invalid to avoid ambiguous mixed-default requests.
   - If defaults are absent, stale, disabled, deleted, cross-tenant, or capability-incompatible, default-backed task creation returns validation failure and must not enqueue a task or write a successful task operation log.
+  - A malformed stored `task_defaults` value, including invalid JSON, unknown fields, blank IDs, or only one populated ID, is invalid server-side configuration. A default-backed task request must fail closed as `422 VALIDATION_ERROR` without creating a task, event, enqueue operation, or successful operation log.
+  - A task request that supplies both valid `providerId` and `modelId` must not depend on or fail because of an unused malformed `task_defaults` row.
 - Tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until worker limiting, quota enforcement, or cleanup jobs actually consume them.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`. Frontend admin UI must consume this exact narrow surface and must not show deferred settings as active controls.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read and task-creation runtime consumption are merged in `P13-BE-RUNTIME-DEFAULTS`. The malformed persisted-default fail-closed rule above is the next focused P13 hardening task.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.

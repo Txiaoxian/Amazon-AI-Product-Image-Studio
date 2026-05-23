@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current transition risks after R12 seller workflow review
+## Current transition risks during P13 runtime settings work
 
-The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, and P12 seller workflow/history work through R12 review. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the first P13 runtime-defaults backend slice. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -11,11 +11,12 @@ The current `main` branch has completed P10 runtime hardening, P11 backend/front
 | Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
 | Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
-Remaining post-R12 security and hardening risks:
+Remaining security and hardening risks:
 
 - Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 - Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation. P13 opens only default Provider/model settings because task creation is the explicit runtime consumer. Tenant concurrency, storage quotas, and retention remain deferred until their worker/quota/cleanup consumers are explicit.
+- P13 runtime defaults validate API-written Provider/model pairs and revalidate them during task creation. A manually corrupted or legacy malformed `task_defaults` row must be hardened to fail closed as a sanitized validation response without task/enqueue/audit success side effects; this is the immediate next P13 task.
 
 Resolved transition item:
 
@@ -45,6 +46,7 @@ Resolved transition item:
 - P12 frontend project/asset workflow polish now uses backend APIs for project edit, asset filtering, asset metadata edit, member list/add/update/remove entry points, reference upload, download, delete, favorite, and use-as-reference. It preserves CSRF write requests, stale project-switch protections, and filtered-list consistency without adding Provider direct calls, browser Provider key storage, or task polling.
 - P12 backend project-member hardening now rejects deleting or downgrading the final project `OWNER`, allows owner transfer only after another `OWNER` remains, preserves tenant/RBAC/project-role checks, and verifies rejected writes do not create successful operation logs.
 - R12 reviewed the complete P12 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
+- P13 backend runtime defaults now store only tenant-scoped Provider/model IDs, validate enabled same-tenant ownership on settings writes, revalidate default-backed task requests, and reject absent, cleared, stale, disabled, deleted, cross-tenant, or capability-incompatible defaults without enqueue or successful task audit side effects. Focused/full backend tests, race tests, vet, builds, Compose config, and whitespace checks passed before merge.
 
 P5 review hardening backlog:
 
