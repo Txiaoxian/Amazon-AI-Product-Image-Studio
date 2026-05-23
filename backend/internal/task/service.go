@@ -407,6 +407,9 @@ func resolveTaskDefaultProviderModel(ctx context.Context, tx *gorm.DB, scope ten
 
 	defaults, err := settings.LoadTaskDefaults(ctx, settings.NewRepository(tx), scope)
 	if err != nil {
+		if errors.Is(err, settings.ErrStoredTaskDefaultsInvalid) {
+			return createRequest{}, ErrValidation
+		}
 		return createRequest{}, err
 	}
 	if defaults.DefaultProviderID == nil || defaults.DefaultModelID == nil {
