@@ -285,6 +285,84 @@ func TestTaskRoutesRejectInvalidRuntimeTaskDefaultsWithoutSideEffects(t *testing
 	}
 }
 
+func TestTaskRoutesRejectMalformedStoredTaskDefaultsWithoutSideEffects(t *testing.T) {
+	cases := []struct {
+		name      string
+		valueJSON string
+	}{
+		{name: "invalid JSON", valueJSON: `{"defaultProviderId":`},
+		{name: "provider only", valueJSON: `{"defaultProviderId":"provider-only"}`},
+		{name: "model only", valueJSON: `{"defaultModelId":"model-only"}`},
+		{name: "unknown field", valueJSON: `{"defaultProviderId":"provider-a","defaultModelId":"model-a","extra":"blocked"}`},
+		{name: "blank provider ID", valueJSON: `{"defaultProviderId":" ","defaultModelId":"model-a"}`},
+		{name: "blank model ID", valueJSON: `{"defaultProviderId":"provider-a","defaultModelId":" "}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+			projectID := createTaskTestProject(t, router, adminSession, "Malformed Defaults "+tc.name)
+			seedStoredTaskDefaultsSetting(t, db, adminSession.tenantID, tc.valueJSON)
+
+			response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+				"type":       task.TypeImageGeneration,
+				"prompt":     "Malformed stored defaults must fail closed",
+				"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+			}, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity || errorCode(t, response) != "VALIDATION_ERROR" {
+				t.Fatalf("malformed defaults status/code = %d/%q, want %d/VALIDATION_ERROR", response.Code, errorCode(t, response), http.StatusUnprocessableEntity)
+			}
+			assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+			assertTaskResponseExcludesWithoutEcho(t, response.Body.String(), tc.valueJSON, "encrypted", "api_key", "apikey", "secret")
+		})
+	}
+}
+
+func TestTaskRoutesCreateWithExplicitProviderModelIgnoresMalformedStoredDefaults(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Explicit IDs Ignore Defaults")
+	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "explicit-malformed-defaults", provider.StatusEnabled, model.StatusEnabled, true, false, false, false, 1)
+	seedStoredTaskDefaultsSetting(t, db, adminSession.tenantID, `{"defaultProviderId":`)
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Explicit IDs do not consume defaults",
+		"providerId": providerID,
+		"modelId":    modelID,
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("explicit create with malformed defaults status = %d, want %d", response.Code, http.StatusCreated)
+	}
+	data := decodeData(t, response)
+	taskID := stringField(t, data, "id")
+	if stringField(t, data, "providerId") != providerID || stringField(t, data, "modelId") != modelID {
+		t.Fatalf("created provider/model = %s/%s, want %s/%s", stringField(t, data, "providerId"), stringField(t, data, "modelId"), providerID, modelID)
+	}
+	if len(enqueuer.taskIDs) != 1 || enqueuer.taskIDs[0] != taskID {
+		t.Fatalf("explicit enqueue payloads = %#v, want task ID %q", enqueuer.taskIDs, taskID)
+	}
+}
+
+func TestTaskRoutesReturnInternalErrorWhenTaskDefaultsStorageReadFails(t *testing.T) {
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
+	projectID := createTaskTestProject(t, router, adminSession, "Settings Read Failure")
+	if err := db.Exec("DROP TABLE system_settings").Error; err != nil {
+		t.Fatalf("drop system_settings test table: %v", err)
+	}
+
+	response := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Storage failure stays internal",
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusInternalServerError || errorCode(t, response) != "INTERNAL_ERROR" {
+		t.Fatalf("settings read failure status/code = %d/%q, want %d/INTERNAL_ERROR", response.Code, errorCode(t, response), http.StatusInternalServerError)
+	}
+	assertNoTaskCreateSideEffects(t, db, adminSession.tenantID, projectID, enqueuer)
+	assertTaskResponseExcludesWithoutEcho(t, response.Body.String(), "system_settings", "no such table", "encrypted", "api_key", "apikey", "secret")
+}
+
 func TestTaskRoutesRejectDefaultModelWithoutEditCapability(t *testing.T) {
 	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
 	projectID := createTaskTestProject(t, router, adminSession, "Invalid Edit Defaults")
@@ -772,6 +850,21 @@ func seedClearedTaskDefaultsSetting(t *testing.T, db *gorm.DB, tenantID string) 
 	}
 }
 
+func seedStoredTaskDefaultsSetting(t *testing.T, db *gorm.DB, tenantID string, valueJSON string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "setting-task-defaults",
+		TenantID:  tenantID,
+		Key:       settings.KeyTaskDefaults,
+		ValueJSON: valueJSON,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed stored task defaults setting: %v", err)
+	}
+}
+
 func seedTaskReferenceAsset(t *testing.T, db *gorm.DB, tenantID string, projectID string, userID string, suffix string) string {
 	return seedTaskAsset(t, db, tenantID, projectID, userID, assetpkg.KindReference, suffix)
 }
@@ -907,12 +1000,29 @@ func assertNoTaskCreateSideEffects(t *testing.T, db *gorm.DB, tenantID string, p
 	if taskCount != 0 {
 		t.Fatalf("rejected request created %d tasks, want 0", taskCount)
 	}
+	var eventCount int64
+	if err := db.Model(&database.TaskEvent{}).Where("tenant_id = ? AND project_id = ?", tenantID, projectID).Count(&eventCount).Error; err != nil {
+		t.Fatalf("count task events after rejected request: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("rejected request wrote %d task events, want 0", eventCount)
+	}
 	var logCount int64
 	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ?", tenantID, "task.create").Count(&logCount).Error; err != nil {
 		t.Fatalf("count task.create logs after rejected request: %v", err)
 	}
 	if logCount != 0 {
 		t.Fatalf("rejected request wrote %d task.create logs, want 0", logCount)
+	}
+}
+
+func assertTaskResponseExcludesWithoutEcho(t *testing.T, body string, forbidden ...string) {
+	t.Helper()
+	lower := strings.ToLower(body)
+	for _, marker := range forbidden {
+		if strings.Contains(lower, strings.ToLower(marker)) {
+			t.Fatal("task response exposed forbidden content")
+		}
 	}
 }
 

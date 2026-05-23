@@ -164,19 +164,19 @@ func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) 
 	}
 	defaults, err := decodeStoredTaskDefaults(record.ValueJSON)
 	if err != nil {
-		return TaskDefaults{}, err
+		return TaskDefaults{}, ErrStoredTaskDefaultsInvalid
 	}
 	if (defaults.DefaultProviderID == nil) != (defaults.DefaultModelID == nil) {
-		return TaskDefaults{}, ErrValidation
+		return TaskDefaults{}, ErrStoredTaskDefaultsInvalid
 	}
 	if defaults.DefaultProviderID != nil {
 		providerID, err := cleanTaskDefaultID(*defaults.DefaultProviderID)
 		if err != nil {
-			return TaskDefaults{}, err
+			return TaskDefaults{}, ErrStoredTaskDefaultsInvalid
 		}
 		modelID, err := cleanTaskDefaultID(*defaults.DefaultModelID)
 		if err != nil {
-			return TaskDefaults{}, err
+			return TaskDefaults{}, ErrStoredTaskDefaultsInvalid
 		}
 		defaults.DefaultProviderID = &providerID
 		defaults.DefaultModelID = &modelID

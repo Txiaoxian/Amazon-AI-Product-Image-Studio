@@ -2,6 +2,7 @@ package settings
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 )
@@ -16,8 +17,9 @@ const (
 )
 
 var (
-	ErrValidation = errors.New("invalid system settings request")
-	ErrForbidden  = errors.New("system settings access forbidden")
+	ErrValidation                = errors.New("invalid system settings request")
+	ErrStoredTaskDefaultsInvalid = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
+	ErrForbidden                 = errors.New("system settings access forbidden")
 )
 
 type Response struct {
