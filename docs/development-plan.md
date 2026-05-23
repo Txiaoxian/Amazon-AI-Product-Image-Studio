@@ -37,7 +37,7 @@ Phase status:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
-| P13 | In progress | Runtime-backed tenant task defaults are merged; hardening, concurrency policy, storage lifecycle, frontend settings, and R13 remain. |
+| P13 | In progress | Runtime-backed tenant task defaults and malformed-row hardening are merged; concurrency policy, storage lifecycle, frontend settings, and R13 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -65,7 +65,7 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-RUNTIME-DEFAULTS` was reviewed and merged. The backend now exposes tenant `taskDefaults.{defaultProviderId,defaultModelId}` through the existing system-settings contract and consumes it only when task creation omits both Provider/model IDs. Explicit pairs remain unchanged; mixed explicit/default requests, absent or cleared defaults, invalid Provider/model ownership or enabled state, and capability-invalid default-backed submissions fail without task creation, enqueueing, or a successful `task.create` log. Validation passed focused settings/task/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
 
-P13 review found one non-blocking hardening item that must be completed before adding further writable settings: if a `task_defaults` row is malformed or contains only one ID due to manual database mutation or legacy corruption, a default-backed task currently crosses package error boundaries as an internal error. The next serial task must make this path fail closed as `422 VALIDATION_ERROR` with no queue or audit side effects, while keeping explicit Provider/model submissions independent of unreadable defaults.
+`P13-BE-RUNTIME-DEFAULTS-HARDENING` was reviewed and merged. Invalid JSON, partial IDs, unknown fields, and blank IDs in a manually corrupted or legacy `task_defaults` row now fail closed as `422 VALIDATION_ERROR` for default-backed task creation, without task/event/enqueue/success-audit side effects. Explicit valid Provider/model submissions do not read unused damaged defaults, and genuine settings-storage failures remain sanitized `500 INTERNAL_ERROR`. Validation passed focused API/task/settings tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
 
 ## Completed Platform Capabilities
 
@@ -82,7 +82,7 @@ The current `main` branch supports:
 - Frontend history reads backend-owned project history from `GET /projects/{projectId}/history`, with pagination, generated/edited filtering, stale-response protection, authorized detail/download, and backend `editSourceAssetId` re-edit.
 - Seller workspace project/asset workflow supports project edit, reference upload, asset filtering, asset metadata edit, favorite/delete/download/detail/use-as-reference, and project member list/add/update/remove entry points through backend APIs.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
-- Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, and task creation resolves that pair only when both IDs are omitted.
+- Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, task creation resolves it only when both IDs are omitted, and malformed persisted defaults fail closed without creation side effects.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -158,12 +158,11 @@ Suggested order:
 
 1. `P13-BE-RUNTIME-DEFAULTS`
    - Completed and merged. Tenant `taskDefaults.{defaultProviderId,defaultModelId}` are stored through system settings and consumed by task creation only when both `providerId` and `modelId` are omitted.
-   - Review passed for normal API-produced state; malformed persisted default rows require the focused hardening task below.
 2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
-   - Normalize malformed or one-sided persisted `task_defaults` failures to the public task validation contract.
-   - Default-backed requests must return `422 VALIDATION_ERROR` with no task, enqueue, event, or successful operation log; explicit Provider/model submissions must remain unaffected by corrupted unused defaults.
+   - Completed and merged. Malformed or one-sided persisted `task_defaults` now fail closed under the public task validation contract without creation side effects; explicit Provider/model submissions remain independent of corrupted unused defaults.
 3. `P13-BE-CONCURRENCY-POLICY`
-   - Tenant/user/provider/model concurrency policies loaded from settings and consumed by Worker limiters.
+   - Add `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` as a tenant settings slice only while wiring it into Worker Redis semaphore acquisition in the same task.
+   - Environment queue limits remain the hard caps and defaults; the tenant cannot configure global concurrency, and existing Provider `concurrencyLimit` remains an additional stricter cap.
 4. `P13-BE-STORAGE-QUOTA-RETENTION`
    - Storage quota accounting, log/asset retention policy, orphan cleanup, and independent cleanup context/job.
 5. `P13-FE-SYSTEM-SETTINGS`
@@ -262,4 +261,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P13-BE-RUNTIME-DEFAULTS-HARDENING` serially from latest `main` before opening any additional writable settings. It must close the malformed persisted-default error mapping found in review without changing the active settings fields or task success semantics. After that review is merged, define the exact runtime-backed concurrency policy contract before implementing it.
+Run `P13-BE-CONCURRENCY-POLICY` serially from latest `main`. The public contract is frozen as `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`: values are positive tenant overrides that may narrow or match environment-configured hard caps and must be consumed by Worker semaphore acquisition in the same task. Global concurrency remains configuration-owned and Provider `concurrencyLimit` remains an additional stricter cap. Do not open storage/quota or frontend setting work until this slice is reviewed and merged.

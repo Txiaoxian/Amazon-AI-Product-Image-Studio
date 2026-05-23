@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并合并，P13 仍在进行中。
+R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 与 `P13-BE-RUNTIME-DEFAULTS-HARDENING` 已 review 并合并，P13 仍在进行中。
 
 已完成的平台基础：
 
@@ -95,7 +95,7 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并
 - P7-P8：任务队列、Worker、Provider Adapter 运行时、SSE、前端后端化。
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
-- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写与任务创建真实消费路径。
+- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径，以及损坏持久化默认值的 fail-closed hardening。
 
 当前已知后续项：
 
@@ -104,8 +104,8 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并
 - 后端项目成员写路径已补齐最后一个 `OWNER` 保护：不能删除或降级项目最后一个 `OWNER`，但允许先新增或提升另一个 `OWNER` 后再完成 owner 转移。
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
-- 上传策略与 `taskDefaults` 已有真实运行时消费者；其他运行时设置在消费者落地前不得暴露为可写配置。
-- `P13-BE-RUNTIME-DEFAULTS` review 的非阻塞遗留：手工或历史写入的非法 `task_defaults` 行在缺省任务创建路径需要统一 fail closed 为 `422`，且不能产生任务、队列或成功审计副作用。
+- 上传策略与 `taskDefaults` 已有真实运行时消费者；损坏的 `task_defaults` 行已在缺省创建路径 fail closed 为无副作用 `422`。其他运行时设置在消费者落地前不得暴露为可写配置。
+- 下一串行任务仅开放 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`，并必须在同一任务中让 Worker Redis semaphore 消费该策略；环境限制继续作为硬上限与缺省值。
 - 存储清理、保留周期、配额、缩略图策略和 orphan cleanup 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -156,9 +156,9 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并
 1. `P13-BE-RUNTIME-DEFAULTS`
    - 已完成并合并。`taskDefaults.{defaultProviderId,defaultModelId}` 已通过系统设置 API 读写；任务创建仅在两个 ID 同时省略时解析默认配置，且继续执行现有 Provider/模型/能力/资产校验。
 2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
-   - 关闭 review 发现的非法持久化默认配置错误映射缺口：缺省请求安全返回 `422` 且无副作用，显式 Provider/模型请求不受未使用的损坏默认配置影响。
+   - 已完成并合并。非法持久化默认配置在缺省创建路径安全返回 `422` 且无副作用，显式 Provider/模型请求不受未使用的损坏默认配置影响。
 3. `P13-BE-CONCURRENCY-POLICY`
-   - 将租户/用户/Provider/模型并发设置加载到 Worker 限流器。
+   - 在同一任务中增加 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` 设置切片，并将其加载到 Worker Redis semaphore；不开放租户级 global 字段。
 4. `P13-BE-STORAGE-QUOTA-RETENTION`
    - 存储配额、保留周期、orphan cleanup 和独立 cleanup context/job。
 5. `P13-FE-SYSTEM-SETTINGS`
@@ -196,29 +196,31 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P13-BE-RUNTIME-DEFAULTS-HARDENING
+## 下一个任务包：P13-BE-CONCURRENCY-POLICY
 
 ### 调度决策
 
-- 本任务串行执行，不与并发政策、存储生命周期或前端设置任务并行。
-- 理由：它修复已合并运行时设置路径的错误合同边界；继续增加设置字段前必须先保证当前活动设置 fail closed。
-- 本任务不增加任何新的可写系统设置字段，也不更改公共 API 成功响应结构。
+- 本任务串行执行，不与存储生命周期或前端设置任务并行。
+- 理由：本任务同时修改系统设置公共响应与 Worker 运行时限流语义；设置字段只有在 Worker 同步消费后才是真实可写状态。
+- 本任务只增加 `taskConcurrency` 设置切片，不开放全局并发配置，不改任务、SSE 或 Provider Adapter 的业务响应结构。
 
 ### 任务信息
 
-- 任务名称：`P13-BE-RUNTIME-DEFAULTS-HARDENING`
-- 目标：将损坏的租户 `task_defaults` 持久化值在缺省任务创建路径中的表现固定为标准、无泄漏、无副作用的 `422 VALIDATION_ERROR`，同时证明显式 Provider/模型提交不读取未使用的损坏默认配置。
-- 推荐线程名：`P13-BE-RUNTIME-DEFAULTS-HARDENING`
-- 推荐分支名：`codex/p13-backend-runtime-defaults-hardening`
-- 起始分支：包含 `P13-BE-RUNTIME-DEFAULTS` 与本任务公共合同文档更新的最新 `main`
-- 前置依赖：`P13-BE-RUNTIME-DEFAULTS` 已合并；`docs/api-contract.md` 和 `docs/database-schema.md` 已冻结非法持久化默认配置的 fail-closed 合同。
+- 任务名称：`P13-BE-CONCURRENCY-POLICY`
+- 目标：在同一个后端切片内新增租户 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` 管理接口和 Worker Redis semaphore 消费路径，使租户管理员只能收紧任务执行并发限制，且任何损坏配置或读取故障都不能绕过限流。
+- 推荐线程名：`P13-BE-CONCURRENCY-POLICY`
+- 推荐分支名：`codex/p13-backend-concurrency-policy`
+- 起始分支：已合并 `P13-BE-RUNTIME-DEFAULTS-HARDENING` 与本任务公共合同文档的最新 `main`
+- 前置依赖：`P13-BE-RUNTIME-DEFAULTS-HARDENING` 已合并；`docs/api-contract.md`、`docs/database-schema.md` 与 `docs/task-queue.md` 已冻结 `taskConcurrency` 的字段、硬上限和 Worker 消费合同。
 
 ### 允许修改文件
 
-- `backend/internal/task/**`
-- `backend/internal/settings/**`，仅在需要统一或暴露可判定的验证错误类型时修改
-- `backend/internal/api/*task*_test.go`
-- `backend/internal/api/*system_settings*_test.go`，仅当需要证明原设置 API 错误行为未退化
+- `backend/internal/settings/**`
+- `backend/internal/task/worker.go`
+- `backend/internal/task/worker_test.go`
+- `backend/internal/api/router.go`，仅限向 settings service 传入已有 queue hard caps
+- `backend/internal/api/*system_settings*_test.go`
+- `backend/cmd/worker/main.go` 与 `backend/cmd/worker/*_test.go`，仅在 Worker policy resolver 注入所必需时修改
 
 ### 禁止修改文件
 
@@ -233,76 +235,87 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS` 已 review 并
 - `backend/internal/queue/**`
 - `backend/internal/sse/**`
 - `backend/internal/asset/**`
-- `backend/internal/database/**`
-- 任何新的设置字段、迁移、Worker 限流逻辑或无关重构
+- `backend/internal/database/**` 与任何 migration
+- `backend/internal/config/**`，现有环境 hard caps 已足够，不增加新的部署配置
+- `backend/internal/task/service.go`、任务创建/SSE/Provider runtime/output persistence 主流程
+- 存储配额、保留周期、全局并发可写字段或无关重构
 
 ### 具体开发内容
 
-1. 先新增能够复现 review 问题的 API 回归测试，再做最小修复。
-2. 在任务创建解析 `taskDefaults` 的边界，仅将 `settings` 包报告的已存储默认配置验证失败映射为任务 API 的标准验证失败，不向客户端暴露内部存储内容；数据库或基础设施错误仍走脱敏的内部错误路径，不能误报为客户端校验问题。
-3. 覆盖非法 JSON、只有一个 ID、含未知字段或空 ID 等损坏存储值；这些行只能通过测试种子或模拟历史脏数据建立，不得放宽设置写接口。
-4. 证明请求显式提供合法 `providerId` 与 `modelId` 时不读取 `task_defaults`，即使数据库内默认配置损坏仍能沿原路径创建任务。
-5. 保持现有合法默认配置、clear、禁用/删除/跨租户/能力不兼容失败路径不变。
+1. 先新增设置 API 与 Worker failure matrix 测试，再做最小实现。
+2. 在已有 `system_settings` 泛型表中增加 key `task_concurrency`，并在系统设置响应/PATCH 中增加 `taskConcurrency`：
+   - `tenantLimit`
+   - `userLimit`
+   - `providerLimit`
+   - `modelLimit`
+3. 所有字段均为正整数；PATCH 允许只更新部分字段，省略字段沿用当前 effective 值。没有 override 时，GET 返回现有 `config.QueueConfig` 中 tenant/user/provider/model 的环境缺省值。
+4. tenant override 只能小于或等于对应环境 hard cap；不增加或暴露 `globalLimit`，不改变 `TASK_GLOBAL_CONCURRENCY` 的部署控制边界。
+5. 将有效策略接入 Worker 的 semaphore acquire 路径：Worker 在已加载 tenant-scoped task execution context 后、获得 Redis lease 前读取策略，并使用 effective tenant/user/provider/model 限制。Provider 行已有的正值 `concurrencyLimit` 继续与 effective Provider limit 取更小值。
+6. 对损坏的 `task_concurrency` 持久化内容做 fail closed：Worker 不调用 Provider、不写 output/usage/api-call 成功数据，而以现有通用任务配置失败语义终止该 eligible task；真实 settings 存储/数据库错误仅进入 retry 路径，不能绕过限制或误标成配置非法。
+7. 系统设置更新继续写脱敏 operation log，仅记录 key、changed fields 和非敏感整数限制。
 
 ### 必须保持的现有行为
 
-- 合法 `taskDefaults` 仅在任务请求同时省略 `providerId` 与 `modelId` 时生效。
-- 显式提供成对 Provider/模型 ID 的任务创建语义不变。
-- 只提供一个 ID、缺少默认值、默认对象失效或 capability 不匹配继续返回 `422` 且无任务创建副作用。
-- 系统设置写接口继续拒绝非成对、跨租户、禁用、归属错误或未知字段的默认值。
-- Cookie、CSRF、tenant/RBAC、任务审计、Redis 队列、SSE 与 Provider Adapter 安全边界不得改变。
+- `uploadPolicy` 与 `taskDefaults` 的 API、运行时消费及 hardening 语义不变。
+- Worker 的全局/租户/用户/Provider/模型 Redis lease、释放、stale reap、retry 和 MySQL 状态权威语义不变。
+- `TASK_GLOBAL_CONCURRENCY`、现有环境 tenant/user/provider/model limits 和 Provider `concurrencyLimit` 的现有保护不得被放宽。
+- Cookie、CSRF、tenant/RBAC、任务审计、Redis payload、SSE、Provider Adapter、输出资产和敏感日志边界不得改变。
 
 ### 允许的中间态
 
-- `taskDefaults` 已为活动、可写、运行时生效的设置项；前端尚未提供配置界面，可以继续仅由 API 管理。
-- 并发、配额和保留周期字段继续不出现在活动可写设置响应或写入面。
+- `taskConcurrency` 后端 API 和 Worker 消费在本任务一起生效；前端设置页尚不展示该切片，可以继续仅由 API 管理。
+- 存储配额和保留周期字段继续不出现在活动可写设置响应或写入面。
+- 设置变更仅影响后续新申请的 Redis lease；已有 lease 运行至释放或 TTL 清理，不强行中止正在执行的任务。
 
 ### 禁止的半迁移状态
 
-- 将损坏的默认配置当成服务器 `500` 返回给缺省任务请求，或将原始配置内容暴露给客户端/日志。
-- 在验证失败后创建任务、事件、Redis 入队项或成功的 `task.create` 操作日志。
-- 为避开错误而回退到任意 Provider/模型、跨租户对象或未校验 capability 的默认值。
-- 让显式任务创建因未使用的损坏 `task_defaults` 行而失败。
-- 扩展系统设置字段、前端 UI、迁移或 Worker 限流范围。
+- 暴露可写 `taskConcurrency` 字段但 Worker 仍只使用静态环境限制，或 Worker 消费未通过 API/tenant/RBAC 约束的第二配置源。
+- 允许 tenant override 提高环境 hard cap，或允许租户写入 global limit。
+- 存储策略损坏/读取失败时忽略设置并不限流地继续 Provider 执行。
+- 改变已有运行中 lease 的任务状态、重复输出、usage、API call log 或终态事件幂等性。
+- 增加数据库列/migration、前端 UI、队列实现、存储配额/retention 或不相关 Provider/模型改动。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| 两个 ID 均省略，`task_defaults.value_json` 为非法 JSON | `422 VALIDATION_ERROR`；无任务/事件/入队/成功操作日志 | 是 |
-| 两个 ID 均省略，持久化值只有 Provider ID 或只有 Model ID | `422 VALIDATION_ERROR`；无副作用 | 是 |
-| 两个 ID 均省略，持久化值含未知字段或空 ID | `422 VALIDATION_ERROR`；无副作用 | 是 |
-| 两个 ID 均显式提供且合法，但存储默认值损坏 | 正常创建并入队；不依赖默认值 | 是 |
-| 两个 ID 均省略，读取设置发生真实数据库/基础设施错误 | 保持脱敏 `500 INTERNAL_ERROR`；不得误映射为 `422`，无任务成功副作用 | 是 |
-| 合法默认配置缺省创建 | 保持当前成功行为 | 回归现有测试 |
-| absent/cleared/disabled/deleted/cross-tenant/capability-invalid 默认配置 | 保持当前 `422` 且无副作用行为 | 回归现有测试 |
+| 无 `task_concurrency` override | GET 返回环境 effective 值；Worker 继续使用环境限制 | 是 |
+| admin PATCH 合法、较严格的单字段或多字段策略 | 仅当前 tenant 的 effective 值变化，写 sanitized operation log；Worker lease 使用新限制 | 是 |
+| non-admin、缺 CSRF、跨 tenant 探测 | `403` 或既有授权行为；不得读写其他 tenant 策略 | 是 |
+| 零值、负值、非整数、未知字段、超出环境 hard cap、尝试 global 字段 | `422 VALIDATION_ERROR`；现有策略和 operation log 不变 | 是 |
+| tenant/user/provider/model 某一 effective limit 已满 | Worker 不进入 `RUNNING`/Provider 执行，按现有 concurrency-limited retry 行为保留 eligible task | 是 |
+| Provider 行 `concurrencyLimit` 比策略 Provider limit 更严格 | Redis Provider dimension 使用更小值 | 是 |
+| 已有 lease 后 PATCH 更严格策略 | 已有执行不被中止；新 lease 使用更新后的策略 | 是 |
+| `task_concurrency.value_json` 被手工写成非法/部分/越界配置 | eligible task 以 sanitized `TASK_CONFIGURATION_INVALID` 失败；无 Provider/output/usage/API-call 成功副作用 | 是 |
+| Worker 读取设置遇到真实数据库/基础设施错误 | claim retry；不得执行 Provider、不得以配置错误终止、不得绕过 limiter | 是 |
+| 重复 claim、取消、超时、recovery/stale lease | 现有状态机与幂等语义不变 | 回归现有测试 |
 
 ### 安全要求
 
 - 不解密、不读取、不记录 Provider API Key 或任何凭据。
-- 错误响应与日志不得包含 `value_json` 原文、Provider/模型跨租户详情、Authorization、Cookie、token、base64 或内部错误栈。
-- 所有默认设置读取和任务对象操作继续按 `tenant_id` 过滤。
+- 设置响应、操作日志与 Worker 错误不得包含 `value_json` 原文、跨租户详情、Authorization、Cookie、token、base64 或内部错误栈。
+- 所有设置读取、写入、Worker policy lookup 和任务对象操作继续按 `tenant_id` 过滤。
+- Tenant policy 只能收紧平台 hard caps；Global limit 始终由服务端环境控制。
 - 不引入 frontend Provider 直连、轮询或任何浏览器存储行为。
 
 ### 必须新增或更新的回归测试
 
-- 在 `backend/internal/api/*task*_test.go` 新增默认配置损坏矩阵测试，至少覆盖非法 JSON、单边 ID、未知字段或空 ID，并逐项断言 `422` 与无副作用。
-- 新增显式成对 Provider/模型 ID 在损坏默认行存在时仍成功创建并入队的测试。
-- 新增设置存储读取发生真实数据库错误时仍返回脱敏内部错误、且不会被错误归类为 `422` 的测试。
-- 保留并运行已有合法默认值、clear、禁用/删除/跨租户/能力不兼容、CSRF/RBAC 和操作日志脱敏测试。
+- 在 `backend/internal/api/*system_settings*_test.go` 覆盖 fallback GET、合法 PATCH/tenant 隔离/脱敏审计，以及非法、越界和 global/未知字段拒绝。
+- 在 `backend/internal/task/worker_test.go` 覆盖每个 effective dimension、Provider 更严格 cap、策略变更只影响新 lease、非法持久化策略 fail closed、存储读取错误 retry 且不调用 executor。
+- 运行已有 Worker duplicate/cancel/timeout/recovery/stale lease 测试以及现有 `uploadPolicy`、`taskDefaults`、CSRF/RBAC、操作日志测试，证明没有回归。
 
 ### 验收标准
 
-- 损坏的存储默认配置不再导致缺省任务创建返回 `500`。
-- 缺省失败路径统一返回标准 `422 VALIDATION_ERROR`，不创建任务、事件、队列项或成功操作日志。
-- 显式 Provider/模型任务创建不受损坏但未使用的默认设置影响。
-- 未新增可写设置字段、迁移、前端/部署代码或敏感数据暴露。
+- `taskConcurrency` 仅在真实 Worker consumer 同步落地的前提下进入系统设置 API，且仅允许 tenant 收紧环境 hard caps。
+- Worker 按 tenant/user/provider/model effective limits 获取 Redis lease，global 与 Provider stricter-cap 语义不退化。
+- 损坏配置和存储故障均不可能导致无约束 Provider 执行；错误、审计与响应不泄漏敏感或内部数据。
+- 未新增 migration、前端/部署代码、配额/retention 字段或无关范围修改。
 
 ### 测试命令
 
 ```bash
 cd backend
-go test ./internal/api ./internal/task ./internal/settings -count=1
+go test ./internal/api ./internal/task ./internal/settings ./cmd/worker -count=1
 go test ./... -count=1
 go test -race ./...
 go vet ./...
@@ -313,7 +326,7 @@ docker compose -f deploy/docker-compose.yml config
 git diff --check main...HEAD
 ```
 
-如使用共享本地 MySQL、Redis 或 MinIO 做额外验证，必须按 `docs/local-development.md` 使用任务命名空间数据，并在交付中记录清理结果；本任务不得另起项目专属依赖容器。
+如使用共享本地 MySQL、Redis 做额外 policy/lease 验证，必须按 `docs/local-development.md` 使用任务命名空间数据，并在交付中记录清理结果；本任务不得另起项目专属依赖容器，不需要为了并发策略写入 MinIO 测试对象。
 
 ## 标准验证命令
 

@@ -384,6 +384,12 @@ The active settings slices are intentionally narrow and runtime-backed:
   "taskDefaults": {
     "defaultProviderId": "provider_123",
     "defaultModelId": "model_123"
+  },
+  "taskConcurrency": {
+    "tenantLimit": 2,
+    "userLimit": 2,
+    "providerLimit": 2,
+    "modelLimit": 2
   }
 }
 ```
@@ -402,6 +408,12 @@ The active settings slices are intentionally narrow and runtime-backed:
   - If defaults are absent, stale, disabled, deleted, cross-tenant, or capability-incompatible, default-backed task creation returns validation failure and must not enqueue a task or write a successful task operation log.
   - A malformed stored `task_defaults` value, including invalid JSON, unknown fields, blank IDs, or only one populated ID, is invalid server-side configuration. A default-backed task request must fail closed as `422 VALIDATION_ERROR` without creating a task, event, enqueue operation, or successful operation log.
   - A task request that supplies both valid `providerId` and `modelId` must not depend on or fail because of an unused malformed `task_defaults` row.
-- Tenant concurrency, storage quotas, and log retention remain deferred. They must not be returned as active writable settings until worker limiting, quota enforcement, or cleanup jobs actually consume them.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read and task-creation runtime consumption are merged in `P13-BE-RUNTIME-DEFAULTS`. The malformed persisted-default fail-closed rule above is the next focused P13 hardening task.
+- P13 next adds `taskConcurrency` only together with its Worker runtime consumer:
+  - `GET /admin/system-settings` returns effective `tenantLimit`, `userLimit`, `providerLimit`, and `modelLimit` after the backend slice is merged.
+  - `PATCH /admin/system-settings` may update positive integer fields under `taskConcurrency`; omitted fields retain the current effective values.
+  - Values may only narrow or match environment-configured tenant/user/Provider/model hard caps. Global concurrency is not a tenant-visible or tenant-writable field.
+  - Worker applies the effective values when acquiring a new Redis semaphore lease. A positive Provider `concurrencyLimit` remains an additional stricter Provider cap.
+  - Malformed persisted `task_concurrency` configuration causes affected eligible execution to fail with a sanitized task-configuration failure before Provider calls or output/usage/API-call persistence; actual settings storage failures retry without bypassing the limiter.
+- Storage quotas and log retention remain deferred. They must not be returned as active writable settings until quota enforcement or cleanup jobs actually consume them.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`. `taskConcurrency` is the frozen contract for the next serial implementation task and must not appear in production responses until its Worker consumer ships in that same task.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.

@@ -2,7 +2,7 @@
 
 ## Current transition risks during P13 runtime settings work
 
-The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the first P13 runtime-defaults backend slice. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the P13 runtime-defaults backend slice plus malformed-row hardening. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -15,8 +15,7 @@ Remaining security and hardening risks:
 
 - Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation. P13 opens only default Provider/model settings because task creation is the explicit runtime consumer. Tenant concurrency, storage quotas, and retention remain deferred until their worker/quota/cleanup consumers are explicit.
-- P13 runtime defaults validate API-written Provider/model pairs and revalidate them during task creation. A manually corrupted or legacy malformed `task_defaults` row must be hardened to fail closed as a sanitized validation response without task/enqueue/audit success side effects; this is the immediate next P13 task.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation; task defaults are backed by task creation. `taskConcurrency` may become writable only in the same task that makes Worker semaphore acquisition consume it. Storage quotas and retention remain deferred until their quota/cleanup consumers are explicit.
 
 Resolved transition item:
 
@@ -47,6 +46,7 @@ Resolved transition item:
 - P12 backend project-member hardening now rejects deleting or downgrading the final project `OWNER`, allows owner transfer only after another `OWNER` remains, preserves tenant/RBAC/project-role checks, and verifies rejected writes do not create successful operation logs.
 - R12 reviewed the complete P12 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
 - P13 backend runtime defaults now store only tenant-scoped Provider/model IDs, validate enabled same-tenant ownership on settings writes, revalidate default-backed task requests, and reject absent, cleared, stale, disabled, deleted, cross-tenant, or capability-incompatible defaults without enqueue or successful task audit side effects. Focused/full backend tests, race tests, vet, builds, Compose config, and whitespace checks passed before merge.
+- P13 runtime-default hardening now converts malformed persisted `task_defaults` rows to sanitized `422 VALIDATION_ERROR` for default-backed requests with no task/event/enqueue/success-audit side effects, leaves explicit Provider/model requests independent of unused defaults, and preserves sanitized internal errors for real settings-storage failures.
 
 P5 review hardening backlog:
 
