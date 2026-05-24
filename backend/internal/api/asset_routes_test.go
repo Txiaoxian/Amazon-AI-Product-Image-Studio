@@ -164,6 +164,64 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	})
 }
 
+func TestAssetUploadEnforcesTenantStorageQuotaAndDoesNotLeakObject(t *testing.T) {
+	router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 1024 * 1024, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100, AllowedMIMETypes: []string{"image/png"}})
+	projectID := createAssetTestProject(t, router, adminSession, "Quota Project")
+	imageBytes := validPNG(t, 2, 2)
+	now := time.Now().UTC()
+	purgedAt := now
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-active-upload", 10, nil, nil)
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-soft-upload", 20, &now, nil)
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-purged-upload", 1000, &now, &purgedAt)
+	seedQuotaAsset(t, db, "tenant-other-upload", "quota-cross-upload", 1000, nil, nil)
+
+	setQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": int64(len(imageBytes)) + 29},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setQuota.Code != http.StatusOK {
+		t.Fatalf("set storageQuota status = %d, want %d: %s", setQuota.Code, http.StatusOK, setQuota.Body.String())
+	}
+
+	response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "asset.png", "image/png", imageBytes, nil, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("quota exceeded upload status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "STORAGE_QUOTA_EXCEEDED") {
+		t.Fatalf("quota response missing stable error code: %s", response.Body.String())
+	}
+	if store.count() != 0 {
+		t.Fatalf("quota failed upload stored objects = %d, want 0", store.count())
+	}
+	var newRows int64
+	if err := db.Model(&database.ImageAsset{}).Where("tenant_id = ? AND project_id = ?", adminSession.tenantID, projectID).Count(&newRows).Error; err != nil {
+		t.Fatalf("count quota project assets: %v", err)
+	}
+	if newRows != 0 {
+		t.Fatalf("quota failed upload created %d project asset rows, want 0", newRows)
+	}
+	var uploadLogs int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ?", adminSession.tenantID, "asset.upload").Count(&uploadLogs).Error; err != nil {
+		t.Fatalf("count upload logs: %v", err)
+	}
+	if uploadLogs != 0 {
+		t.Fatalf("quota failed upload wrote %d success logs, want 0", uploadLogs)
+	}
+
+	clearQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": nil},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearQuota.Code != http.StatusOK {
+		t.Fatalf("clear storageQuota status = %d, want %d: %s", clearQuota.Code, http.StatusOK, clearQuota.Body.String())
+	}
+	success := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "asset.png", "image/png", imageBytes, nil, adminSession.cookies, adminSession.csrfHeader())
+	if success.Code != http.StatusCreated {
+		t.Fatalf("upload after clearing quota status = %d, want %d: %s", success.Code, http.StatusCreated, success.Body.String())
+	}
+	if store.count() != 1 {
+		t.Fatalf("upload after clearing quota stored objects = %d, want 1", store.count())
+	}
+}
+
 func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
 	projectID := createAssetTestProject(t, router, adminSession, "Permission Project")

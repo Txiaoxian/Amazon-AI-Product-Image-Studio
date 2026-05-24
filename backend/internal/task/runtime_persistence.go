@@ -16,6 +16,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/idgen"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provideradapter"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"golang.org/x/image/webp"
@@ -91,6 +92,8 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 	}
 
 	uploaded := make([]uploadedOutput, 0, len(result.Outputs))
+	pending := make([]uploadedOutput, 0, len(result.Outputs))
+	var pendingBytes int64
 	for index, output := range result.Outputs {
 		exists, err := p.taskOutputExists(ctx, scope, current.ID, index)
 		if err != nil {
@@ -106,10 +109,19 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		}
 		assetID := idgen.New()
 		objectKey := outputObjectKey(scope.ID(), current.ProjectID, assetID, validated.Ext)
-		if err := p.store.PutObject(ctx, p.storage.BucketGenerated, objectKey, bytes.NewReader(validated.Data), validated.SizeBytes, validated.MIMEType); err != nil {
+		pending = append(pending, uploadedOutput{Index: index, AssetID: assetID, ObjectKey: objectKey, Image: validated})
+		pendingBytes += validated.SizeBytes
+	}
+	if pendingBytes > 0 {
+		if err := settings.CheckStorageQuota(ctx, settings.NewRepository(p.db), scope, pendingBytes); err != nil {
 			return err
 		}
-		uploaded = append(uploaded, uploadedOutput{Index: index, AssetID: assetID, ObjectKey: objectKey, Image: validated})
+	}
+	for _, output := range pending {
+		if err := p.store.PutObject(ctx, p.storage.BucketGenerated, output.ObjectKey, bytes.NewReader(output.Image.Data), output.Image.SizeBytes, output.Image.MIMEType); err != nil {
+			return err
+		}
+		uploaded = append(uploaded, output)
 	}
 
 	var events []database.TaskEvent

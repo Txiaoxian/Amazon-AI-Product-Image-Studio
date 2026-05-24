@@ -442,6 +442,18 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 	}
 
 	if err := p.persistSuccessfulResult(ctx, scope, running.ID, snapshot.Model, result); err != nil {
+		if errors.Is(err, settings.ErrStorageQuotaExceeded) {
+			if failErr := p.failRunningTask(ctx, scope, running.ID, ExecutionResult{ErrorCode: "STORAGE_QUOTA_EXCEEDED", ErrorMessage: "Storage quota exceeded."}); failErr != nil {
+				return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr
+			}
+			return ProcessResult{Action: claimActionAck}, nil
+		}
+		if errors.Is(err, settings.ErrStoredStorageQuotaInvalid) {
+			if failErr := p.failRunningTask(ctx, scope, running.ID, ExecutionResult{ErrorCode: "TASK_CONFIGURATION_INVALID", ErrorMessage: "Task configuration is no longer available."}); failErr != nil {
+				return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr
+			}
+			return ProcessResult{Action: claimActionAck}, nil
+		}
 		return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
 	}
 	if err := p.completeTask(ctx, scope, running.ID); err != nil {

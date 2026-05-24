@@ -28,6 +28,8 @@ import (
 const (
 	minStorageRetentionDays = 1
 	maxStorageRetentionDays = 3650
+	minStorageQuotaBytes    = 1
+	maxStorageQuotaBytes    = int64(109951162777600)
 )
 
 type Service struct {
@@ -115,6 +117,12 @@ func (s *Service) PatchSystemSettings(c *gin.Context) {
 			return
 		}
 	}
+	if patch.StorageQuota != nil {
+		if _, err := s.UpdateStorageQuota(c.Request.Context(), principal, *patch.StorageQuota, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			s.respondError(c, err)
+			return
+		}
+	}
 
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
@@ -178,7 +186,11 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention}, nil
+	storageQuota, err := LoadStorageQuotaWithUsage(ctx, s.repo, scope)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention, StorageQuota: storageQuota}, nil
 }
 
 func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) (TaskDefaults, error) {
@@ -246,6 +258,66 @@ func LoadStorageRetention(ctx context.Context, repo Repository, scope tenant.Sco
 		return StorageRetention{}, ErrStoredStorageRetentionInvalid
 	}
 	return retention, nil
+}
+
+func LoadStorageQuota(ctx context.Context, repo Repository, scope tenant.Scope) (StorageQuota, error) {
+	record, ok, err := repo.FindByKey(ctx, scope, KeyStorageQuota)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	if !ok {
+		return StorageQuota{}, nil
+	}
+	quota, err := decodeStoredStorageQuota(record.ValueJSON)
+	if err != nil {
+		return StorageQuota{}, ErrStoredStorageQuotaInvalid
+	}
+	if err := validateStorageQuota(quota); err != nil {
+		return StorageQuota{}, ErrStoredStorageQuotaInvalid
+	}
+	return quota, nil
+}
+
+func LoadStorageQuotaWithUsage(ctx context.Context, repo Repository, scope tenant.Scope) (StorageQuota, error) {
+	quota, err := LoadStorageQuota(ctx, repo, scope)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	usedBytes, err := repo.StorageUsedBytes(ctx, scope)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	quota.UsedBytes = usedBytes
+	return quota, nil
+}
+
+func CheckStorageQuota(ctx context.Context, repo Repository, scope tenant.Scope, pendingBytes int64) error {
+	if pendingBytes < 0 {
+		return ErrValidation
+	}
+	quota, err := LoadStorageQuota(ctx, repo, scope)
+	if err != nil {
+		return err
+	}
+	if quota.MaxBytes == nil {
+		return nil
+	}
+	usedBytes, err := repo.StorageUsedBytes(ctx, scope)
+	if err != nil {
+		return err
+	}
+	if usedBytes > *quota.MaxBytes || pendingBytes > *quota.MaxBytes-usedBytes {
+		return ErrStorageQuotaExceeded
+	}
+	return nil
+}
+
+func (s *Service) CheckStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error {
+	scope, err := tenant.NewScope(tenantID)
+	if err != nil {
+		return err
+	}
+	return CheckStorageQuota(ctx, s.repo, scope, pendingBytes)
 }
 
 func LoadEnabledStorageRetentions(ctx context.Context, repo Repository) ([]EnabledStorageRetention, []InvalidStorageRetention, error) {
@@ -504,6 +576,72 @@ func (s *Service) UpdateStorageRetention(ctx context.Context, principal auth.Pri
 	return updated, nil
 }
 
+func (s *Service) UpdateStorageQuota(ctx context.Context, principal auth.Principal, patch StorageQuotaPatch, ip string, userAgent string) (StorageQuota, error) {
+	if s.db == nil {
+		return StorageQuota{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	current, err := LoadStorageQuota(ctx, s.repo, scope)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	updated, changedFields, err := applyStorageQuotaPatch(current, patch)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	if len(changedFields) == 0 {
+		return StorageQuota{}, ErrValidation
+	}
+	valueJSON, err := json.Marshal(struct {
+		MaxBytes *int64 `json:"maxBytes"`
+	}{MaxBytes: updated.MaxBytes})
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	usedBytes, err := s.repo.StorageUsedBytes(ctx, scope)
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	updated.UsedBytes = usedBytes
+
+	now := s.now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		if err := repo.Upsert(ctx, scope, KeyStorageQuota, string(valueJSON), now); err != nil {
+			return err
+		}
+		sort.Strings(changedFields)
+		quotaMetadata := map[string]any{
+			"maxBytes":  updated.MaxBytes,
+			"usedBytes": usedBytes,
+		}
+		if updated.MaxBytes == nil {
+			quotaMetadata["status"] = "cleared"
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       ActionUpdateSystemSettings,
+			ResourceType: "system_settings",
+			ResourceID:   KeyStorageQuota,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"key":           KeyStorageQuota,
+				"changedFields": changedFields,
+				"storageQuota":  quotaMetadata,
+			},
+		})
+	})
+	if err != nil {
+		return StorageQuota{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) requireAdminPermission(c *gin.Context) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
@@ -570,6 +708,13 @@ func parsePatchRequest(body io.Reader) (PatchRequest, error) {
 			return PatchRequest{}, err
 		}
 		return PatchRequest{StorageRetention: &patch}, nil
+	}
+	if rawQuota, ok := root["storageQuota"]; ok {
+		patch, err := parseStorageQuotaPatch(rawQuota)
+		if err != nil {
+			return PatchRequest{}, err
+		}
+		return PatchRequest{StorageQuota: &patch}, nil
 	}
 	return PatchRequest{}, ErrValidation
 }
@@ -711,6 +856,37 @@ func parseStorageRetentionPatch(raw json.RawMessage) (StorageRetentionPatch, err
 	}, nil
 }
 
+func parseStorageQuotaPatch(raw json.RawMessage) (StorageQuotaPatch, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return StorageQuotaPatch{}, ErrValidation
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return StorageQuotaPatch{}, ErrValidation
+	}
+	if len(fields) == 0 {
+		return StorageQuotaPatch{}, ErrValidation
+	}
+	rawMaxBytes, ok := fields["maxBytes"]
+	if !ok || len(fields) != 1 {
+		return StorageQuotaPatch{}, ErrValidation
+	}
+	if bytes.Equal(bytes.TrimSpace(rawMaxBytes), []byte("null")) {
+		return StorageQuotaPatch{
+			ClearMaxBytes: true,
+			HasMaxBytes:   true,
+		}, nil
+	}
+	parsed, err := decodeJSONInt64(rawMaxBytes)
+	if err != nil {
+		return StorageQuotaPatch{}, err
+	}
+	return StorageQuotaPatch{
+		MaxBytes:    &parsed,
+		HasMaxBytes: true,
+	}, nil
+}
+
 func decodeJSONInt64(raw json.RawMessage) (int64, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return 0, ErrValidation
@@ -781,6 +957,22 @@ func decodeStoredStorageRetention(valueJSON string) (StorageRetention, error) {
 		return StorageRetention{}, ErrValidation
 	}
 	return retention, nil
+}
+
+func decodeStoredStorageQuota(valueJSON string) (StorageQuota, error) {
+	var stored struct {
+		MaxBytes *int64 `json:"maxBytes"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(valueJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&stored); err != nil {
+		return StorageQuota{}, ErrValidation
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return StorageQuota{}, ErrValidation
+	}
+	return StorageQuota{MaxBytes: stored.MaxBytes}, nil
 }
 
 func applyUploadPolicyPatch(current UploadPolicy, patch UploadPolicyPatch, hardCap config.UploadConfig) (UploadPolicy, []string, error) {
@@ -915,6 +1107,37 @@ func validateStorageRetention(retention StorageRetention) error {
 		return nil
 	}
 	if *retention.DeletedAssetRetentionDays < minStorageRetentionDays || *retention.DeletedAssetRetentionDays > maxStorageRetentionDays {
+		return ErrValidation
+	}
+	return nil
+}
+
+func applyStorageQuotaPatch(current StorageQuota, patch StorageQuotaPatch) (StorageQuota, []string, error) {
+	if !patch.HasMaxBytes {
+		return StorageQuota{}, nil, ErrValidation
+	}
+	updated := current
+	changedFields := []string{"storageQuota.maxBytes"}
+	if patch.ClearMaxBytes {
+		updated.MaxBytes = nil
+		updated.UsedBytes = 0
+		return updated, changedFields, nil
+	}
+	if patch.MaxBytes == nil {
+		return StorageQuota{}, nil, ErrValidation
+	}
+	updated.MaxBytes = patch.MaxBytes
+	if err := validateStorageQuota(updated); err != nil {
+		return StorageQuota{}, nil, err
+	}
+	return updated, changedFields, nil
+}
+
+func validateStorageQuota(quota StorageQuota) error {
+	if quota.MaxBytes == nil {
+		return nil
+	}
+	if *quota.MaxBytes < minStorageQuotaBytes || *quota.MaxBytes > maxStorageQuotaBytes {
 		return ErrValidation
 	}
 	return nil

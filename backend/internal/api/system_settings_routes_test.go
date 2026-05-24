@@ -72,7 +72,8 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	assertUploadPolicy(t, response, upload.MaxFileSizeBytes, upload.MaxWidth, upload.MaxHeight, upload.MaxPixels)
 	assertTaskDefaults(t, response, "", "")
 	assertStorageRetention(t, response, nil)
-	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "storageQuota", "logRetentionDays", "logRetention", "allowedMimeTypes")
+	assertStorageQuota(t, response, nil, 0)
+	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "logRetentionDays", "logRetention", "allowedMimeTypes")
 
 	var rows int64
 	if err := db.Model(&database.SystemSetting{}).Where("tenant_id = ?", adminSession.tenantID).Count(&rows).Error; err != nil {
@@ -80,6 +81,98 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("fallback GET created %d override rows, want 0", rows)
+	}
+}
+
+func TestSystemSettingsStorageQuotaGetPatchClearValidationUsageAndAudit(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+	tenantBSession := seedTenantAdminSession(t, router, db, "tenant-b", "tenant-b-admin", "tenant-b-admin@example.com", "tenant-b-password-123")
+	now := time.Now().UTC()
+	purgedAt := now
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-active", 100, nil, nil)
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-soft-deleted", 200, &now, nil)
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-purged", 400, &now, &purgedAt)
+	seedQuotaAsset(t, db, "tenant-b", "quota-cross-tenant", 800, nil, nil)
+
+	getBefore := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if getBefore.Code != http.StatusOK {
+		t.Fatalf("GET before status = %d, want %d: %s", getBefore.Code, http.StatusOK, getBefore.Body.String())
+	}
+	assertStorageQuota(t, getBefore, nil, 300)
+
+	setResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": 1},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setResponse.Code != http.StatusOK {
+		t.Fatalf("set storageQuota status = %d, want %d: %s", setResponse.Code, http.StatusOK, setResponse.Body.String())
+	}
+	assertStorageQuota(t, setResponse, ptrInt64(1), 300)
+
+	var setting database.SystemSetting
+	if err := db.Where("tenant_id = ? AND `key` = ?", adminSession.tenantID, settings.KeyStorageQuota).First(&setting).Error; err != nil {
+		t.Fatalf("load storage quota setting: %v", err)
+	}
+	if !strings.Contains(setting.ValueJSON, `"maxBytes":1`) {
+		t.Fatalf("storage quota value_json = %s, want maxBytes=1", setting.ValueJSON)
+	}
+
+	tenantBGet := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, tenantBSession.cookies, nil)
+	if tenantBGet.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status = %d, want %d: %s", tenantBGet.Code, http.StatusOK, tenantBGet.Body.String())
+	}
+	assertStorageQuota(t, tenantBGet, nil, 800)
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{name: "usedBytes read only", body: map[string]any{"storageQuota": map[string]any{"usedBytes": 1}}},
+		{name: "unknown nested field", body: map[string]any{"storageQuota": map[string]any{"maxBytes": 1024, "extra": 1}}},
+		{name: "zero", body: map[string]any{"storageQuota": map[string]any{"maxBytes": 0}}},
+		{name: "negative", body: map[string]any{"storageQuota": map[string]any{"maxBytes": -1}}},
+		{name: "non integer", body: map[string]any{"storageQuota": map[string]any{"maxBytes": 1.5}}},
+		{name: "string", body: map[string]any{"storageQuota": map[string]any{"maxBytes": "1024"}}},
+		{name: "over range", body: map[string]any{"storageQuota": map[string]any{"maxBytes": int64(109951162777600) + 1}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+			if getResponse.Code != http.StatusOK {
+				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+			}
+			assertStorageQuota(t, getResponse, ptrInt64(1), 300)
+		})
+	}
+
+	clearResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": nil},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear storageQuota status = %d, want %d: %s", clearResponse.Code, http.StatusOK, clearResponse.Body.String())
+	}
+	assertStorageQuota(t, clearResponse, nil, 300)
+
+	var logs []database.OperationLog
+	if err := db.Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyStorageQuota).Find(&logs).Error; err != nil {
+		t.Fatalf("load storageQuota operation logs: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("storageQuota operation logs = %d, want 2: %#v", len(logs), logs)
+	}
+	for _, log := range logs {
+		metadata := strings.ToLower(log.MetadataJSON)
+		if !strings.Contains(metadata, "storage_quota") || !strings.Contains(metadata, "changedfields") || !strings.Contains(metadata, "usedbytes") {
+			t.Fatalf("operation log missing sanitized quota metadata: %s", log.MetadataJSON)
+		}
+		for _, forbidden := range []string{"password", "token", "cookie", "authorization", "api_key", "apikey", "secret", "jwt", "base64", "data:image", "value_json", "bucket", "object_key", "minio"} {
+			if strings.Contains(metadata, forbidden) {
+				t.Fatalf("operation log metadata contains %q: %s", forbidden, log.MetadataJSON)
+			}
+		}
 	}
 }
 
@@ -164,7 +257,6 @@ func TestSystemSettingsStorageRetentionRejectsInvalidAndDeferredFields(t *testin
 		{name: "over range", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 3651}}},
 		{name: "unknown nested field", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 30, "extra": 1}}},
 		{name: "empty slice", body: map[string]any{"storageRetention": map[string]any{}}},
-		{name: "storage quota forbidden", body: map[string]any{"storageQuota": map[string]any{"maxBytes": 1}}},
 		{name: "log retention forbidden", body: map[string]any{"logRetention": map[string]any{"days": 30}}},
 	}
 
@@ -666,6 +758,21 @@ func assertStorageRetention(t *testing.T, response *httptest.ResponseRecorder, e
 	assertNumericField(t, retention, "deletedAssetRetentionDays", int64(*expectedDays))
 }
 
+func assertStorageQuota(t *testing.T, response *httptest.ResponseRecorder, expectedMaxBytes *int64, expectedUsedBytes int64) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	quota := objectField(t, data, "storageQuota")
+	if expectedMaxBytes == nil {
+		if quota["maxBytes"] != nil {
+			t.Fatalf("maxBytes = %#v, want null", quota["maxBytes"])
+		}
+	} else {
+		assertNumericField(t, quota, "maxBytes", *expectedMaxBytes)
+	}
+	assertNumericField(t, quota, "usedBytes", expectedUsedBytes)
+}
+
 func assertNumericField(t *testing.T, object map[string]any, field string, expected int64) {
 	t.Helper()
 
@@ -680,6 +787,40 @@ func assertNumericField(t *testing.T, object map[string]any, field string, expec
 
 func ptrInt(value int) *int {
 	return &value
+}
+
+func ptrInt64(value int64) *int64 {
+	return &value
+}
+
+func seedQuotaAsset(t *testing.T, db *gorm.DB, tenantID string, assetID string, sizeBytes int64, deletedAt *time.Time, purgedAt *time.Time) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	record := database.ImageAsset{
+		ID:        assetID,
+		TenantID:  tenantID,
+		ProjectID: "project-" + assetID,
+		Kind:      "REFERENCE",
+		Filename:  assetID + ".png",
+		ObjectKey: "test/" + tenantID + "/" + assetID + ".png",
+		MimeType:  "image/png",
+		SizeBytes: sizeBytes,
+		Width:     1,
+		Height:    1,
+		SHA256:    strings.Repeat("a", 64),
+		CreatedBy: "user-" + assetID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PurgedAt:  purgedAt,
+	}
+	if deletedAt != nil {
+		record.DeletedAt.Valid = true
+		record.DeletedAt.Time = deletedAt.UTC()
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatalf("seed quota asset %s/%s: %v", tenantID, assetID, err)
+	}
 }
 
 func newSystemSettingsRouteTestRouter(t *testing.T, hardCaps config.QueueConfig) (http.Handler, *gorm.DB, projectRouteSession) {
