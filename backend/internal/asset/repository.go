@@ -15,6 +15,15 @@ type Repository struct {
 	db *gorm.DB
 }
 
+type PurgeCandidate struct {
+	ID                 string
+	TenantID           string
+	Kind               string
+	ObjectKey          string
+	ThumbnailObjectKey *string
+	DeletedAt          time.Time
+}
+
 func NewRepository(db *gorm.DB) Repository {
 	return Repository{db: db}
 }
@@ -146,6 +155,47 @@ func (r Repository) SoftDeleteAsset(ctx context.Context, scope tenant.Scope, ass
 	}
 	if result.RowsAffected == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func (r Repository) ListPurgeCandidates(ctx context.Context, scope tenant.Scope, cutoff time.Time, limit int) ([]PurgeCandidate, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if cutoff.IsZero() || limit <= 0 {
+		return nil, ErrValidation
+	}
+
+	var records []PurgeCandidate
+	err = db.Table("image_assets").
+		Select("id, tenant_id, kind, object_key, thumbnail_object_key, deleted_at").
+		Where("tenant_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL", scope.ID(), cutoff.UTC()).
+		Order("deleted_at ASC, id ASC").
+		Limit(limit).
+		Find(&records).Error
+	return records, err
+}
+
+func (r Repository) MarkAssetPurged(ctx context.Context, scope tenant.Scope, assetID string, purgedAt time.Time) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" || purgedAt.IsZero() {
+		return ErrValidation
+	}
+
+	result := db.Table("image_assets").
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL", scope.ID(), assetID).
+		Updates(map[string]any{
+			"purged_at":  purgedAt.UTC(),
+			"updated_at": purgedAt.UTC(),
+		})
+	if result.Error != nil {
+		return result.Error
 	}
 	return nil
 }

@@ -25,6 +25,8 @@ var (
 	ErrForbidden          = errors.New("asset access forbidden")
 	ErrNotFound           = errors.New("asset not found")
 	ErrStorageUnavailable = errors.New("asset storage unavailable")
+	ErrUploadFailed       = errors.New("asset upload failed")
+	ErrCleanupFailed      = errors.New("asset cleanup failed")
 )
 
 type ListQuery struct {

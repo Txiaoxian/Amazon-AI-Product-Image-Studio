@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -351,6 +352,58 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 			t.Fatal("database failure should attempt object cleanup")
 		}
 	})
+
+	t.Run("database failure after request cancellation still cleans uploaded object", func(t *testing.T) {
+		router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+		projectID := createAssetTestProject(t, router, adminSession, "Canceled Database Failure Project")
+		ctx, cancel := context.WithCancel(context.Background())
+		store.onPut = cancel
+
+		response := performMultipartWithContext(ctx, router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "ok.png", "image/png", validPNG(t, 2, 2), nil, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("upload status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+		}
+		assertNoAssetRows(t, db, adminSession.tenantID)
+		if store.count() != 0 {
+			t.Fatalf("canceled database failure left orphan objects: %#v", store.objects)
+		}
+		if store.removeCount == 0 {
+			t.Fatal("canceled database failure should attempt independent object cleanup")
+		}
+		for _, removeErr := range store.removeErrs {
+			if errors.Is(removeErr, context.Canceled) {
+				t.Fatalf("cleanup used canceled request context: %v", removeErr)
+			}
+		}
+	})
+
+	t.Run("database failure with cleanup failure returns sanitized upload failure", func(t *testing.T) {
+		router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+		projectID := createAssetTestProject(t, router, adminSession, "Cleanup Failure Project")
+		store.failRemove = errors.New("remove failed bucket product-originals key tenants/secret/object filename ok.png base64 data:image/png")
+		if err := db.Callback().Create().Before("gorm:create").Register("asset_route_test_fail_image_asset_create", func(tx *gorm.DB) {
+			if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Table == "image_assets" {
+				tx.AddError(errors.New("metadata insert failed"))
+			}
+		}); err != nil {
+			t.Fatalf("register image asset create failure callback: %v", err)
+		}
+
+		response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "ok.png", "image/png", validPNG(t, 2, 2), nil, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("upload status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+		}
+		assertNoAssetRows(t, db, adminSession.tenantID)
+		if store.count() != 1 {
+			t.Fatalf("cleanup failure should leave the uploaded object for later recovery, got count %d", store.count())
+		}
+		body := response.Body.String()
+		for _, forbidden := range []string{"product-originals", "tenants/", "object_key", "objectKey", "ok.png", "base64", "data:image", "metadata insert failed", "remove failed"} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("upload cleanup failure response leaked %q: %s", forbidden, body)
+			}
+		}
+	})
 }
 
 func TestAssetUploadAcceptsAllowedImageTypesWithinPolicy(t *testing.T) {
@@ -391,6 +444,9 @@ type fakeObjectStore struct {
 	mu          sync.Mutex
 	objects     map[string]fakeObject
 	failPut     bool
+	failRemove  error
+	onPut       func()
+	removeErrs  []error
 	removeCount int
 }
 
@@ -405,15 +461,21 @@ func newFakeObjectStore() *fakeObjectStore {
 
 func (s *fakeObjectStore) PutObject(_ context.Context, bucket string, key string, body io.Reader, _ int64, contentType string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.failPut {
+		s.mu.Unlock()
 		return storage.ErrUnavailable
 	}
 	data, err := io.ReadAll(body)
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	s.objects[bucket+"/"+key] = fakeObject{contentType: contentType, body: data}
+	onPut := s.onPut
+	s.mu.Unlock()
+	if onPut != nil {
+		onPut()
+	}
 	return nil
 }
 
@@ -431,10 +493,18 @@ func (s *fakeObjectStore) GetObject(_ context.Context, bucket string, key string
 	}, nil
 }
 
-func (s *fakeObjectStore) RemoveObject(_ context.Context, bucket string, key string) error {
+func (s *fakeObjectStore) RemoveObject(ctx context.Context, bucket string, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.removeCount++
+	if err := ctx.Err(); err != nil {
+		s.removeErrs = append(s.removeErrs, err)
+		return err
+	}
+	if s.failRemove != nil {
+		s.removeErrs = append(s.removeErrs, s.failRemove)
+		return s.failRemove
+	}
 	delete(s.objects, bucket+"/"+key)
 	return nil
 }
@@ -520,6 +590,10 @@ func uploadAssetForTest(t *testing.T, router http.Handler, session projectRouteS
 }
 
 func performMultipart(router http.Handler, method string, path string, fileField string, filename string, contentType string, data []byte, fields map[string]string, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
+	return performMultipartWithContext(context.Background(), router, method, path, fileField, filename, contentType, data, fields, cookies, headers)
+}
+
+func performMultipartWithContext(ctx context.Context, router http.Handler, method string, path string, fileField string, filename string, contentType string, data []byte, fields map[string]string, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	partHeader := make(textproto.MIMEHeader)
@@ -541,7 +615,7 @@ func performMultipart(router http.Handler, method string, path string, fileField
 		panic(err)
 	}
 
-	request := httptest.NewRequest(method, path, body)
+	request := httptest.NewRequest(method, path, body).WithContext(ctx)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	for _, cookie := range cookies {
 		request.AddCookie(cookie)

@@ -531,4 +531,12 @@ CREATE TABLE IF NOT EXISTS system_settings (
 `,
 		},
 	},
+	{
+		ID:   "202605240001_image_asset_purge_marker",
+		Name: "add durable image asset physical purge marker",
+		Statements: []string{
+			`ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL`,
+			`CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (tenant_id, deleted_at, purged_at)`,
+		},
+	},
 }
