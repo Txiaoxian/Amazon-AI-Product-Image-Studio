@@ -371,7 +371,7 @@ Current settings contract:
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-The active settings slices, plus the next frozen runtime-backed slice, are intentionally narrow:
+The active runtime-backed settings slices are intentionally narrow:
 
 ```json
 {
@@ -406,7 +406,7 @@ The active settings slices, plus the next frozen runtime-backed slice, are inten
 - `PATCH /admin/system-settings` may update one or more fields under `uploadPolicy`; omitted fields keep their current effective values.
 - Tenant overrides must stay positive and may only narrow or match the environment-configured upload hard caps. Runtime asset validation remains the security boundary and consumes the effective tenant policy for request-body size, dimensions, and pixel-count checks.
 - Allowed MIME types remain configuration-owned security policy; the settings API must not make SVG or any non-allowlisted type writable.
-- P13 `taskDefaults` is the next active settings slice because task creation is the runtime consumer:
+- P13 has added `taskDefaults` because task creation is the runtime consumer:
   - `GET /admin/system-settings` returns `taskDefaults` with nullable `defaultProviderId` and `defaultModelId`.
   - `PATCH /admin/system-settings` may update `taskDefaults` only when both IDs are supplied together, or clear both with `null` values.
   - The backend must validate tenant ownership, enabled Provider, enabled model, and model ownership by Provider before saving defaults.
@@ -433,7 +433,7 @@ The active settings slices, plus the next frozen runtime-backed slice, are inten
   - Valid range is `1..3650` days unless a later public contract deliberately changes the range.
   - Worker maintenance resolves the tenant setting, computes `cutoff = now - deletedAssetRetentionDays`, and calls the asset cleanup foundation for that tenant.
   - Malformed persisted `storage_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
-- P13 next adds `storageQuota` only together with backend quota consumers:
+- P13 has added `storageQuota` together with backend quota consumers:
   - `GET /admin/system-settings` returns `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`.
   - `maxBytes` is nullable. `null` means no tenant storage quota is enforced.
   - `usedBytes` is computed from tenant-scoped `image_assets.size_bytes` for rows whose MinIO objects are still expected to exist. Soft-deleted but not purged rows count; purged rows do not.
@@ -441,5 +441,5 @@ The active settings slices, plus the next frozen runtime-backed slice, are inten
   - Reference uploads and Worker output asset persistence must reject writes that would exceed the quota and must not leave successful asset metadata, successful task output events, or sensitive object identifiers in responses/logs.
   - Malformed persisted `storage_quota` must fail closed for new asset writes. Existing assets must not be deleted or hidden because of quota settings.
 - Log retention, orphan object listing, and manual cleanup triggers remain deferred. They must not be returned as active writable settings until their runtime consumers exist.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`. `storageQuota` is frozen for the next serial implementation task and must not ship without upload and Worker output consumers.
-- Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`.
+- Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests. `P13-FE-SYSTEM-SETTINGS` is the next frontend slice and may expose only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`.

@@ -37,7 +37,7 @@ Phase status:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
-| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, and storage retention runtime are merged; storage quota, frontend settings, and R13 remain. |
+| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, and storage quota accounting are merged; frontend settings and R13 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -73,6 +73,8 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-STORAGE-RETENTION-RUNTIME` was reviewed and merged. The backend now exposes nullable `storageRetention.deletedAssetRetentionDays`, keeps automatic physical cleanup disabled by default, and runs a Worker maintenance loop that reads valid active-tenant retention settings and calls the cleanup foundation with tenant/cutoff/batch boundaries. Malformed/null/inactive settings fail closed and cleanup errors are logged with sanitized metadata only. Validation passed focused system-settings/settings/asset/database/worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-ups remain: add a minimum bound for `WORKER_RETENTION_MAINTENANCE_INTERVAL` if operationally needed, then implement storage quota accounting/enforcement and broader orphan discovery.
 
+`P13-BE-STORAGE-QUOTA-ACCOUNTING` was reviewed and merged. The backend now exposes nullable `storageQuota.maxBytes` with read-only computed `storageQuota.usedBytes`, computes usage from tenant-scoped `image_assets.size_bytes` where `purged_at IS NULL`, and enforces quota before reference uploads and Worker output asset persistence. Quota failures return sanitized stable errors and avoid successful asset rows, task outputs, output events, usage records, successful operation logs, and object leaks. Validation passed focused system-settings/settings/asset/database/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-ups remain: strict concurrent quota reservation/counters and a dedicated storage usage index can be evaluated later.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -92,6 +94,7 @@ The current `main` branch supports:
 - Backend runtime-backed task concurrency policy: tenant admins can configure tenant/user/Provider/model limits within environment hard caps, and Worker Redis semaphore acquisition consumes those effective limits before Provider execution.
 - Backend storage cleanup foundation: upload rollback cleanup no longer depends on canceled request contexts, and soft-deleted image assets can be physically purged through an internal tenant-scoped, cutoff-based, idempotent cleanup service.
 - Backend runtime-backed storage retention policy: tenant admins can optionally set `storageRetention.deletedAssetRetentionDays`; Worker maintenance consumes it and defaults to disabled when unset or cleared.
+- Backend runtime-backed storage quota policy: tenant admins can optionally set `storageQuota.maxBytes`; `storageQuota.usedBytes` is computed from tenant-scoped asset metadata, and uploads/Worker output persistence enforce the quota before creating new asset metadata.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -176,9 +179,9 @@ Suggested order:
 5. `P13-BE-STORAGE-RETENTION-RUNTIME`
    - Completed and merged. Nullable `storageRetention.deletedAssetRetentionDays` is writable only with a Worker maintenance consumer; unset/null disables automatic physical cleanup and malformed settings fail closed.
 6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
-   - Next. Add nullable `storageQuota.maxBytes` plus read-only computed `storageQuota.usedBytes`, and enforce the quota in backend reference uploads and Worker output asset persistence.
+   - Completed and merged. Nullable `storageQuota.maxBytes` is writable only with reference-upload and Worker-output consumers; `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata.
 7. `P13-FE-SYSTEM-SETTINGS`
-   - Frontend admin UI only for settings that are active and runtime-backed.
+   - Next. Frontend admin UI only for settings that are active and runtime-backed: upload policy, task defaults, task concurrency, storage retention, and storage quota.
 8. `R13`
    - Settings/quotas/storage lifecycle review.
 
@@ -273,4 +276,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P13-BE-STORAGE-QUOTA-ACCOUNTING` serially from latest `main`. The next slice is backend-only: expose nullable `storageQuota.maxBytes` only together with live quota consumers, compute read-only `storageQuota.usedBytes` from tenant-scoped image asset metadata, and enforce quota before new reference uploads and Worker output asset persistence. Do not expose log retention, orphan object listing, manual cleanup triggers, frontend settings UI, or storage quota fields that lack runtime consumers.
+Run `P13-FE-SYSTEM-SETTINGS` serially from latest `main`. The next slice is frontend-only: extend the existing admin settings tab to display and edit only backend-active, runtime-backed settings: upload policy, task defaults, task concurrency, storage retention, and storage quota. Do not add frontend UI for log retention, orphan cleanup, manual cleanup triggers, MinIO object listing, Provider secrets, or any setting that lacks a backend runtime consumer.

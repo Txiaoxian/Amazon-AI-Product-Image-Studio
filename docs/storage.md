@@ -138,12 +138,13 @@ P13 retention runtime rules:
 - `storageRetention.deletedAssetRetentionDays` is nullable. `null` disables automatic physical cleanup for that tenant.
 - The Worker maintenance loop is the runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
 - Worker must skip tenants with absent, null, malformed, or unsupported retention settings. It must not delete anything for those tenants.
-- Storage quota accounting/enforcement is the next P13 backend task. Until then, no quota fields may be exposed as active writable state.
+- Storage quota accounting/enforcement is active in the backend. Frontend may display or edit quota only through the system-settings API and only for tenant admins with `system:settings:manage`.
 - Log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.
 
-Next P13 storage quota rules:
+P13 storage quota rules:
 
 - `storageQuota.maxBytes` is nullable. `null` means no tenant storage quota is enforced.
 - `storageQuota.usedBytes` is read-only and must be computed from tenant-scoped `image_assets` metadata, counting records whose bytes still exist in MinIO. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
 - Quota enforcement must run before creating new reference upload assets and before Worker persists generated/edited output assets. Exceeding quota must fail without successful asset metadata, successful task output events, or leaked object keys.
 - Quota accounting must not use MinIO bucket listing as its source of truth in this phase. MySQL metadata remains the authoritative accounting source.
+- Current non-blocking limitation: quota checks are optimistic and do not yet reserve bytes under concurrent writers. A future task may add strict reservation/counter semantics if operationally required.

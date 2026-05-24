@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-CLEANUP-FOUNDATION` 与 `P13-BE-STORAGE-RETENTION-RUNTIME` 已 review 并合并，P13 仍在进行中。
+R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-CLEANUP-FOUNDATION`、`P13-BE-STORAGE-RETENTION-RUNTIME` 与 `P13-BE-STORAGE-QUOTA-ACCOUNTING` 已 review 并合并，P13 仍在进行中。
 
 已完成的平台基础：
 
@@ -95,7 +95,7 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - P7-P8：任务队列、Worker、Provider Adapter 运行时、SSE、前端后端化。
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
-- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务，以及 Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`。
+- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`，以及引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`。
 
 当前已知后续项：
 
@@ -104,9 +104,9 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - 后端项目成员写路径已补齐最后一个 `OWNER` 保护：不能删除或降级项目最后一个 `OWNER`，但允许先新增或提升另一个 `OWNER` 后再完成 owner 转移。
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
-- 上传策略、`taskDefaults`、`taskConcurrency` 与 `storageRetention` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency` 与 `storage_retention` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界或清理边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一串行任务只做后端存储配额统计与执行：增加 nullable `storageQuota.maxBytes` 设置、read-only `storageQuota.usedBytes`，并让引用图上传和 Worker 输出资产持久化真实消费该配额。
-- 缩略图策略、完整 orphan cleanup、log retention 和前端设置 UI 仍需实现。
+- 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
+- 下一串行任务只做前端系统设置 UI：展示并编辑已经后端生效的设置，不新增后端合同或未生效设置入口。
+- 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
 
@@ -164,9 +164,9 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 5. `P13-BE-STORAGE-RETENTION-RUNTIME`
    - 已完成并合并。`storageRetention.deletedAssetRetentionDays` 默认 `null`/disabled，Worker maintenance loop 只消费合法 active-tenant 设置并调用 cleanup foundation。
 6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
-   - 下一个任务。增加 nullable `storageQuota.maxBytes`、read-only `storageQuota.usedBytes`，并在引用图上传和 Worker 输出资产持久化前执行配额校验。
+   - 已完成并合并。`storageQuota.maxBytes` 默认 `null`/unlimited，`storageQuota.usedBytes` 从 tenant-scoped 未 purged 资产 metadata 计算；引用图上传和 Worker 输出资产持久化都会在写入前执行配额校验。
 7. `P13-FE-SYSTEM-SETTINGS`
-   - 仅为已经运行时生效的设置提供前端 admin UI。
+   - 下一个任务。仅为已经运行时生效的设置提供前端 admin UI。
 8. `R13`
    - 设置和存储生命周期 review。
 
@@ -200,170 +200,210 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P13-BE-STORAGE-QUOTA-ACCOUNTING
+## 下一个任务包：P13-FE-SYSTEM-SETTINGS
 
 ### 调度决策
 
-- 本任务串行执行，不与前端设置、orphan cleanup、log retention 或发布任务并行。
-- 理由：`storageQuota` 是会拒绝资产写入的控制面设置，必须和真实上传/Worker 输出消费者同步落地，且需要完整 failure matrix。
-- 本任务只开放 nullable quota 上限和 read-only usage，不开放 log retention、orphan object listing、frontend UI、manual cleanup API 或 MinIO bucket listing。
+- 本任务串行执行，不与后端 settings、orphan cleanup、log retention 或发布任务并行。
+- 理由：前端系统设置页要跟随已经合并的后端运行时设置合同，不能抢先暴露未生效字段。
+- 本任务只改前端 admin 设置 UI、前端类型/API 合同和前端测试，不改后端、部署、公共文档或 Agent 规则。
 
 ### 任务信息
 
-- 任务名称：`P13-BE-STORAGE-QUOTA-ACCOUNTING`
-- 目标：增加 runtime-backed nullable `storageQuota.maxBytes` 设置和 read-only `storageQuota.usedBytes` 统计，并在引用图上传与 Worker 输出资产持久化前执行 tenant-scoped quota 校验。
-- 推荐线程名：`P13-BE-STORAGE-QUOTA-ACCOUNTING`
-- 推荐分支名：`codex/p13-backend-storage-quota-accounting`
-- 起始分支：已合并 `P13-BE-STORAGE-RETENTION-RUNTIME` 与本任务公共合同文档的最新 `main`
-- 前置依赖：`P13-BE-STORAGE-RETENTION-RUNTIME` 已合并；`docs/api-contract.md`、`docs/database-schema.md`、`docs/storage.md` 已冻结 `storageQuota.maxBytes` / `storageQuota.usedBytes` 合同和资产写入消费者范围。
+- 任务名称：`P13-FE-SYSTEM-SETTINGS`
+- 目标：扩展现有 admin 设置页，使 tenant admin 能查看和编辑已经 runtime-backed 的设置：`uploadPolicy`、`taskDefaults`、`taskConcurrency`、`storageRetention`、`storageQuota`。继续隐藏 log retention、orphan cleanup、manual cleanup、MinIO listing、Provider secrets 等未开放能力。
+- 推荐线程名：`P13-FE-SYSTEM-SETTINGS`
+- 推荐分支名：`codex/p13-frontend-system-settings`
+- 起始分支：已合并 `P13-BE-STORAGE-QUOTA-ACCOUNTING` 与本任务公共合同文档的最新 `main`
+- 前置依赖：`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-RETENTION-RUNTIME`、`P13-BE-STORAGE-QUOTA-ACCOUNTING` 均已合并；`docs/api-contract.md` 已确认可前端展示/编辑的 active settings 字段。
 
-### 控制面字段与运行时消费者映射
+### 子 agent 完整启动 prompt
 
-| 外部字段 | 运行时消费者 | 本任务是否实现消费者 |
-| --- | --- | --- |
-| `storageQuota.maxBytes` | 引用图上传和 Worker 输出资产持久化前读取 tenant setting，计算 `usedBytes + pendingBytes <= maxBytes` | 是 |
-| `storageQuota.usedBytes` | 只读 API 字段，从 tenant-scoped `image_assets.size_bytes` 计算，`purged_at IS NULL` 计入 | 是，只读 |
-| `storageRetention.deletedAssetRetentionDays` | 已合并 Worker maintenance consumer | 保持现有行为，不改语义 |
-| `logRetention.*` | 暂无；后续日志清理任务 | 否，本任务禁止暴露 |
+```text
+你是本项目的子 agent，负责 `P13-FE-SYSTEM-SETTINGS`。
+
+你必须在分支 `codex/p13-frontend-system-settings` 上工作；如果当前不在该分支，先执行 `git switch codex/p13-frontend-system-settings`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`，若不包含先停止并报告，不要自行合并公共合同。
+
+任务目标：
+扩展现有前端 admin observability/settings 面板，让具备 `system:settings:manage` 的 tenant admin 能查看并编辑后端已经真正 runtime-backed 的设置：
+- `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}`
+- `taskDefaults.{defaultProviderId,defaultModelId}`
+- `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`
+- `storageRetention.deletedAssetRetentionDays`
+- `storageQuota.maxBytes`，并显示 read-only `storageQuota.usedBytes`
+
+必须遵守：
+1. 不修改后端、部署、docs、AGENTS.md、agent-instructions。
+2. 不暴露 log retention、orphan cleanup、manual cleanup trigger、MinIO listing、bucket/object key、Provider API Key 或任何未 runtime-backed 的设置。
+3. 前端不得直连 OpenAI/Gemini/任何 AI Provider，不得保存 Provider API Key，不得新增轮询、setInterval 或循环 fetch。
+4. 所有写请求继续使用现有 `adminApi.updateSystemSettings(request, csrfToken)` 和 CSRF token。
+5. PATCH 请求必须只发送当前用户正在保存的设置分组，避免把未编辑字段、read-only 字段或后端额外字段回写。
+6. `storageQuota.usedBytes` 永远只读；`storageQuota.maxBytes = null` 与 `storageRetention.deletedAssetRetentionDays = null` 都是合法禁用状态。
+7. 如果需要 Provider/model 下拉数据，复用现有 frontend API client，不新增 Provider 直连或敏感字段展示。Provider/model 选择只使用安全展示字段和 ID，不显示 API Key。
+8. UI 风格延续现有 `AdminObservabilitySettingsPanel`，不要重写整个 admin 面板，不做无关视觉重构。
+
+建议实现：
+1. 更新 `frontend/src/types/admin.ts` 的 `SystemSettings` 与 `UpdateSystemSettingsRequest` 类型，覆盖 active settings 字段，并保持 deferred 字段不存在。
+2. 扩展 `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`：
+   - 保留现有 upload policy 表单行为。
+   - 为 task defaults 增加 Provider/model 选择或 ID 输入；保存时成对提交，支持清除为 `null`。
+   - 为 task concurrency 增加正整数输入。
+   - 为 storage retention 增加正整数输入和清除/禁用状态。
+   - 为 storage quota 增加 max bytes 输入、清除/禁用状态，并显示 read-only used bytes。
+   - 每个设置分组应有独立保存状态、错误状态和成功后刷新/本地更新，避免一个分组的无效草稿阻塞其他分组。
+3. 更新 `frontend/src/api/admin.ts` 与测试，确保 GET/PATCH 路径、CSRF header、请求 body 均正确。
+4. 更新 `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`：
+   - 验证 active settings 能显示。
+   - 验证保存每个分组时只 PATCH 对应分组。
+   - 验证 `storageQuota.usedBytes` 不可编辑且不会出现在 PATCH body。
+   - 验证 null/clear 行为。
+   - 验证 deferred 字段仍不显示、不发送。
+   - 验证无 `system:settings:manage` 时不会加载或写 settings。
+5. 更新必要的 legacy/forbidden-pattern 测试，确保不引入 Provider 直连、API Key 浏览器存储或 task polling。
+
+验收命令：
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test -- adminApi adminObservabilitySettingsPanel legacyRetirement
+npm run test
+npm run build
+
+cd ..
+git diff --check main...HEAD
+! rg -n "api\\.openai\\.com|generativelanguage|localhost:|127\\.0\\.0\\.1|setInterval\\(|localStorage\\.|sessionStorage\\.|indexedDB|api[_-]?key|Authorization" frontend/src --glob '!**/test/**'
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- 每个 failure mode 对应的测试文件/测试名映射。
+- 安全自查结果，明确没有新增 Provider 直连、API Key 存储、轮询、未生效设置 UI、object key/bucket/MinIO URL 展示。
+- 刻意未修改范围。
+- 如发现公共合同缺口，只报告给主 agent，不修改 docs。
+```
 
 ### 允许修改文件
 
-- `backend/internal/asset/**`
-- `backend/internal/settings/**`
-- `backend/internal/task/**`，仅限 Worker 输出资产持久化前 quota 校验、错误映射和相关测试；不得修改队列/SSE/状态机语义
-- `backend/internal/database/**`，仅限 `image_assets` quota 聚合所需 model/helper/index/migration 测试；默认不得新增 quota 表，除非实现严格并发需要并在交付中说明
-- `backend/internal/config/**`，仅限 storage quota 上限/hard cap 配置（如确有必要）；不得新增 Provider 或任务状态配置
-- `backend/internal/api/*system_settings*_test.go`
-- `backend/internal/asset/*_test.go`
-- `backend/internal/database/*_test.go`
-- `backend/internal/task/*_test.go`
-- `backend/internal/api/asset_routes_test.go`
-- `backend/internal/api/task_routes_test.go`
-- `backend/internal/api/router.go`，仅限 settings/quota service wiring 所必需的最小修改
+- `frontend/src/types/admin.ts`
+- `frontend/src/api/admin.ts`
+- `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`
+- `frontend/src/components/admin/AdminApiCallLogsView.tsx`，仅限必要的类型/布局兼容；默认不改
+- `frontend/src/api/providers.ts`、`frontend/src/api/models.ts`，仅限复用 Provider/model select 所需的安全类型或 helper；默认不改
+- `frontend/src/types/platform.ts`，仅限复用安全 Provider/model 展示类型；默认不改
+- `frontend/src/test/adminApi.test.ts`
+- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
+- `frontend/src/test/legacyRetirement.test.tsx`
+- `frontend/src/test/setup.ts`，仅限测试必要 mock；默认不改
 
 ### 禁止修改文件
 
-- `frontend/**`
+- `backend/**`
 - `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `backend/internal/provider/**`
-- `backend/internal/provideradapter/**`
-- `backend/internal/model/**`
-- `backend/internal/queue/**`
-- `backend/internal/sse/**`
-- 任何新的 public cleanup trigger API、独立 storage quota API、log retention API 或 MinIO object listing API
-- 前端 UI、部署拓扑、Provider/model/task/SSE 行为或无关重构
-- 删除现有资产、硬删除 `image_assets` 行、修改已合并 retention cleanup 语义、或绕过 `tenant_id` 的 quota 查询
+- `frontend/src/api/tasks.ts`
+- `frontend/src/lib/taskSseClient.ts`
+- `frontend/src/hooks/useGeneration.ts`
+- `frontend/src/db/**`
+- Provider/model admin 主流程文件，除非只是复用安全类型且在交付中说明
+- 任何 OpenAI/Gemini/AI relay 直连、Provider API Key 浏览器存储、task polling、MinIO public URL、object key/bucket 展示、log retention UI、orphan cleanup UI、manual cleanup UI
 
 ### 具体开发内容
 
-1. 先写 settings API、asset upload、Worker output persistence 和 quota failure matrix 测试，再做最小实现。
-2. 在 `GET/PATCH /api/v1/admin/system-settings` 中增加 `storageQuota`：
-   - 响应形态：`storageQuota: { "maxBytes": null | positive_integer, "usedBytes": non_negative_integer }`
-   - `maxBytes = null` 表示不启用 storage quota；没有 tenant override 时默认返回 `null`。
-   - `usedBytes` 只读，PATCH 中出现必须返回 `422 VALIDATION_ERROR`。
-   - PATCH 可设置正整数 `maxBytes` 或 `null` 清除；省略字段保持当前值。
-   - 建议合法范围：`1..109951162777600` bytes（100 TiB）或等价明确 hard cap；超出、零值、负值、小数、字符串、未知字段均返回 `422 VALIDATION_ERROR`。
-3. 实现 tenant-scoped usage 计算：
-   - 从 `image_assets.size_bytes` 聚合，必须带 `tenant_id`。
-   - `purged_at IS NULL` 的资产计入；soft-deleted 但未 purged 的资产仍计入；`purged_at IS NOT NULL` 不计入。
-   - 不使用 MinIO bucket listing 作为 quota 统计来源。
-4. 引用图上传 quota consumer：
-   - 在成功创建资产 metadata 前校验 `usedBytes + uploadSize <= maxBytes`。
-   - 超额返回 `409 STORAGE_QUOTA_EXCEEDED` 或等价稳定错误码；不得创建 asset row、成功 operation log 或残留已上传对象。
-   - `maxBytes = null` 时不改变现有上传行为。
-5. Worker 输出资产 quota consumer：
-   - 在 Provider 输出图片校验后、成功持久化 output asset metadata 前校验本次待写入输出总 bytes。
-   - 超额时任务必须以 sanitized failure 结束或按现有 Worker 错误合同处理；不得创建 output asset row、task output row、image-output success event 或成功 usage/output side effects。
-   - 已上传但 DB 持久化失败或 quota 失败的对象必须按现有 cleanup pattern 清理，不泄漏 object key。
-6. 操作日志只记录 settings key、changed fields、quota max/cleared 状态和只读 usage 数字；不得记录 raw JSON、bucket、object key、MinIO URL、图片 base64 或内部错误栈。
-7. 不新增前端 UI；前端设置页是否展示 quota 留给 `P13-FE-SYSTEM-SETTINGS`。
+1. 先更新或新增前端测试，明确 active settings 与 deferred settings 的边界。
+2. 扩展前端 system settings 类型：
+   - `uploadPolicy`
+   - `taskDefaults`
+   - `taskConcurrency`
+   - `storageRetention`
+   - `storageQuota`
+3. 扩展 settings tab UI：
+   - 用紧凑工作型布局，不做营销式重排。
+   - 每个设置分组独立保存，PATCH body 只包含对应 top-level 字段。
+   - 保留 loading、empty、error、disabled、saving 状态。
+4. 处理可空字段：
+   - task defaults 支持 provider/model 成对设置或成对清除。
+   - storage retention 支持设置天数或清除为 `null`。
+   - storage quota 支持设置 max bytes 或清除为 `null`，显示 `usedBytes` 和当前状态。
+5. 保持已合并的 upload policy UI 行为不回归。
+6. 更新 forbidden-pattern 测试或断言，防止重新出现 deferred 字段、Provider 直连、敏感存储、轮询。
 
 ### 必须保持的现有行为
 
-- `uploadPolicy`、`taskDefaults`、`taskConcurrency`、`storageRetention` 的 API、运行时消费、hardening 语义不变。
-- 已合并的 upload rollback cleanup、retention maintenance 和 `asset.CleanupService` tenant/cutoff/batch/idempotency 行为不变。
-- Worker 任务 claim、Redis lease、Provider execution、SSE、task events、outputs、usage、API-call logs、cancel/retry/timeout/recovery 状态机不变。
-- 资产下载、详情、列表、收藏、软删、项目权限和 object-level authorization 行为不变。
-- MySQL 仍只保存 metadata/object key，不保存图片 blob；MinIO bucket 创建仍是环境/部署责任。
+- 无 `system:settings:manage` 权限时，settings tab 不加载、不渲染、不写入 settings。
+- usage、operation logs、API call logs 三个 observability tab 行为不变。
+- Provider/model 管理 UI、用户角色 UI、项目/资产/任务工作台不变。
+- 前端任务状态仍只通过 SSE，不新增 polling。
+- 前端不保存 Provider API Key，不展示后端脱敏之外的 secret。
 
 ### 允许的中间态
 
-- 后端 API、引用图上传和 Worker 输出资产持久化已支持 `storageQuota`，但前端 admin 设置页仍暂不展示。
-- `storageQuota.maxBytes = null` 是合法禁用状态，不会拒绝资产写入。
-- Orphan object discovery、log retention、thumbnail size accounting 和 frontend settings UI 继续留给后续任务。
+- 前端可展示 active settings，但更深层的成本看板、orphan cleanup、log retention、thumbnail policy 继续留给后续任务。
+- task defaults 可以先用安全 Provider/model 选择器；如果现有 API 不足以提供选择数据，可使用 ID 输入并在交付中说明限制，不能新增后端合同。
 
 ### 禁止的半迁移状态
 
-- 暴露 `storageQuota.maxBytes` 但引用图上传或 Worker 输出资产持久化不消费。
-- 默认启用 quota。无 override 必须是 unlimited/null，不能突然拒绝现有租户写入。
-- 将 `usedBytes` 做成可写字段，或把 quota 状态存成第二真相源而不从 `image_assets` 计算。
-- 只限制手动上传、不限制 Worker 输出资产，或只限制 Worker、不限制手动上传。
-- 因 quota 设置删除、隐藏、硬删除或自动 purge 现有资产。
-- 暴露 log retention、orphan cleanup、manual purge API、MinIO object listing API 或前端 UI。
-- 日志、响应或 operation log 泄漏 object key、bucket、MinIO URL、Authorization、Cookie、API Key、图片 base64 或内部错误栈。
+- UI 展示某个设置但保存时没有调用真实后端 `PATCH /admin/system-settings`。
+- PATCH 回写整个 GET response，导致 `usedBytes`、未知字段或 deferred 字段被发送。
+- 展示或提交 `logRetention`、`orphanCleanup`、`manualCleanup`、`allowedMimeTypes`、`storageQuotaBytes` 等未开放字段。
+- 因保存一个分组，把另一个分组的无效草稿或旧值一起发送。
+- 引入 Provider 直连、Provider Key 存储、task polling、object key/bucket/MinIO URL 暴露。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| GET 无 `storage_quota` row | 返回 `maxBytes: null` 和当前 computed `usedBytes`；写入不受 quota 限制 | 是 |
-| admin PATCH 设置合法 maxBytes | 当前 tenant 生效，写脱敏 operation log；后续上传/Worker 输出使用该值 | 是 |
-| admin PATCH 清除为 `null` | 当前 tenant 禁用 quota；后续资产写入恢复现有行为 | 是 |
-| PATCH 包含 `usedBytes`、未知字段、零值、负值、小数、字符串、超范围 | `422 VALIDATION_ERROR`；原设置和 operation log 不变 | 是 |
-| non-admin、缺 CSRF、跨 tenant 探测 | 既有 `403`/授权行为；不得读写其他 tenant quota | 是 |
-| 手工损坏 `storage_quota.value_json` | API read/write 返回 sanitized failure 或按既有 settings 错误语义处理；资产写入 fail closed | 是 |
-| usedBytes 统计遇到 active、soft-deleted、purged、cross-tenant rows | active/soft-deleted 未 purged 计入，purged 和跨租户不计入 | 是 |
-| 引用图上传在 quota 内 | 行为与现有上传一致，创建 asset 和 operation log | 是 |
-| 引用图上传超过 quota | 返回稳定 quota 错误；不创建 asset row/成功 log；不残留对象 | 是 |
-| Worker 输出资产在 quota 内 | 行为与现有输出持久化一致 | 是 |
-| Worker 输出资产超过 quota | 不创建 output asset/task output/image-output success event；任务按现有失败合同结束，错误脱敏 | 是 |
-| `maxBytes` 小于当前 `usedBytes` | 允许保存但不删除现有资产；后续新增资产写入被拒绝直到低于 quota 或清除 quota | 是 |
-| settings storage failure | 不绕过 quota；上传/Worker 写入返回/进入可恢复或失败路径且不创建成功副作用 | 是 |
+| 用户无 settings 权限 | 不加载 settings，不显示 settings tab，不发 PATCH | 是 |
+| GET 返回全部 active settings | UI 正确显示 upload policy、defaults、concurrency、retention、quota | 是 |
+| 保存 upload policy | 只 PATCH `uploadPolicy` | 是 |
+| 保存 task defaults | 只 PATCH `taskDefaults`；provider/model 成对提交或成对清除 | 是 |
+| 保存 task concurrency | 只 PATCH `taskConcurrency` 正整数字段 | 是 |
+| 保存 storage retention | 支持正整数和 `null` 清除 | 是 |
+| 保存 storage quota | 只 PATCH `storageQuota.maxBytes`；`usedBytes` 不可写不发送 | 是 |
+| backend validation error | 保留当前分组草稿并显示错误，不污染其他分组 | 是 |
+| deferred/legacy 字段出现在 mock response | 不显示、不发送 | 是 |
 
 ### 安全要求
 
-- `storageQuota` 只能由 tenant admin 且具备 `system:settings:manage` 的用户修改，写请求继续走 CSRF。
-- Quota usage 必须以 tenant-scoped MySQL metadata 为来源，不能从浏览器请求、MinIO listing 或对象 key 输入推导。
-- 所有设置读取、usage 聚合、quota 校验和 asset metadata 写入必须带 tenant 边界。
-- Quota failure 不得泄漏当前 object key、bucket、MinIO URL、Provider payload、图片 base64 或内部错误栈。
-- 不公开 bucket、object key、MinIO URL、图片 base64、Authorization、Cookie、JWT、Provider API Key 或内部错误栈。
-- 不引入 frontend Provider 直连、轮询、浏览器敏感存储或 public object URL。
+- 所有 settings 写请求必须带 CSRF token。
+- 不在 localStorage、sessionStorage、IndexedDB 或源码中保存 Provider API Key。
+- 不显示 bucket、object key、MinIO URL、Authorization、Cookie、JWT、Provider API Key、图片 base64。
+- 不新增 setInterval、循环 fetch 或 task polling。
+- 不新增任何 AI Provider 直连 URL。
 
 ### 必须新增或更新的回归测试
 
-- `backend/internal/api/*system_settings*_test.go` 覆盖 GET computed usedBytes、合法 PATCH、clear null、RBAC/CSRF、非法/未知字段、`usedBytes` 不可写、脱敏 operation log。
-- `backend/internal/settings/**` 测试覆盖 `storage_quota` JSON 解析、nullable 语义、非法持久化 fail closed、tenant 隔离和 maxBytes 范围。
-- `backend/internal/asset/**` 和/或 `backend/internal/api/asset_routes_test.go` 覆盖引用图上传 quota 内/超额、soft-deleted 未 purged 计入、purged 不计入、跨租户不计入、失败不残留对象。
-- `backend/internal/task/**` 测试覆盖 Worker 输出资产 quota 内/超额、批量输出总 bytes、失败无 output asset/task output/image-output success event、错误脱敏。
-- 全量后端测试证明 upload policy、task defaults、task concurrency、storage retention、SSE、Provider runtime、task outputs、usage/API logs 不回归。
+- `frontend/src/test/adminApi.test.ts`：系统设置类型和 PATCH body 覆盖 active settings，证明 CSRF header 保持存在。
+- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`：覆盖五个 active settings 分组、只 PATCH 当前分组、null clear、read-only usedBytes、权限 gating、backend error 保留草稿、deferred 字段不显示不发送。
+- `frontend/src/test/legacyRetirement.test.tsx` 或等价 forbidden-pattern 测试：确认没有 Provider 直连、API Key 存储、task polling、legacy/deferred settings 重新出现。
 
 ### 验收标准
 
-- `storageQuota.maxBytes` 是唯一新增的公开可写设置字段，且有引用图上传和 Worker 输出资产两个 runtime consumers。
-- `storageQuota.usedBytes` 是只读 computed 字段，统计口径为 tenant-scoped、`purged_at IS NULL` 的 `image_assets.size_bytes`。
-- 无 override 时 quota 默认禁用；设置合法 maxBytes 后新增资产写入按 tenant quota 校验。
-- 损坏设置、settings 存储错误、quota 超额或 Worker 输出失败均不能导致跨 tenant 写入、成功副作用、对象泄漏或敏感信息泄漏。
-- 未新增 log retention、orphan cleanup、frontend UI、manual cleanup API、MinIO listing API 或无关范围修改。
+- Admin settings tab 能查看并编辑所有已 runtime-backed 设置。
+- 每个保存动作只发送一个 top-level settings patch，且不会发送 read-only/deferred 字段。
+- `storageQuota.usedBytes` 只读展示；`storageQuota.maxBytes = null` 和 `storageRetention.deletedAssetRetentionDays = null` 能表达 disabled 状态。
+- 前端权限、CSRF、错误态、loading 态和现有 observability tab 行为不回归。
+- 未修改后端、部署、公共合同文档或 Agent 规则。
 
 ### 测试命令
 
 ```bash
-cd backend
-go test ./internal/api ./internal/settings ./internal/asset ./internal/database ./internal/task -count=1
-go test ./... -count=1
-go test -race ./...
-go vet ./...
-go build ./cmd/api ./cmd/worker
+cd frontend
+npm run lint
+npm run type-check
+npm run test -- adminApi adminObservabilitySettingsPanel legacyRetirement
+npm run test
+npm run build
 
 cd ..
-docker compose -f deploy/docker-compose.yml config
 git diff --check main...HEAD
+! rg -n "api\\.openai\\.com|generativelanguage|setInterval\\(|localStorage\\.|sessionStorage\\.|api[_-]?key|Authorization" frontend/src --glob '!**/test/**'
 ```
 
-如使用共享本地 MySQL、Redis、MinIO 做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据和对象前缀，并在交付中记录创建、删除和残留情况；本任务不得另起项目专属依赖容器，不得删除共享 bucket 或无关对象。
+如使用共享本地服务做额外前后端功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录；本任务默认不需要写共享 MySQL/Redis/MinIO 数据。
 
 ## 标准验证命令
 
