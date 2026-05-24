@@ -11,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/task"
 	"gorm.io/gorm"
@@ -107,15 +109,26 @@ func main() {
 	log.Info("worker starting", slog.String("name", cfg.Worker.Name), slog.Int("concurrency", cfg.Worker.Concurrency))
 	log.Info("worker healthy", slog.String("name", cfg.Worker.Name), slog.String("healthcheck_file", healthcheckFile))
 
-	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Error("worker stopped with error", slog.String("error", err.Error()))
-		cleanupReadyFile()
-		os.Exit(1)
-	}
+	cleanupService := asset.NewCleanupService(db, log, cfg.Storage, objectStore)
+	retentionLoop := startRetentionMaintenanceLoop(ctx, newRetentionMaintenanceRunner(settings.NewRepository(db), cleanupService, log, retentionMaintenanceOptions{
+		Interval:   cfg.Worker.RetentionMaintenanceInterval,
+		BatchLimit: cfg.Worker.RetentionMaintenanceBatchLimit,
+	}))
+	runErr := worker.Run(ctx)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Worker.ShutdownTimeout)
 	defer cancel()
 
+	if err := retentionLoop.Stop(shutdownCtx); err != nil {
+		log.Error("worker retention maintenance shutdown failed", slog.String("error", err.Error()))
+		cleanupReadyFile()
+		os.Exit(1)
+	}
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		log.Error("worker stopped with error", slog.String("error", runErr.Error()))
+		cleanupReadyFile()
+		os.Exit(1)
+	}
 	if err := stopWorker(shutdownCtx); err != nil {
 		log.Error("worker shutdown failed", slog.String("error", err.Error()))
 		cleanupReadyFile()

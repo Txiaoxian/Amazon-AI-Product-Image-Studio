@@ -25,6 +25,11 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	minStorageRetentionDays = 1
+	maxStorageRetentionDays = 3650
+)
+
 type Service struct {
 	db                     *gorm.DB
 	repo                   Repository
@@ -104,6 +109,12 @@ func (s *Service) PatchSystemSettings(c *gin.Context) {
 			return
 		}
 	}
+	if patch.StorageRetention != nil {
+		if _, err := s.UpdateStorageRetention(c.Request.Context(), principal, *patch.StorageRetention, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			s.respondError(c, err)
+			return
+		}
+	}
 
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
@@ -163,7 +174,11 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency}, nil
+	storageRetention, err := LoadStorageRetention(ctx, s.repo, scope)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention}, nil
 }
 
 func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) (TaskDefaults, error) {
@@ -213,6 +228,53 @@ func LoadTaskConcurrency(ctx context.Context, repo Repository, scope tenant.Scop
 		return TaskConcurrency{}, ErrStoredTaskConcurrencyInvalid
 	}
 	return policy, nil
+}
+
+func LoadStorageRetention(ctx context.Context, repo Repository, scope tenant.Scope) (StorageRetention, error) {
+	record, ok, err := repo.FindByKey(ctx, scope, KeyStorageRetention)
+	if err != nil {
+		return StorageRetention{}, err
+	}
+	if !ok {
+		return StorageRetention{}, nil
+	}
+	retention, err := decodeStoredStorageRetention(record.ValueJSON)
+	if err != nil {
+		return StorageRetention{}, ErrStoredStorageRetentionInvalid
+	}
+	if err := validateStorageRetention(retention); err != nil {
+		return StorageRetention{}, ErrStoredStorageRetentionInvalid
+	}
+	return retention, nil
+}
+
+func LoadEnabledStorageRetentions(ctx context.Context, repo Repository) ([]EnabledStorageRetention, []InvalidStorageRetention, error) {
+	records, err := repo.ListByKeyForActiveTenants(ctx, KeyStorageRetention)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	enabled := make([]EnabledStorageRetention, 0, len(records))
+	invalid := make([]InvalidStorageRetention, 0)
+	for _, record := range records {
+		retention, err := decodeStoredStorageRetention(record.ValueJSON)
+		if err != nil {
+			invalid = append(invalid, InvalidStorageRetention{TenantID: record.TenantID, Err: ErrStoredStorageRetentionInvalid})
+			continue
+		}
+		if err := validateStorageRetention(retention); err != nil {
+			invalid = append(invalid, InvalidStorageRetention{TenantID: record.TenantID, Err: ErrStoredStorageRetentionInvalid})
+			continue
+		}
+		if retention.DeletedAssetRetentionDays == nil {
+			continue
+		}
+		enabled = append(enabled, EnabledStorageRetention{
+			TenantID:                  record.TenantID,
+			DeletedAssetRetentionDays: *retention.DeletedAssetRetentionDays,
+		})
+	}
+	return enabled, invalid, nil
 }
 
 func (s *Service) UpdateUploadPolicy(ctx context.Context, principal auth.Principal, patch UploadPolicyPatch, ip string, userAgent string) (UploadPolicy, error) {
@@ -384,6 +446,64 @@ func (s *Service) UpdateTaskConcurrency(ctx context.Context, principal auth.Prin
 	return updated, nil
 }
 
+func (s *Service) UpdateStorageRetention(ctx context.Context, principal auth.Principal, patch StorageRetentionPatch, ip string, userAgent string) (StorageRetention, error) {
+	if s.db == nil {
+		return StorageRetention{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return StorageRetention{}, err
+	}
+	current, err := LoadStorageRetention(ctx, s.repo, scope)
+	if err != nil {
+		return StorageRetention{}, err
+	}
+	updated, changedFields, err := applyStorageRetentionPatch(current, patch)
+	if err != nil {
+		return StorageRetention{}, err
+	}
+	if len(changedFields) == 0 {
+		return StorageRetention{}, ErrValidation
+	}
+	valueJSON, err := json.Marshal(updated)
+	if err != nil {
+		return StorageRetention{}, err
+	}
+
+	now := s.now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		if err := repo.Upsert(ctx, scope, KeyStorageRetention, string(valueJSON), now); err != nil {
+			return err
+		}
+		sort.Strings(changedFields)
+		retentionMetadata := map[string]any{
+			"deletedAssetRetentionDays": updated.DeletedAssetRetentionDays,
+		}
+		if updated.DeletedAssetRetentionDays == nil {
+			retentionMetadata["status"] = "cleared"
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       ActionUpdateSystemSettings,
+			ResourceType: "system_settings",
+			ResourceID:   KeyStorageRetention,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"key":              KeyStorageRetention,
+				"changedFields":    changedFields,
+				"storageRetention": retentionMetadata,
+			},
+		})
+	})
+	if err != nil {
+		return StorageRetention{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) requireAdminPermission(c *gin.Context) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
@@ -443,6 +563,13 @@ func parsePatchRequest(body io.Reader) (PatchRequest, error) {
 			return PatchRequest{}, err
 		}
 		return PatchRequest{TaskConcurrency: &patch}, nil
+	}
+	if rawRetention, ok := root["storageRetention"]; ok {
+		patch, err := parseStorageRetentionPatch(rawRetention)
+		if err != nil {
+			return PatchRequest{}, err
+		}
+		return PatchRequest{StorageRetention: &patch}, nil
 	}
 	return PatchRequest{}, ErrValidation
 }
@@ -553,6 +680,37 @@ func parseTaskConcurrencyPatch(raw json.RawMessage) (TaskConcurrencyPatch, error
 	return patch, nil
 }
 
+func parseStorageRetentionPatch(raw json.RawMessage) (StorageRetentionPatch, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return StorageRetentionPatch{}, ErrValidation
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return StorageRetentionPatch{}, ErrValidation
+	}
+	if len(fields) == 0 {
+		return StorageRetentionPatch{}, ErrValidation
+	}
+	rawDays, ok := fields["deletedAssetRetentionDays"]
+	if !ok || len(fields) != 1 {
+		return StorageRetentionPatch{}, ErrValidation
+	}
+	if bytes.Equal(bytes.TrimSpace(rawDays), []byte("null")) {
+		return StorageRetentionPatch{
+			ClearDeletedAssetRetentionDays: true,
+			HasDeletedAssetRetentionDays:   true,
+		}, nil
+	}
+	parsed, err := decodeJSONInt64(rawDays)
+	if err != nil {
+		return StorageRetentionPatch{}, err
+	}
+	return StorageRetentionPatch{
+		DeletedAssetRetentionDays:    &parsed,
+		HasDeletedAssetRetentionDays: true,
+	}, nil
+}
+
 func decodeJSONInt64(raw json.RawMessage) (int64, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return 0, ErrValidation
@@ -609,6 +767,20 @@ func decodeStoredTaskConcurrency(valueJSON string) (TaskConcurrency, error) {
 		return TaskConcurrency{}, ErrValidation
 	}
 	return policy, nil
+}
+
+func decodeStoredStorageRetention(valueJSON string) (StorageRetention, error) {
+	var retention StorageRetention
+	decoder := json.NewDecoder(strings.NewReader(valueJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&retention); err != nil {
+		return StorageRetention{}, ErrValidation
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return StorageRetention{}, ErrValidation
+	}
+	return retention, nil
 }
 
 func applyUploadPolicyPatch(current UploadPolicy, patch UploadPolicyPatch, hardCap config.UploadConfig) (UploadPolicy, []string, error) {
@@ -712,6 +884,37 @@ func validateTaskConcurrencyWithinHardCap(policy TaskConcurrency, hardCap TaskCo
 		policy.UserLimit > hardCap.UserLimit ||
 		policy.ProviderLimit > hardCap.ProviderLimit ||
 		policy.ModelLimit > hardCap.ModelLimit {
+		return ErrValidation
+	}
+	return nil
+}
+
+func applyStorageRetentionPatch(current StorageRetention, patch StorageRetentionPatch) (StorageRetention, []string, error) {
+	if !patch.HasDeletedAssetRetentionDays {
+		return StorageRetention{}, nil, ErrValidation
+	}
+	updated := current
+	changedFields := []string{"storageRetention.deletedAssetRetentionDays"}
+	if patch.ClearDeletedAssetRetentionDays {
+		updated.DeletedAssetRetentionDays = nil
+		return updated, changedFields, nil
+	}
+	if patch.DeletedAssetRetentionDays == nil || *patch.DeletedAssetRetentionDays > maxIntValue() {
+		return StorageRetention{}, nil, ErrValidation
+	}
+	days := int(*patch.DeletedAssetRetentionDays)
+	updated.DeletedAssetRetentionDays = &days
+	if err := validateStorageRetention(updated); err != nil {
+		return StorageRetention{}, nil, err
+	}
+	return updated, changedFields, nil
+}
+
+func validateStorageRetention(retention StorageRetention) error {
+	if retention.DeletedAssetRetentionDays == nil {
+		return nil
+	}
+	if *retention.DeletedAssetRetentionDays < minStorageRetentionDays || *retention.DeletedAssetRetentionDays > maxStorageRetentionDays {
 		return ErrValidation
 	}
 	return nil

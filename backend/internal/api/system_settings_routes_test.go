@@ -71,7 +71,8 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	}
 	assertUploadPolicy(t, response, upload.MaxFileSizeBytes, upload.MaxWidth, upload.MaxHeight, upload.MaxPixels)
 	assertTaskDefaults(t, response, "", "")
-	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "logRetentionDays", "allowedMimeTypes")
+	assertStorageRetention(t, response, nil)
+	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "storageQuota", "logRetentionDays", "logRetention", "allowedMimeTypes")
 
 	var rows int64
 	if err := db.Model(&database.SystemSetting{}).Where("tenant_id = ?", adminSession.tenantID).Count(&rows).Error; err != nil {
@@ -79,6 +80,114 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("fallback GET created %d override rows, want 0", rows)
+	}
+}
+
+func TestSystemSettingsStorageRetentionPatchClearValidationAndTenantIsolation(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+	tenantBSession := seedTenantAdminSession(t, router, db, "tenant-b", "tenant-b-admin", "tenant-b-admin@example.com", "tenant-b-password-123")
+
+	getBefore := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if getBefore.Code != http.StatusOK {
+		t.Fatalf("GET before status = %d, want %d: %s", getBefore.Code, http.StatusOK, getBefore.Body.String())
+	}
+	assertStorageRetention(t, getBefore, nil)
+
+	setResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageRetention": map[string]any{"deletedAssetRetentionDays": 30},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setResponse.Code != http.StatusOK {
+		t.Fatalf("set storageRetention status = %d, want %d: %s", setResponse.Code, http.StatusOK, setResponse.Body.String())
+	}
+	assertStorageRetention(t, setResponse, ptrInt(30))
+
+	var setting database.SystemSetting
+	if err := db.Where("tenant_id = ? AND `key` = ?", adminSession.tenantID, settings.KeyStorageRetention).First(&setting).Error; err != nil {
+		t.Fatalf("load storage retention setting: %v", err)
+	}
+	if !strings.Contains(setting.ValueJSON, `"deletedAssetRetentionDays":30`) {
+		t.Fatalf("storage retention value_json = %s, want deletedAssetRetentionDays=30", setting.ValueJSON)
+	}
+
+	tenantBGet := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, tenantBSession.cookies, nil)
+	if tenantBGet.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status = %d, want %d: %s", tenantBGet.Code, http.StatusOK, tenantBGet.Body.String())
+	}
+	assertStorageRetention(t, tenantBGet, nil)
+
+	clearResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageRetention": map[string]any{"deletedAssetRetentionDays": nil},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear storageRetention status = %d, want %d: %s", clearResponse.Code, http.StatusOK, clearResponse.Body.String())
+	}
+	assertStorageRetention(t, clearResponse, nil)
+
+	var logs []database.OperationLog
+	if err := db.Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyStorageRetention).Find(&logs).Error; err != nil {
+		t.Fatalf("load storageRetention operation logs: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("storageRetention operation logs = %d, want 2: %#v", len(logs), logs)
+	}
+	for _, log := range logs {
+		metadata := strings.ToLower(log.MetadataJSON)
+		if !strings.Contains(metadata, "storage_retention") || !strings.Contains(metadata, "changedfields") {
+			t.Fatalf("operation log missing sanitized retention metadata: %s", log.MetadataJSON)
+		}
+		for _, forbidden := range []string{"password", "token", "cookie", "authorization", "api_key", "apikey", "secret", "jwt", "base64", "data:image", "value_json", "bucket", "object_key", "minio"} {
+			if strings.Contains(metadata, forbidden) {
+				t.Fatalf("operation log metadata contains %q: %s", forbidden, log.MetadataJSON)
+			}
+		}
+	}
+}
+
+func TestSystemSettingsStorageRetentionRejectsInvalidAndDeferredFields(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+
+	initial := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageRetention": map[string]any{"deletedAssetRetentionDays": 30},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial storageRetention PATCH status = %d, want %d: %s", initial.Code, http.StatusOK, initial.Body.String())
+	}
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{name: "zero", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 0}}},
+		{name: "negative", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": -1}}},
+		{name: "non integer", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 1.5}}},
+		{name: "string", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": "30"}}},
+		{name: "over range", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 3651}}},
+		{name: "unknown nested field", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 30, "extra": 1}}},
+		{name: "empty slice", body: map[string]any{"storageRetention": map[string]any{}}},
+		{name: "storage quota forbidden", body: map[string]any{"storageQuota": map[string]any{"maxBytes": 1}}},
+		{name: "log retention forbidden", body: map[string]any{"logRetention": map[string]any{"days": 30}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+			if getResponse.Code != http.StatusOK {
+				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+			}
+			assertStorageRetention(t, getResponse, ptrInt(30))
+		})
+	}
+
+	var logs int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyStorageRetention).Count(&logs).Error; err != nil {
+		t.Fatalf("count storageRetention operation logs: %v", err)
+	}
+	if logs != 1 {
+		t.Fatalf("storageRetention operation logs = %d, want only initial successful update", logs)
 	}
 }
 
@@ -543,6 +652,20 @@ func assertTaskConcurrency(t *testing.T, response *httptest.ResponseRecorder, te
 	assertNumericField(t, policy, "modelLimit", int64(modelLimit))
 }
 
+func assertStorageRetention(t *testing.T, response *httptest.ResponseRecorder, expectedDays *int) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	retention := objectField(t, data, "storageRetention")
+	if expectedDays == nil {
+		if retention["deletedAssetRetentionDays"] != nil {
+			t.Fatalf("deletedAssetRetentionDays = %#v, want null", retention["deletedAssetRetentionDays"])
+		}
+		return
+	}
+	assertNumericField(t, retention, "deletedAssetRetentionDays", int64(*expectedDays))
+}
+
 func assertNumericField(t *testing.T, object map[string]any, field string, expected int64) {
 	t.Helper()
 
@@ -553,6 +676,10 @@ func assertNumericField(t *testing.T, object map[string]any, field string, expec
 	if int64(value) != expected {
 		t.Fatalf("%s = %v, want %d", field, value, expected)
 	}
+}
+
+func ptrInt(value int) *int {
+	return &value
 }
 
 func newSystemSettingsRouteTestRouter(t *testing.T, hardCaps config.QueueConfig) (http.Handler, *gorm.DB, projectRouteSession) {

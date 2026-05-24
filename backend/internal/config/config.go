@@ -11,63 +11,66 @@ import (
 )
 
 const (
-	defaultAppEnv                  = "development"
-	defaultLogLevel                = "info"
-	defaultAPIHost                 = ""
-	defaultAPIPort                 = 8080
-	defaultHTTPTimeout             = 15 * time.Second
-	defaultAPIShutdownTimeout      = 10 * time.Second
-	defaultWorkerName              = "backend-worker"
-	defaultWorkerShutdownTimeout   = 10 * time.Second
-	defaultWorkerConcurrency       = 1
-	maxWorkerConcurrency           = 256
-	defaultMySQLHost               = "127.0.0.1"
-	defaultMySQLPort               = 3306
-	defaultMySQLDatabase           = "amazon_ai_image_studio"
-	defaultMySQLUser               = "studio_app"
-	defaultDatabaseConnectTime     = 10 * time.Second
-	defaultDatabaseMaxOpenConns    = 25
-	defaultDatabaseMaxIdleConns    = 5
-	defaultDatabaseConnLifetime    = 30 * time.Minute
-	defaultMigrationsMode          = "startup-gate"
-	defaultJWTSigningSecret        = "change-me-at-least-32-bytes-prod-must-replace"
-	defaultJWTIssuer               = "amazon-ai-product-image-studio"
-	defaultJWTAccessTokenTTL       = 60 * time.Minute
-	defaultAuthCookieName          = "studio_auth"
-	defaultCSRFCookieName          = "studio_csrf"
-	defaultCSRFHeaderName          = "X-CSRF-Token"
-	defaultCookieSameSite          = "Lax"
-	defaultMinIOEndpoint           = "http://127.0.0.1:9000"
-	defaultMinIORegion             = "us-east-1"
-	defaultMinIOAccessKey          = "minioadmin"
-	defaultMinIOSecretKey          = "change-me-local-minio-password"
-	defaultMinIOBucketOriginals    = "product-originals"
-	defaultMinIOBucketGenerated    = "product-generated"
-	defaultMinIOBucketThumbnails   = "product-thumbnails"
-	defaultUploadMaxFileSizeMB     = 25
-	defaultUploadMaxWidth          = 8192
-	defaultUploadMaxHeight         = 8192
-	defaultUploadMaxPixels         = 40000000
-	defaultUploadAllowedMIMEs      = "image/jpeg,image/png,image/webp"
-	defaultAPIKeyEncryptionKey     = "change-me-32-byte-base64-key-prod-must-replace"
-	defaultAPIKeyEncryptionKeyID   = "local-dev-v1"
-	defaultProviderTimeout         = 120 * time.Second
-	defaultProviderMaxRetries      = 2
-	defaultRedisAddr               = "127.0.0.1:6379"
-	defaultRedisDB                 = 0
-	defaultTaskQueueName           = "image-tasks"
-	defaultTaskEnqueueTimeout      = 5 * time.Second
-	defaultTaskClaimTimeout        = 5 * time.Second
-	defaultTaskVisibilityTimeout   = 5 * time.Minute
-	defaultTaskRetryBackoff        = 5 * time.Second
-	defaultTaskRecoveryInterval    = 30 * time.Second
-	defaultTaskConcurrencyTTL      = 10 * time.Minute
-	defaultTaskMaxDeliveries       = 5
-	defaultTaskGlobalConcurrency   = 4
-	defaultTaskTenantConcurrency   = 2
-	defaultTaskUserConcurrency     = 2
-	defaultTaskProviderConcurrency = 2
-	defaultTaskModelConcurrency    = 2
+	defaultAppEnv                               = "development"
+	defaultLogLevel                             = "info"
+	defaultAPIHost                              = ""
+	defaultAPIPort                              = 8080
+	defaultHTTPTimeout                          = 15 * time.Second
+	defaultAPIShutdownTimeout                   = 10 * time.Second
+	defaultWorkerName                           = "backend-worker"
+	defaultWorkerShutdownTimeout                = 10 * time.Second
+	defaultWorkerConcurrency                    = 1
+	maxWorkerConcurrency                        = 256
+	defaultWorkerRetentionMaintenanceInterval   = 1 * time.Hour
+	defaultWorkerRetentionMaintenanceBatchLimit = 100
+	maxWorkerRetentionMaintenanceBatchLimit     = 1000
+	defaultMySQLHost                            = "127.0.0.1"
+	defaultMySQLPort                            = 3306
+	defaultMySQLDatabase                        = "amazon_ai_image_studio"
+	defaultMySQLUser                            = "studio_app"
+	defaultDatabaseConnectTime                  = 10 * time.Second
+	defaultDatabaseMaxOpenConns                 = 25
+	defaultDatabaseMaxIdleConns                 = 5
+	defaultDatabaseConnLifetime                 = 30 * time.Minute
+	defaultMigrationsMode                       = "startup-gate"
+	defaultJWTSigningSecret                     = "change-me-at-least-32-bytes-prod-must-replace"
+	defaultJWTIssuer                            = "amazon-ai-product-image-studio"
+	defaultJWTAccessTokenTTL                    = 60 * time.Minute
+	defaultAuthCookieName                       = "studio_auth"
+	defaultCSRFCookieName                       = "studio_csrf"
+	defaultCSRFHeaderName                       = "X-CSRF-Token"
+	defaultCookieSameSite                       = "Lax"
+	defaultMinIOEndpoint                        = "http://127.0.0.1:9000"
+	defaultMinIORegion                          = "us-east-1"
+	defaultMinIOAccessKey                       = "minioadmin"
+	defaultMinIOSecretKey                       = "change-me-local-minio-password"
+	defaultMinIOBucketOriginals                 = "product-originals"
+	defaultMinIOBucketGenerated                 = "product-generated"
+	defaultMinIOBucketThumbnails                = "product-thumbnails"
+	defaultUploadMaxFileSizeMB                  = 25
+	defaultUploadMaxWidth                       = 8192
+	defaultUploadMaxHeight                      = 8192
+	defaultUploadMaxPixels                      = 40000000
+	defaultUploadAllowedMIMEs                   = "image/jpeg,image/png,image/webp"
+	defaultAPIKeyEncryptionKey                  = "change-me-32-byte-base64-key-prod-must-replace"
+	defaultAPIKeyEncryptionKeyID                = "local-dev-v1"
+	defaultProviderTimeout                      = 120 * time.Second
+	defaultProviderMaxRetries                   = 2
+	defaultRedisAddr                            = "127.0.0.1:6379"
+	defaultRedisDB                              = 0
+	defaultTaskQueueName                        = "image-tasks"
+	defaultTaskEnqueueTimeout                   = 5 * time.Second
+	defaultTaskClaimTimeout                     = 5 * time.Second
+	defaultTaskVisibilityTimeout                = 5 * time.Minute
+	defaultTaskRetryBackoff                     = 5 * time.Second
+	defaultTaskRecoveryInterval                 = 30 * time.Second
+	defaultTaskConcurrencyTTL                   = 10 * time.Minute
+	defaultTaskMaxDeliveries                    = 5
+	defaultTaskGlobalConcurrency                = 4
+	defaultTaskTenantConcurrency                = 2
+	defaultTaskUserConcurrency                  = 2
+	defaultTaskProviderConcurrency              = 2
+	defaultTaskModelConcurrency                 = 2
 )
 
 type Config struct {
@@ -94,9 +97,11 @@ type APIConfig struct {
 }
 
 type WorkerConfig struct {
-	Name            string
-	ShutdownTimeout time.Duration
-	Concurrency     int
+	Name                           string
+	ShutdownTimeout                time.Duration
+	Concurrency                    int
+	RetentionMaintenanceInterval   time.Duration
+	RetentionMaintenanceBatchLimit int
 }
 
 type DatabaseConfig struct {
@@ -232,6 +237,14 @@ func load(lookup lookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	workerRetentionMaintenanceInterval, err := durationFromEnv(lookup, "WORKER_RETENTION_MAINTENANCE_INTERVAL", defaultWorkerRetentionMaintenanceInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	workerRetentionMaintenanceBatchLimit, err := boundedPositiveIntFromEnv(lookup, "WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT", defaultWorkerRetentionMaintenanceBatchLimit, maxWorkerRetentionMaintenanceBatchLimit)
+	if err != nil {
+		return Config{}, err
+	}
 
 	database, err := databaseConfigFromEnv(lookup)
 	if err != nil {
@@ -279,9 +292,11 @@ func load(lookup lookupFunc) (Config, error) {
 			ShutdownTimeout:    apiShutdownTimeout,
 		},
 		Worker: WorkerConfig{
-			Name:            stringFromEnv(lookup, "WORKER_NAME", defaultWorkerName),
-			ShutdownTimeout: workerShutdownTimeout,
-			Concurrency:     workerConcurrency,
+			Name:                           stringFromEnv(lookup, "WORKER_NAME", defaultWorkerName),
+			ShutdownTimeout:                workerShutdownTimeout,
+			Concurrency:                    workerConcurrency,
+			RetentionMaintenanceInterval:   workerRetentionMaintenanceInterval,
+			RetentionMaintenanceBatchLimit: workerRetentionMaintenanceBatchLimit,
 		},
 		Database: database,
 		Auth:     auth,

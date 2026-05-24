@@ -49,7 +49,9 @@ func (r Repository) FindByKey(ctx context.Context, scope tenant.Scope, key strin
 	}
 
 	var record database.SystemSetting
-	err = db.Where("tenant_id = ? AND `key` = ?", scope.ID(), key).First(&record).Error
+	err = db.Select("id, tenant_id, `key`, value_json").
+		Where("tenant_id = ? AND `key` = ?", scope.ID(), key).
+		First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.SystemSetting{}, false, nil
 	}
@@ -57,6 +59,29 @@ func (r Repository) FindByKey(ctx context.Context, scope tenant.Scope, key strin
 		return database.SystemSetting{}, false, err
 	}
 	return record, true, nil
+}
+
+func (r Repository) ListByKeyForActiveTenants(ctx context.Context, key string) ([]database.SystemSetting, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, ErrValidation
+	}
+
+	var records []database.SystemSetting
+	err := r.db.WithContext(ctx).
+		Model(&database.SystemSetting{}).
+		Select("system_settings.id, system_settings.tenant_id, system_settings.`key`, system_settings.value_json").
+		Joins("JOIN tenants ON tenants.id = system_settings.tenant_id AND tenants.status = ?", "ACTIVE").
+		Where("system_settings.`key` = ?", key).
+		Order("system_settings.tenant_id ASC").
+		Find(&records).Error
+	return records, err
 }
 
 func (r Repository) Upsert(ctx context.Context, scope tenant.Scope, key string, valueJSON string, now time.Time) error {
