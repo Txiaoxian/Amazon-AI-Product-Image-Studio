@@ -122,7 +122,7 @@ Reference uploads and generated outputs should create thumbnails. Thumbnail crea
 
 Default deletion is soft delete in MySQL. Physical MinIO deletion must be handled by controlled backend cleanup paths after retention rules are enabled for a tenant.
 
-Current backend behavior soft-deletes asset metadata for normal deletes. `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds the internal cleanup foundation for physically deleting already soft-deleted asset objects, but it does not yet schedule cleanup automatically.
+Current backend behavior soft-deletes asset metadata for normal deletes. `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds the internal cleanup foundation for physically deleting already soft-deleted asset objects, and `P13-BE-STORAGE-RETENTION-RUNTIME` adds Worker maintenance scheduling when a tenant explicitly enables retention.
 
 P13 storage cleanup foundation status:
 
@@ -133,9 +133,17 @@ P13 storage cleanup foundation status:
 - `image_assets.purged_at` records physical cleanup completion, so repeated cleanup runs do not repeatedly delete already purged objects.
 - Do not hard-delete image asset rows in this foundation task. Metadata remains useful for audit/history and future accounting.
 
-Next P13 retention runtime rules:
+P13 retention runtime rules:
 
 - `storageRetention.deletedAssetRetentionDays` is nullable. `null` disables automatic physical cleanup for that tenant.
-- The Worker maintenance loop is the first runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
+- The Worker maintenance loop is the runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
 - Worker must skip tenants with absent, null, malformed, or unsupported retention settings. It must not delete anything for those tenants.
-- Storage quota, log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.
+- Storage quota accounting/enforcement is the next P13 backend task. Until then, no quota fields may be exposed as active writable state.
+- Log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.
+
+Next P13 storage quota rules:
+
+- `storageQuota.maxBytes` is nullable. `null` means no tenant storage quota is enforced.
+- `storageQuota.usedBytes` is read-only and must be computed from tenant-scoped `image_assets` metadata, counting records whose bytes still exist in MinIO. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
+- Quota enforcement must run before creating new reference upload assets and before Worker persists generated/edited output assets. Exceeding quota must fail without successful asset metadata, successful task output events, or leaked object keys.
+- Quota accounting must not use MinIO bucket listing as its source of truth in this phase. MySQL metadata remains the authoritative accounting source.

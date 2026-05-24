@@ -2,7 +2,7 @@
 
 ## Current transition risks during P13 runtime settings work
 
-The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the P13 runtime-defaults, malformed-row hardening, task-concurrency, and storage-cleanup-foundation backend slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the P13 runtime-defaults, malformed-row hardening, task-concurrency, storage-cleanup-foundation, and storage-retention-runtime backend slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -15,7 +15,7 @@ Remaining security and hardening risks:
 
 - Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, and `taskConcurrency` is backed by Worker semaphore acquisition. `storageRetention` may become writable only in the same task that makes Worker maintenance consume it. Storage quotas and log retention remain deferred until their quota/cleanup consumers are explicit.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, and `storageRetention` is backed by Worker maintenance cleanup. Storage quota may become writable only in the same task that enforces quota in asset creation paths. Log retention remains deferred until its cleanup consumer is explicit.
 
 Resolved transition item:
 
@@ -49,10 +49,11 @@ Resolved transition item:
 - P13 runtime-default hardening now converts malformed persisted `task_defaults` rows to sanitized `422 VALIDATION_ERROR` for default-backed requests with no task/event/enqueue/success-audit side effects, leaves explicit Provider/model requests independent of unused defaults, and preserves sanitized internal errors for real settings-storage failures.
 - P13 task concurrency policy now exposes tenant/user/Provider/model limits only with a Worker runtime consumer. Tenant values may only narrow or match environment hard caps, global concurrency remains environment-owned, Provider row limits remain additional stricter caps, and malformed persisted `task_concurrency` fails closed before Provider execution or successful output/usage/API-call side effects.
 - P13 storage cleanup foundation now uses an independent bounded cleanup context for upload rollback after object write and adds an internal tenant-scoped physical cleanup service for soft-deleted assets. It deletes only metadata-selected original/thumbnail objects older than a caller-supplied cutoff, treats missing objects as idempotent success, leaves failed deletes retryable, and tracks physical cleanup with `purged_at`.
+- P13 storage retention runtime now exposes nullable `storageRetention.deletedAssetRetentionDays` only with a Worker maintenance consumer. Unset or cleared retention is disabled, malformed persisted settings fail closed, inactive tenants are skipped, and cleanup logs avoid object keys, bucket names, MinIO URLs, image bytes, Authorization, Cookie, JWT, and Provider API keys.
 
 Storage and P5 review hardening backlog:
 
-- Storage retention is not active yet. The next P13 task must expose `storageRetention.deletedAssetRetentionDays` only with a Worker maintenance consumer, default it to `null`/disabled, and fail closed on malformed settings without deleting tenant assets.
+- Storage quota is not active yet. The next P13 task must expose `storageQuota.maxBytes` only with real backend quota consumers, default it to `null`/unlimited, compute usage from tenant-scoped metadata, and fail closed on malformed settings without writing additional assets.
 - Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
 - Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.

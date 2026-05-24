@@ -15,7 +15,7 @@ This baseline was preserved during the early platformization phases so existing 
 
 ## Current platform state during P13
 
-The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has passed R12 review. P13 is in progress: runtime-backed tenant task defaults, malformed-row hardening, task-concurrency policy, and storage-cleanup foundation are merged. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, reference asset management, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy settings, runtime-backed task defaults, runtime-backed task concurrency settings, storage cleanup foundation, release validation, and runtime hardening through P12.
+The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has passed R12 review. P13 is in progress: runtime-backed tenant task defaults, malformed-row hardening, task-concurrency policy, storage-cleanup foundation, and storage-retention runtime are merged. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, reference asset management, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy settings, runtime-backed task defaults, runtime-backed task concurrency settings, storage cleanup foundation, storage retention maintenance, release validation, and runtime hardening through P12.
 
 Important current facts:
 
@@ -27,10 +27,10 @@ Important current facts:
 - The frontend consumes the backend-owned project history query at `GET /api/v1/projects/{projectId}/history`; it must not rebuild the production history feed by joining task and generated/edited asset lists in the browser.
 - The backend now exposes tenant `taskDefaults` and consumes them only when task creation omits both Provider/model IDs. Malformed persisted defaults fail closed for default-backed requests without task creation side effects.
 - The backend now exposes tenant `taskConcurrency` only with a Worker runtime consumer. Tenant values can narrow environment hard caps, global concurrency remains deployment-owned, and malformed persisted concurrency settings fail closed before Provider execution.
-- The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects, but automatic retention cleanup is not active until Worker maintenance consumes a tenant retention setting.
+- The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays`; unset/null/malformed settings do not delete anything.
 - Docker Compose has buildable runtime foundations and passed P9 release validation; R12 re-verified Compose config. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P13 continues with backend storage retention runtime, then storage quota accounting and frontend settings, with the hard rule that writable settings cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P13 continues with backend storage quota accounting/enforcement and frontend settings, with the hard rule that writable settings cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 
