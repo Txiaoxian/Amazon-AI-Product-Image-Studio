@@ -18,6 +18,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/httpx"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/idgen"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/project"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,7 @@ const uploadRollbackCleanupTimeout = 5 * time.Second
 
 type uploadPolicyResolver interface {
 	EffectiveUploadConfig(ctx context.Context, tenantID string) (config.UploadConfig, error)
+	CheckStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error
 }
 
 type updateRequest struct {
@@ -314,6 +316,10 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 	}
 	record.ObjectKey = objectKey(scope.ID(), projectRecord.ID, record.ID, input.Ext)
 
+	if err := s.checkStorageQuota(ctx, scope.ID(), record.SizeBytes); err != nil {
+		return Response{}, err
+	}
+
 	if err := s.store.PutObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey, bytes.NewReader(input.Data), input.SizeBytes, input.MimeType); err != nil {
 		return Response{}, err
 	}
@@ -573,6 +579,13 @@ func (s *Service) effectiveUploadConfig(ctx context.Context, tenantID string) (c
 	return s.policyResolver.EffectiveUploadConfig(ctx, tenantID)
 }
 
+func (s *Service) checkStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error {
+	if s.policyResolver == nil {
+		return nil
+	}
+	return s.policyResolver.CheckStorageQuota(ctx, tenantID, pendingBytes)
+}
+
 func parseListQuery(c *gin.Context) (ListQuery, error) {
 	pageNum := parsePositiveInt(c.Query("pageNum"), 1)
 	pageSize := parsePositiveInt(c.Query("pageSize"), 20)
@@ -728,6 +741,8 @@ func (s *Service) respondError(c *gin.Context, err error) {
 		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
 	case errors.Is(err, ErrNotFound), errors.Is(err, project.ErrNotFound), errors.Is(err, storage.ErrNotFound):
 		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+	case errors.Is(err, settings.ErrStorageQuotaExceeded):
+		httpx.AbortWithError(c, http.StatusConflict, "STORAGE_QUOTA_EXCEEDED", "Storage quota exceeded.", nil)
 	case errors.Is(err, ErrStorageUnavailable), errors.Is(err, storage.ErrUnavailable):
 		s.log.Error("asset storage unavailable", slog.String("request_id", httpx.RequestIDFromContext(c)))
 		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)

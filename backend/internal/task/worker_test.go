@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"reflect"
@@ -279,6 +280,84 @@ func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *te
 		t.Fatalf("generated objects = %#v, want one object in generated bucket", store.objects)
 	}
 	assertWorkerRuntimeMetadataSanitized(t, db)
+}
+
+func TestWorkerProcessorPersistsOutputsWithinStorageQuota(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-quota-success", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes)))
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{
+				Outputs: []GeneratedImageOutput{{
+					Data:     pngBytes,
+					MIMEType: "image/png",
+				}},
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventImageOutput, EventUsageRecorded, EventTaskCompleted})
+	assertTableCount(t, db, &database.ImageAsset{}, 1)
+	assertTableCount(t, db, &database.TaskOutput{}, 1)
+}
+
+func TestWorkerProcessorFailsOutputsExceedingStorageQuotaWithoutOutputSideEffects(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-quota-failure", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2-1)
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{
+				Outputs: []GeneratedImageOutput{
+					{Data: pngBytes, MIMEType: "image/png"},
+					{Data: pngBytes, MIMEType: "image/png"},
+				},
+				Usage: UsageResult{ImageCount: 2},
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorCode != "STORAGE_QUOTA_EXCEEDED" || record.ErrorMessage != "Storage quota exceeded." {
+		t.Fatalf("failed task = %#v, want sanitized storage quota failure", record)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskFailed})
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	assertTableCount(t, db, &database.UsageRecord{}, 0)
+	if got := len(store.objects["generated-assets"]); got != 0 {
+		t.Fatalf("quota failed worker stored generated objects = %d, want 0", got)
+	}
+	assertNoWorkerPersistedText(t, db, "tenants/")
 }
 
 func TestWorkerProcessorFailureRecordsSanitizedAPICallWithoutAssets(t *testing.T) {
@@ -2098,6 +2177,21 @@ func seedWorkerTaskConcurrency(t *testing.T, db *gorm.DB, valueJSON string) {
 		UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("seed task concurrency policy: %v", err)
+	}
+}
+
+func seedWorkerStorageQuota(t *testing.T, db *gorm.DB, maxBytes int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "setting-storage-quota",
+		TenantID:  "tenant-worker",
+		Key:       "storage_quota",
+		ValueJSON: fmt.Sprintf(`{"maxBytes":%d}`, maxBytes),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed storage quota: %v", err)
 	}
 }
 

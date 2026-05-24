@@ -12,6 +12,7 @@ const (
 	KeyTaskDefaults     = "task_defaults"
 	KeyTaskConcurrency  = "task_concurrency"
 	KeyStorageRetention = "storage_retention"
+	KeyStorageQuota     = "storage_quota"
 
 	PermissionManage = "system:settings:manage"
 
@@ -23,6 +24,8 @@ var (
 	ErrStoredTaskDefaultsInvalid     = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
 	ErrStoredTaskConcurrencyInvalid  = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
 	ErrStoredStorageRetentionInvalid = fmt.Errorf("%w: invalid stored storage retention", ErrValidation)
+	ErrStoredStorageQuotaInvalid     = fmt.Errorf("%w: invalid stored storage quota", ErrValidation)
+	ErrStorageQuotaExceeded          = errors.New("storage quota exceeded")
 	ErrForbidden                     = errors.New("system settings access forbidden")
 )
 
@@ -31,6 +34,7 @@ type Response struct {
 	TaskDefaults     TaskDefaults     `json:"taskDefaults"`
 	TaskConcurrency  TaskConcurrency  `json:"taskConcurrency"`
 	StorageRetention StorageRetention `json:"storageRetention"`
+	StorageQuota     StorageQuota     `json:"storageQuota"`
 }
 
 type UploadPolicy struct {
@@ -81,6 +85,17 @@ type StorageRetentionPatch struct {
 	HasDeletedAssetRetentionDays   bool
 }
 
+type StorageQuota struct {
+	MaxBytes  *int64 `json:"maxBytes"`
+	UsedBytes int64  `json:"usedBytes"`
+}
+
+type StorageQuotaPatch struct {
+	MaxBytes      *int64
+	ClearMaxBytes bool
+	HasMaxBytes   bool
+}
+
 type EnabledStorageRetention struct {
 	TenantID                  string
 	DeletedAssetRetentionDays int
@@ -96,6 +111,7 @@ type PatchRequest struct {
 	TaskDefaults     *TaskDefaultsPatch
 	TaskConcurrency  *TaskConcurrencyPatch
 	StorageRetention *StorageRetentionPatch
+	StorageQuota     *StorageQuotaPatch
 }
 
 func uploadPolicyFromConfig(upload config.UploadConfig) UploadPolicy {
