@@ -120,16 +120,22 @@ Reference uploads and generated outputs should create thumbnails. Thumbnail crea
 
 ## Deletion
 
-Default deletion is soft delete in MySQL. Physical MinIO deletion should be handled by a controlled cleanup job after retention rules are defined.
+Default deletion is soft delete in MySQL. Physical MinIO deletion must be handled by controlled backend cleanup paths after retention rules are enabled for a tenant.
 
-Current P5 backend behavior soft-deletes asset metadata and leaves physical object deletion to a future retention/cleanup job.
+Current backend behavior soft-deletes asset metadata for normal deletes. `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds the internal cleanup foundation for physically deleting already soft-deleted asset objects, but it does not yet schedule cleanup automatically.
 
-P13 storage cleanup foundation rules:
+P13 storage cleanup foundation status:
 
-- Upload rollback cleanup must not depend on the HTTP request context after the object has been written. If metadata persistence fails after object upload, backend must attempt object cleanup with an independent bounded context or cleanup abstraction.
-- Physical cleanup must be tenant scoped and metadata driven. The cleanup code must never accept an object key from the browser or another untrusted caller as the source of truth for deletion.
+- Upload rollback cleanup no longer depends on the HTTP request context after the object has been written. If metadata persistence fails after object upload, backend attempts object cleanup with an independent bounded context.
+- Physical cleanup is tenant scoped and metadata driven. Cleanup code must never accept an object key from the browser or another untrusted caller as the source of truth for deletion.
 - Cleanup may delete only assets that are already soft deleted and older than a caller-supplied cutoff.
-- Cleanup must be batch limited and idempotent. Missing MinIO objects count as successful cleanup; non-not-found storage errors leave the asset eligible for retry.
-- Add a durable purge marker such as `image_assets.purged_at` before exposing retention settings, so repeated cleanup runs do not repeatedly delete already purged objects.
+- Cleanup is batch limited and idempotent. Missing MinIO objects count as successful cleanup; non-not-found storage errors leave the asset eligible for retry.
+- `image_assets.purged_at` records physical cleanup completion, so repeated cleanup runs do not repeatedly delete already purged objects.
 - Do not hard-delete image asset rows in this foundation task. Metadata remains useful for audit/history and future accounting.
-- Storage quota, retention days, log retention, scheduled cleanup, and frontend settings remain deferred until this cleanup foundation is merged.
+
+Next P13 retention runtime rules:
+
+- `storageRetention.deletedAssetRetentionDays` is nullable. `null` disables automatic physical cleanup for that tenant.
+- The Worker maintenance loop is the first runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
+- Worker must skip tenants with absent, null, malformed, or unsupported retention settings. It must not delete anything for those tenants.
+- Storage quota, log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.

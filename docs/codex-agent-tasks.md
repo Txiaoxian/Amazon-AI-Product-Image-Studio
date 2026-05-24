@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING` 与 `P13-BE-CONCURRENCY-POLICY` 已 review 并合并，P13 仍在进行中。
+R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY` 与 `P13-BE-STORAGE-CLEANUP-FOUNDATION` 已 review 并合并，P13 仍在进行中。
 
 已完成的平台基础：
 
@@ -95,7 +95,7 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - P7-P8：任务队列、Worker、Provider Adapter 运行时、SSE、前端后端化。
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
-- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening，以及 Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`。
+- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`，以及 soft-delete 资产物理清理基础服务。
 
 当前已知后续项：
 
@@ -105,8 +105,8 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults` 与 `taskConcurrency` 已有真实运行时消费者；损坏的 `task_defaults` 与 `task_concurrency` 配置必须 fail closed，不能绕过校验、限流或 Provider 执行边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一串行任务只做后端存储清理基础：修复上传后 DB 失败的取消上下文清理缺口，并建立 soft-delete 后物理删除对象的幂等基础服务。
-- 存储保留周期配置、配额、缩略图策略和完整 orphan cleanup 仍需实现。
+- 下一串行任务只做后端存储保留运行时：增加 nullable `storageRetention.deletedAssetRetentionDays` 设置，并让 Worker maintenance loop 真实消费该设置。
+- 存储配额、缩略图策略、完整 orphan cleanup 和前端设置 UI 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
 
@@ -160,14 +160,15 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 3. `P13-BE-CONCURRENCY-POLICY`
    - 已完成并合并。租户并发策略只允许收紧环境 hard caps，并已由 Worker Redis semaphore acquisition 实际消费；global 并发仍由环境配置控制。
 4. `P13-BE-STORAGE-CLEANUP-FOUNDATION`
-   - 修复上传对象写入后 metadata 持久化失败时的独立 cleanup context，避免请求取消导致 MinIO 孤儿对象。
-   - 增加 soft-delete 资产物理清理基础服务：按 tenant、cutoff、batch 上限扫描，删除 original/thumbnail 对象，并用持久化 purge 标记保证幂等。
-   - 不开放 storage quota、retention 或 frontend settings。
-5. `P13-BE-STORAGE-QUOTA-RETENTION`
-   - 在 cleanup foundation 合并后，再做存储配额、保留周期、计划任务/运维入口和更完整的 orphan cleanup。
-6. `P13-FE-SYSTEM-SETTINGS`
+   - 已完成并合并。上传后 metadata 失败 cleanup 不再依赖 request context；soft-delete 资产已有 tenant/cutoff/batch/idempotent 的内部物理清理基础和 `purged_at` 标记。
+5. `P13-BE-STORAGE-RETENTION-RUNTIME`
+   - 增加 nullable `storageRetention.deletedAssetRetentionDays` 设置，并让 Worker maintenance loop 消费该设置调用 cleanup foundation。
+   - 不开放 storage quota、log retention、orphan object listing 或 frontend settings。
+6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
+   - 存储用量统计与配额执行；完整 orphan cleanup 需要在有明确对象枚举/命名空间边界后再实现。
+7. `P13-FE-SYSTEM-SETTINGS`
    - 仅为已经运行时生效的设置提供前端 admin UI。
-7. `R13`
+8. `R13`
    - 设置和存储生命周期 review。
 
 ### P14：Provider、模型、用量与成本运营
@@ -200,32 +201,42 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P13-BE-STORAGE-CLEANUP-FOUNDATION
+## 下一个任务包：P13-BE-STORAGE-RETENTION-RUNTIME
 
 ### 调度决策
 
-- 本任务串行执行，不与前端设置、配额、保留周期或发布任务并行。
-- 理由：存储物理删除必须先把对象清理语义、tenant 过滤、幂等标记和失败重试边界固定下来，再开放可写 retention/quota 设置。
-- 本任务只做后端存储清理基础，不增加新的 public admin settings 字段，不新增前端 UI，不改任务、SSE 或 Provider Adapter 业务语义。
+- 本任务串行执行，不与前端设置、存储配额、orphan cleanup 或发布任务并行。
+- 理由：`storageRetention` 是会触发物理删除的控制面设置，必须和真实 Worker maintenance consumer 同步落地，且需要完整 failure matrix。
+- 本任务只开放一个 nullable retention 字段，不开放 storage quota、log retention、orphan object listing、frontend UI 或公开 cleanup API。
 
 ### 任务信息
 
-- 任务名称：`P13-BE-STORAGE-CLEANUP-FOUNDATION`
-- 目标：修复资产上传后 metadata 持久化失败时可能因请求取消而遗漏对象清理的问题，并建立 tenant-scoped、batch-limited、idempotent 的软删资产物理清理基础服务，为后续 storage quota/retention 和计划任务奠定真实运行时基础。
-- 推荐线程名：`P13-BE-STORAGE-CLEANUP-FOUNDATION`
-- 推荐分支名：`codex/p13-backend-storage-cleanup-foundation`
-- 起始分支：已合并 `P13-BE-CONCURRENCY-POLICY` 与本任务公共合同文档的最新 `main`
-- 前置依赖：P13 runtime defaults、defaults hardening、task concurrency policy 均已合并；`docs/storage.md` 与 `docs/database-schema.md` 已明确 soft-delete 默认策略、MinIO object metadata 关系和物理清理基础规则。
+- 任务名称：`P13-BE-STORAGE-RETENTION-RUNTIME`
+- 目标：增加 runtime-backed `storageRetention.deletedAssetRetentionDays` 设置，并在 Worker 进程中增加可停止的 maintenance loop 消费该设置，按租户调用已合并的 cleanup foundation 物理清理 soft-deleted 资产。
+- 推荐线程名：`P13-BE-STORAGE-RETENTION-RUNTIME`
+- 推荐分支名：`codex/p13-backend-storage-retention-runtime`
+- 起始分支：已合并 `P13-BE-STORAGE-CLEANUP-FOUNDATION` 与本任务公共合同文档的最新 `main`
+- 前置依赖：`P13-BE-STORAGE-CLEANUP-FOUNDATION` 已合并；`docs/api-contract.md`、`docs/database-schema.md`、`docs/storage.md` 已冻结 `storageRetention.deletedAssetRetentionDays` 的 nullable 设置和 Worker 消费合同。
+
+### 控制面字段与运行时消费者映射
+
+| 外部字段 | 运行时消费者 | 本任务是否实现消费者 |
+| --- | --- | --- |
+| `storageRetention.deletedAssetRetentionDays` | Worker maintenance loop 读取 tenant setting，计算 `cutoff = now - days`，调用 `asset.CleanupService.PurgeDeletedAssets` | 是 |
+| `storageQuota.*` | 暂无；后续 quota accounting/enforcement | 否，本任务禁止暴露 |
+| `logRetention.*` | 暂无；后续日志清理任务 | 否，本任务禁止暴露 |
 
 ### 允许修改文件
 
 - `backend/internal/asset/**`
-- `backend/internal/storage/**`
-- `backend/internal/database/**`，仅限新增资产 purge 标记、索引、migration 和对应测试所需的最小模型变更
-- `backend/internal/api/*asset*_test.go`
-- `backend/internal/api/router.go`，仅在注入 asset service 依赖或测试 wiring 必需时修改
-- `backend/internal/config/**`，仅在需要定义后端内部 cleanup timeout 默认值时修改；不得新增可写 system setting
-- `backend/cmd/worker/**`，仅当实现内部 cleanup service 的构造测试需要时修改，不得改变 Worker 任务执行主流程
+- `backend/internal/settings/**`
+- `backend/internal/database/**`，仅限补齐 `ImageAsset.PurgedAt` model 字段、tenant/settings 查询所需最小 repository/helper 和测试；不得新增 quota 表
+- `backend/internal/config/**`，仅限 Worker retention maintenance interval、batch limit、range bounds 等后端内部配置；不得新增 Provider 或 task 状态配置
+- `backend/cmd/worker/**`
+- `backend/internal/api/*system_settings*_test.go`
+- `backend/internal/asset/*_test.go`
+- `backend/internal/database/*_test.go`
+- `backend/internal/api/router.go`，仅限 settings service wiring 所必需的最小修改
 
 ### 禁止修改文件
 
@@ -234,103 +245,100 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `backend/internal/settings/**`
 - `backend/internal/task/**`，除非只改测试 helper 且不触碰任务状态机；默认不允许
 - `backend/internal/provider/**`
 - `backend/internal/provideradapter/**`
 - `backend/internal/model/**`
 - `backend/internal/queue/**`
 - `backend/internal/sse/**`
-- 任何新的 public storage quota、retention 或 log retention API
-- 系统设置响应/PATCH 合同、前端 UI、部署拓扑、Provider/model/task/SSE 行为或无关重构
+- 任何新的 public cleanup trigger API、storage quota API、log retention API 或 MinIO object listing API
+- 前端 UI、部署拓扑、Provider/model/task/SSE 行为或无关重构
+- 硬删除 `image_assets` 行、删除未 soft-delete 的对象、或绕过 `tenant_id` 的清理
 
 ### 具体开发内容
 
-1. 先写回归测试，再做最小实现；每个 failure mode 都要在交付说明中映射到测试。
-2. 修复上传对象写入成功、metadata/DB 创建失败后的清理路径：
-   - 继续保证校验失败时不写对象。
-   - 如果对象已写入而 metadata 持久化失败，清理必须使用独立的 bounded context 或等价的 cleanup abstraction，不能依赖已取消的 HTTP request context。
-   - 清理失败必须返回上传失败并记录脱敏错误；不得把 object key、bucket、请求文件名、base64 或内部堆栈暴露给前端。
-3. 增加软删资产物理清理基础：
-   - 查询条件必须包含 `tenant_id`。
-   - 只处理 `deleted_at IS NOT NULL` 且早于调用方传入 cutoff 的资产。
-   - 增加 durable purge marker，例如 `image_assets.purged_at`，防止已物理删除对象被反复处理；migration 和模型变更保持最小。
-   - 批量上限必须有默认保护，避免一次扫描全表。
-4. 清理 original 和 thumbnail 对象：
-   - original bucket 使用资产 kind 对应的当前 storage 规则。
-   - thumbnail 仅在 `thumbnail_object_key` 非空时尝试删除。
-   - MinIO object not found 视为清理成功，保证幂等。
-   - 任一非 not-found storage 错误时不得设置 `purged_at`，便于后续重试。
-5. 不 hard-delete MySQL 行；资产 metadata 继续作为审计和历史状态来源。
-6. 不新增公开 API 或 system setting。cleanup service 可以是内部服务/仓储能力，后续任务再接入 retention job、operator trigger 或 quota accounting。
+1. 先写 settings API、Worker maintenance 和 cleanup failure matrix 测试，再做最小实现。
+2. 补齐 `database.ImageAsset` 的 nullable `PurgedAt` 字段，使 GORM model 与已合并 migration 对齐；不新增新 migration，除非发现当前 migration 无法在真实 MySQL 上执行。
+3. 在 `GET/PATCH /api/v1/admin/system-settings` 中增加 `storageRetention`：
+   - 响应形态：`storageRetention: { "deletedAssetRetentionDays": null | positive_integer }`
+   - `null` 表示禁用自动物理清理；没有 tenant override 时默认返回 `null`。
+   - PATCH 可设置正整数或 `null` 清除；省略字段保持当前值。
+   - 建议合法范围：`1..3650` 天，超出、零值、负值、小数、字符串、未知字段均返回 `422 VALIDATION_ERROR`。
+4. Worker 进程增加 retention maintenance loop：
+   - 随 Worker 生命周期启动和停止，尊重 context cancellation 和 shutdown timeout。
+   - 只扫描有 non-null `storage_retention` 配置且配置合法的 tenant。
+   - 对每个 tenant 计算 cutoff，并调用 `asset.CleanupService.PurgeDeletedAssets(ctx, tenantID, cutoff, PurgeOptions{BatchLimit: ...})`。
+   - 单个 tenant 清理失败不得阻塞其他 tenant；错误日志必须脱敏，只记录 tenant、计数、error_kind。
+   - 持久化设置损坏时 fail closed：跳过该 tenant cleanup，记录脱敏错误，不做任何删除。
+5. 操作日志只记录 settings key、changed fields 和非敏感 retention 天数或 cleared 状态；不得记录 raw JSON、bucket、object key、MinIO URL、图片 base64 或内部错误栈。
+6. 不新增前端 UI；前端设置页是否展示该字段留给 `P13-FE-SYSTEM-SETTINGS`。
 
 ### 必须保持的现有行为
 
-- 上传校验仍然在对象写入前完成，SVG、伪造 MIME、过大文件/尺寸/像素继续被拒绝。
+- `uploadPolicy`、`taskDefaults`、`taskConcurrency` 的 API、运行时消费、hardening 语义不变。
+- 已合并的 upload rollback cleanup 和 `asset.CleanupService` tenant/cutoff/batch/idempotency 行为不变。
+- Worker 任务 claim、Redis lease、Provider execution、SSE、task events、outputs、usage、API-call logs、cancel/retry/timeout/recovery 状态机不变。
 - 资产下载、详情、列表、收藏、软删、项目权限和 object-level authorization 行为不变。
-- MySQL 仍只保存 metadata/object key，不保存图片 blob。
-- MinIO bucket 创建仍是环境/部署责任；request handler 不创建 bucket。
-- 任务输出资产、历史查询、SSE、Provider Adapter、usage/API-call logs、系统设置和 RBAC 语义不变。
+- MySQL 仍只保存 metadata/object key，不保存图片 blob；MinIO bucket 创建仍是环境/部署责任。
 
 ### 允许的中间态
 
-- 清理基础服务已存在，但尚未接入可写 retention setting、定时任务或前端 UI。
-- `purged_at` 或等价 durable marker 可先只由内部 service 测试和后续任务调用。
-- 缩略图生成策略仍可维持当前状态；本任务只处理已有 thumbnail object key 的删除。
+- 后端 API 和 Worker 已支持 `storageRetention`，但前端 admin 设置页仍暂不展示。
+- `storageRetention.deletedAssetRetentionDays = null` 是合法禁用状态，不会触发任何自动物理删除。
+- Storage quota、orphan object discovery 和 log retention 继续留给后续任务。
 
 ### 禁止的半迁移状态
 
-- 只新增 `storageQuota`、`retentionDays` 或类似 API 字段，但没有真实 cleanup/quota consumer。
-- 物理删除对象时不带 tenant 条件，或通过前端/请求传入 object key 决定删除目标。
-- 删除未 soft-delete 的资产对象，或把 DB 行 hard-delete 掩盖权限/审计历史。
-- 遇到 storage delete 失败仍标记 `purged_at`。
-- 使用 request context 进行上传失败后的对象清理，导致客户端断开即可留下孤儿对象。
-- 返回或记录 bucket/object_key、MinIO URL、图片 base64、Authorization、Cookie 或内部错误栈。
+- 暴露 `storageRetention` 但 Worker 不消费，或 Worker 使用另一个未受 settings/RBAC/tenant 约束的配置源。
+- 默认启用自动物理删除。无 override 必须是 disabled/null，不能突然删除历史 soft-deleted 资产。
+- 暴露 storage quota、log retention、orphan cleanup、manual purge API 或前端 UI。
+- 清理未 soft-delete、未到 cutoff、已 purged 或跨 tenant 的对象。
+- 清理失败仍标记 `purged_at`，或用 hard-delete DB 行掩盖对象删除失败。
+- 日志、响应或 operation log 泄漏 object key、bucket、MinIO URL、Authorization、Cookie、API Key、图片 base64 或内部错误栈。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| 上传 validation 失败 | 不写 MinIO object，不写 image_assets | 是 |
-| 上传 object 成功后 DB create 失败且 request context 已取消 | 仍使用独立 bounded cleanup 删除刚写入对象；前端收到上传失败 | 是 |
-| 上传 object 成功后 DB create 失败且 cleanup 也失败 | 返回上传失败并记录脱敏错误；不得泄漏 object key；不能创建成功 metadata | 是 |
-| soft-deleted 且早于 cutoff 的资产 | 删除 original 与已有 thumbnail，成功后设置 `purged_at` | 是 |
-| 非 soft-deleted、未到 cutoff、已 purged、跨 tenant 资产 | 不删除、不更新 | 是 |
-| original 或 thumbnail 已不存在 | 视为成功，设置或保持 purge marker，保证幂等 | 是 |
-| storage delete 发生非 not-found 错误 | 不设置 `purged_at`，返回/记录脱敏错误，后续可重试 | 是 |
-| batch limit 小于待清理数量 | 只处理上限内记录，排序稳定，后续批次可继续 | 是 |
-| cleanup service 重复运行 | 已 purged 资产不重复删除，未成功资产可重试 | 是 |
-| 现有下载/列表/历史/任务输出 | 行为不变，软删过滤不退化 | 回归现有测试 |
+| GET 无 `storage_retention` row | 返回 `deletedAssetRetentionDays: null`；Worker 不清理 | 是 |
+| admin PATCH 设置合法天数 | 当前 tenant 生效，写脱敏 operation log；Worker 下一轮使用该天数计算 cutoff | 是 |
+| admin PATCH 清除为 `null` | 当前 tenant 禁用自动清理；Worker 跳过 | 是 |
+| non-admin、缺 CSRF、跨 tenant 探测 | 既有 `403`/授权行为；不得读写其他 tenant 设置 | 是 |
+| 零值、负值、小数、字符串、超范围、未知字段、`storageQuota` 字段 | `422 VALIDATION_ERROR`；原设置和 operation log 不变 | 是 |
+| 手工损坏 `storage_retention.value_json` | API GET/PATCH 返回 sanitized failure 或按既有 settings 错误语义处理；Worker fail closed 跳过删除 | 是 |
+| Worker loop context canceled/shutdown | 停止新一轮 cleanup，退出不阻塞正常 shutdown | 是 |
+| 单 tenant cleanup 失败 | 记录脱敏错误，继续其他 tenant；失败 tenant 后续可重试 | 是 |
+| tenant A 设置 retention，tenant B 无设置或设置无效 | 只清理 tenant A 符合条件的 soft-deleted asset | 是 |
+| cleanup foundation 原有 not-found/idempotency/storage error | 行为不回退 | 回归现有测试 |
 
 ### 安全要求
 
-- 清理对象必须从后端已授权/tenant-scoped metadata 推导，不接受前端传 object key 作为删除真相源。
-- 所有查询和 purge update 必须带 `tenant_id`；不得跨 tenant 扫描或删除。
-- 不公开 bucket、object_key、MinIO URL、图片 base64 或内部错误栈。
-- 不解密、不读取、不记录 Provider API Key、Authorization、Cookie 或 JWT。
+- `storageRetention` 只能由 tenant admin 且具备 `system:settings:manage` 的用户修改，写请求继续走 CSRF。
+- Worker 必须以 tenant-scoped metadata 为删除来源，不能从请求或设置中接收 object key。
+- 所有设置读取、tenant 枚举、cleanup 查询和 purge update 必须带 tenant 边界。
+- 不公开 bucket、object key、MinIO URL、图片 base64、Authorization、Cookie、JWT、Provider API Key 或内部错误栈。
 - 不引入 frontend Provider 直连、轮询、浏览器敏感存储或 public object URL。
 
 ### 必须新增或更新的回归测试
 
-- 上传后 DB 失败且 request context canceled 时，fake store 仍收到独立 cleanup 删除调用。
-- 上传后 DB 失败且 cleanup 失败时，响应失败且错误脱敏，无成功 asset row。
-- cleanup service 只处理当前 tenant、soft-deleted、早于 cutoff、未 purged 的资产。
-- original 与 thumbnail 删除成功后设置 `purged_at`；object not found 仍成功；storage error 不设置 `purged_at`。
-- batch limit、生效排序、重复运行幂等。
-- 现有 asset list/download/delete/favorite/detail 权限测试和 task output/history 相关测试不回归。
+- `backend/internal/api/*system_settings*_test.go` 覆盖 GET fallback null、合法 PATCH、clear null、RBAC/CSRF、非法/未知字段、脱敏 operation log。
+- `backend/internal/settings/**` 测试覆盖 `storage_retention` JSON 解析、nullable 语义、非法持久化 fail closed、tenant 隔离。
+- `backend/cmd/worker/**` 或新建后端 maintenance 测试覆盖 loop 启停、只处理有合法 retention 的 tenant、单 tenant 失败继续、context cancel。
+- `backend/internal/asset/**` 回归 cleanup foundation：tenant/cutoff/batch/idempotency、not-found success、storage error retry、`purged_at` 不误标。
+- 全量后端测试证明任务 Worker 主流程、SSE、Provider runtime、task outputs、usage/API logs 不回归。
 
 ### 验收标准
 
-- 上传 metadata 失败后的对象 cleanup 不再依赖 request context。
-- soft-delete 资产物理 cleanup foundation 已具备 tenant 过滤、cutoff、batch、original/thumbnail 删除、not-found 幂等、失败可重试和 durable purge marker。
-- 没有开放 storage quota、retention、log retention、frontend settings 或 public cleanup API。
-- 资产现有业务行为、任务输出资产、历史查询、下载鉴权和敏感信息脱敏无回归。
+- `storageRetention.deletedAssetRetentionDays` 是唯一新增的公开设置字段，且有 Worker runtime consumer。
+- 无 override 时自动物理清理默认禁用；设置合法天数后 Worker 按 tenant/cutoff/batch 调用 cleanup foundation。
+- 损坏设置、settings 存储错误、cleanup 错误或 Worker shutdown 均不能导致跨 tenant 删除、未到期删除、未 soft-delete 删除或敏感信息泄漏。
+- 未新增 storage quota、log retention、orphan cleanup、frontend UI、manual cleanup API 或无关范围修改。
 
 ### 测试命令
 
 ```bash
 cd backend
-go test ./internal/asset ./internal/storage ./internal/database ./internal/api -count=1
+go test ./internal/api ./internal/settings ./internal/asset ./internal/database ./cmd/worker -count=1
 go test ./... -count=1
 go test -race ./...
 go vet ./...

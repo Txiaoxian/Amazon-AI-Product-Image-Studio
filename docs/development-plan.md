@@ -37,7 +37,7 @@ Phase status:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
-| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, and task concurrency policy are merged; storage lifecycle, frontend settings, and R13 remain. |
+| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, and storage cleanup foundation are merged; retention runtime, storage quota, frontend settings, and R13 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -69,6 +69,8 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-CONCURRENCY-POLICY` was reviewed, fixed, and merged. The backend now exposes tenant `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` only with a live Worker consumer. Tenant overrides can narrow or match environment hard caps, global concurrency stays environment-owned, Provider row `concurrencyLimit` remains an additional stricter cap, and malformed persisted concurrency settings fail closed before Provider execution or output/usage/API-call success side effects. Validation passed focused settings and Worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
 
+`P13-BE-STORAGE-CLEANUP-FOUNDATION` was reviewed and merged. Upload rollback after object write now uses an independent bounded cleanup context when metadata persistence fails, and backend asset cleanup has a tenant-scoped, batch-limited, idempotent foundation for physically deleting soft-deleted original and thumbnail objects with durable `purged_at` tracking. Validation passed focused asset/storage/database/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-ups remain: align the GORM `ImageAsset` model with `purged_at`, add a real retention runtime consumer, and later handle quota accounting and broader orphan discovery.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -86,6 +88,7 @@ The current `main` branch supports:
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
 - Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, task creation resolves it only when both IDs are omitted, and malformed persisted defaults fail closed without creation side effects.
 - Backend runtime-backed task concurrency policy: tenant admins can configure tenant/user/Provider/model limits within environment hard caps, and Worker Redis semaphore acquisition consumes those effective limits before Provider execution.
+- Backend storage cleanup foundation: upload rollback cleanup no longer depends on canceled request contexts, and soft-deleted image assets can be physically purged through an internal tenant-scoped, cutoff-based, idempotent cleanup service.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -166,13 +169,15 @@ Suggested order:
 3. `P13-BE-CONCURRENCY-POLICY`
    - Completed and merged. `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` is writable only within environment hard caps and is consumed by Worker Redis semaphore acquisition; global concurrency remains environment-owned.
 4. `P13-BE-STORAGE-CLEANUP-FOUNDATION`
-   - Fix uploaded-object cleanup after metadata persistence failure so request cancellation cannot strand the object, and add an idempotent, tenant-scoped physical asset cleanup service with durable purge tracking.
-   - This task must not expose storage quota or retention settings yet.
-5. `P13-BE-STORAGE-QUOTA-RETENTION`
-   - Storage quota accounting, retention policy, scheduled cleanup entry point, and orphan cleanup after the cleanup foundation is merged.
-6. `P13-FE-SYSTEM-SETTINGS`
+   - Completed and merged. Uploaded-object rollback uses an independent bounded cleanup context, and soft-deleted assets have an internal tenant-scoped physical purge foundation with durable `purged_at` tracking.
+5. `P13-BE-STORAGE-RETENTION-RUNTIME`
+   - Add a runtime-backed nullable `storageRetention.deletedAssetRetentionDays` settings slice and a Worker-owned maintenance loop that consumes it by calling the cleanup foundation.
+   - This task must not expose storage quota, log retention, orphan object listing, or frontend settings.
+6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
+   - Storage usage accounting and quota enforcement after retention runtime is merged.
+7. `P13-FE-SYSTEM-SETTINGS`
    - Frontend admin UI only for settings that are active and runtime-backed.
-7. `R13`
+8. `R13`
    - Settings/quotas/storage lifecycle review.
 
 Parallelism: mostly serial because settings fields must not be exposed before runtime consumers exist.
@@ -266,4 +271,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P13-BE-STORAGE-CLEANUP-FOUNDATION` serially from latest `main`. The next slice is backend-only: close the request-cancellation cleanup gap for upload failures and add a durable, idempotent cleanup foundation for physically deleting soft-deleted asset objects after a caller-supplied retention cutoff. Do not expose storage quota, log retention, or frontend settings in this task; those remain blocked until the cleanup foundation has a real runtime or operator entry point.
+Run `P13-BE-STORAGE-RETENTION-RUNTIME` serially from latest `main`. The next slice is backend-only: expose a nullable, runtime-backed `storageRetention.deletedAssetRetentionDays` setting and make the Worker maintenance loop consume it through the merged cleanup foundation. Do not expose storage quota, log retention, orphan object listing, or frontend settings in this task.

@@ -371,7 +371,7 @@ Current settings contract:
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-The active settings slices are intentionally narrow and runtime-backed:
+The active settings slices, plus the next frozen runtime-backed slice, are intentionally narrow:
 
 ```json
 {
@@ -390,6 +390,9 @@ The active settings slices are intentionally narrow and runtime-backed:
     "userLimit": 2,
     "providerLimit": 2,
     "modelLimit": 2
+  },
+  "storageRetention": {
+    "deletedAssetRetentionDays": null
   }
 }
 ```
@@ -414,7 +417,18 @@ The active settings slices are intentionally narrow and runtime-backed:
   - Values may only narrow or match environment-configured tenant/user/Provider/model hard caps. Global concurrency is not a tenant-visible or tenant-writable field.
   - Worker applies the effective values when acquiring a new Redis semaphore lease. A positive Provider `concurrencyLimit` remains an additional stricter Provider cap.
   - Malformed persisted `task_concurrency` configuration causes affected eligible execution to fail with a sanitized task-configuration failure before Provider calls or output/usage/API-call persistence; actual settings storage failures retry without bypassing the limiter.
-- Storage quotas and log retention remain deferred. They must not be returned as active writable settings until quota enforcement or cleanup jobs actually consume them.
-- P13 storage cleanup foundation is backend-internal first. It must not add storage quota, retention, log retention, or public cleanup fields to this API contract.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`.
+- P13 storage cleanup foundation is merged as backend-internal cleanup capability:
+  - Upload rollback cleanup no longer depends on a canceled request context after object write.
+  - Soft-deleted image assets have an internal cleanup service with tenant, cutoff, batch, not-found idempotency, storage-error retry, and durable `purged_at` tracking.
+  - It does not expose a public cleanup API.
+- P13 next adds `storageRetention` only together with its Worker maintenance runtime consumer:
+  - `GET /admin/system-settings` returns `storageRetention.deletedAssetRetentionDays`.
+  - The value is nullable. `null` means automatic physical cleanup of soft-deleted assets is disabled for the tenant.
+  - No tenant override defaults to `null`; the backend must not unexpectedly enable physical deletion.
+  - `PATCH /admin/system-settings` may set a positive integer day count or clear it with `null`; omitted fields retain the current value.
+  - Valid range is `1..3650` days unless a later public contract deliberately changes the range.
+  - Worker maintenance resolves the tenant setting, computes `cutoff = now - deletedAssetRetentionDays`, and calls the asset cleanup foundation for that tenant.
+  - Malformed persisted `storage_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
+- Storage quotas, log retention, orphan object listing, and manual cleanup triggers remain deferred. They must not be returned as active writable settings until their runtime consumers exist.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`. `storageRetention` is frozen for the next serial implementation task and must not ship without its Worker maintenance consumer.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` renders and PATCHes only `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}` and has regression coverage proving deferred settings remain absent from UI and requests.

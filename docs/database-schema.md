@@ -66,7 +66,7 @@ P5 implementation notes:
 
 Stores image metadata.
 
-Key fields: `id`, `tenant_id`, `project_id`, `kind`, `category`, `object_key`, `thumbnail_object_key`, `mime_type`, `size_bytes`, `width`, `height`, `sha256`, `is_favorite`, `source_task_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`.
+Key fields: `id`, `tenant_id`, `project_id`, `kind`, `category`, `object_key`, `thumbnail_object_key`, `mime_type`, `size_bytes`, `width`, `height`, `sha256`, `is_favorite`, `source_task_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`, `purged_at`.
 
 `kind` values: `REFERENCE`, `GENERATED`, `EDITED`.
 
@@ -78,12 +78,12 @@ P5 implementation notes:
 - `deleted_at` implements soft delete. Soft-deleted assets are hidden from normal lists and downloads.
 - Suggested indexes: `(tenant_id, project_id, created_at)`, `(tenant_id, project_id, kind)`, `(tenant_id, is_favorite)`, `(tenant_id, deleted_at)`.
 
-P13 storage cleanup foundation notes:
+P13 storage cleanup foundation status:
 
-- Add a nullable physical purge marker such as `purged_at` before implementing automated retention cleanup.
+- `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds nullable physical purge marker `purged_at` and index `(tenant_id, deleted_at, purged_at)`.
 - Physical cleanup queries must include `tenant_id`, `deleted_at IS NOT NULL`, `deleted_at < cutoff`, and `purged_at IS NULL`.
-- Add an index that supports the cleanup scan, for example `(tenant_id, deleted_at, purged_at)`.
 - `purged_at` records object cleanup completion only. It must not replace `deleted_at`, and cleanup must not hard-delete `image_assets` rows.
+- Next task should align the GORM `ImageAsset` model with the `purged_at` column if the merged cleanup foundation has not already done so.
 
 ### prompt_templates
 
@@ -202,8 +202,11 @@ Implementation notes:
 - Malformed, partial, or otherwise invalid stored `task_defaults` values must fail closed for default-backed task creation; they must not create tasks, events, enqueue work, or successful operation logs. Explicit Provider/model task requests must not require reading unused defaults.
 - `task_concurrency` was added in `P13-BE-CONCURRENCY-POLICY` with its Worker runtime consumer. Its bounded JSON fields are `tenantLimit`, `userLimit`, `providerLimit`, and `modelLimit`.
 - `task_concurrency` values are positive tenant overrides that may narrow or match the environment-configured tenant/user/Provider/model concurrency hard caps. It must not store or expose a tenant-controlled global limit.
+- The next contracted key is `storage_retention`. It may be persisted only in `P13-BE-STORAGE-RETENTION-RUNTIME`, which must also wire the Worker maintenance consumer. Its bounded JSON field is nullable `deletedAssetRetentionDays`.
+- `storage_retention.deletedAssetRetentionDays = null` means automatic physical cleanup is disabled for the tenant. A positive integer means Worker computes `cutoff = now - days` and invokes the tenant-scoped asset cleanup foundation.
+- Malformed or unsupported `storage_retention` values must fail closed for Worker cleanup: skip deletion for that tenant and log sanitized metadata only.
 - Do not persist storage quota or log retention settings until their runtime consumers are deliberately in scope.
-- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption. `storage_retention` is frozen for the next serial backend task and is not active until its Worker consumer ships.
 
 ## Indexing expectations
 
