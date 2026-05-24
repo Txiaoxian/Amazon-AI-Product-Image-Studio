@@ -36,6 +36,8 @@ type Service struct {
 	now               func() time.Time
 }
 
+const uploadRollbackCleanupTimeout = 5 * time.Second
+
 type uploadPolicyResolver interface {
 	EffectiveUploadConfig(ctx context.Context, tenantID string) (config.UploadConfig, error)
 }
@@ -342,13 +344,20 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 			},
 		})
 	}); err != nil {
-		if removeErr := s.store.RemoveObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey); removeErr != nil {
-			s.log.Warn("uploaded asset cleanup failed", slog.String("asset_id", record.ID), slog.String("error", removeErr.Error()))
+		s.log.Error("asset metadata persistence failed after object upload", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(err)))
+		if removeErr := s.cleanupUploadedObject(record); removeErr != nil {
+			s.log.Warn("uploaded asset cleanup failed", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(removeErr)))
 		}
-		return Response{}, err
+		return Response{}, ErrUploadFailed
 	}
 
 	return responseFromRecord(record), nil
+}
+
+func (s *Service) cleanupUploadedObject(record database.ImageAsset) error {
+	ctx, cancel := context.WithTimeout(context.Background(), uploadRollbackCleanupTimeout)
+	defer cancel()
+	return s.store.RemoveObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey)
 }
 
 func (s *Service) getAsset(ctx context.Context, principal auth.Principal, assetID string) (Response, error) {

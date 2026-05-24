@@ -17,7 +17,7 @@ func TestMigrationsUseIdempotentTableCreation(t *testing.T) {
 				continue
 			}
 			seenStatements++
-			if !strings.Contains(statement, "CREATE TABLE IF NOT EXISTS") {
+			if strings.HasPrefix(strings.ToUpper(statement), "CREATE TABLE") && !strings.Contains(statement, "CREATE TABLE IF NOT EXISTS") {
 				t.Fatalf("migration %s statement is not idempotent: %s", migration.ID, statement)
 			}
 		}
@@ -203,6 +203,24 @@ func TestImageAssetsMigrationStoresMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestImageAssetsPurgeMarkerMigrationIsTenantScopedAndBatchFriendly(t *testing.T) {
+	statements := findMigrationStatements(t, "202605240001_image_asset_purge_marker")
+	joined := strings.Join(statements, "\n")
+	for _, required := range []string{
+		"ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL",
+		"CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (tenant_id, deleted_at, purged_at)",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("image asset purge marker migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM image_assets", "storage_quota", "retention_days"} {
+		if strings.Contains(strings.ToUpper(joined), strings.ToUpper(forbidden)) {
+			t.Fatalf("image asset purge marker migration must not include %q", forbidden)
+		}
+	}
+}
+
 func TestSystemSettingsMigrationIsTenantScopedGenericJSON(t *testing.T) {
 	statement := findCreateTableStatement(t, "system_settings")
 	for _, required := range []string{
@@ -238,4 +256,17 @@ func findCreateTableStatement(t *testing.T, table string) string {
 
 	t.Fatalf("missing create table statement for %s", table)
 	return ""
+}
+
+func findMigrationStatements(t *testing.T, id string) []string {
+	t.Helper()
+
+	for _, migration := range migrations {
+		if migration.ID == id {
+			return migration.Statements
+		}
+	}
+
+	t.Fatalf("missing migration %s", id)
+	return nil
 }
