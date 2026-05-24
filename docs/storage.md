@@ -57,7 +57,7 @@ Forbidden:
 
 P5 validation must happen before any object is written. If validation fails, no image metadata row or MinIO object should remain. If a DB write fails after object upload, the implementation must either delete the just-uploaded object or record enough information for deterministic cleanup.
 
-Current P5 backend behavior validates before object write and attempts to delete the uploaded object if metadata persistence fails. A later hardening task should move this cleanup to an independent timeout context or background cleanup path so request cancellation cannot prevent cleanup.
+Current P5 backend behavior validates before object write and attempts to delete the uploaded object if metadata persistence fails. P13 storage cleanup foundation must move this cleanup to an independent bounded context or equivalent background cleanup path so request cancellation cannot prevent cleanup.
 
 Current P5 frontend behavior uploads reference images through the backend multipart endpoint only. The browser never uploads directly to MinIO, and frontend MIME/size checks are only UX hints; backend validation is authoritative.
 
@@ -123,3 +123,13 @@ Reference uploads and generated outputs should create thumbnails. Thumbnail crea
 Default deletion is soft delete in MySQL. Physical MinIO deletion should be handled by a controlled cleanup job after retention rules are defined.
 
 Current P5 backend behavior soft-deletes asset metadata and leaves physical object deletion to a future retention/cleanup job.
+
+P13 storage cleanup foundation rules:
+
+- Upload rollback cleanup must not depend on the HTTP request context after the object has been written. If metadata persistence fails after object upload, backend must attempt object cleanup with an independent bounded context or cleanup abstraction.
+- Physical cleanup must be tenant scoped and metadata driven. The cleanup code must never accept an object key from the browser or another untrusted caller as the source of truth for deletion.
+- Cleanup may delete only assets that are already soft deleted and older than a caller-supplied cutoff.
+- Cleanup must be batch limited and idempotent. Missing MinIO objects count as successful cleanup; non-not-found storage errors leave the asset eligible for retry.
+- Add a durable purge marker such as `image_assets.purged_at` before exposing retention settings, so repeated cleanup runs do not repeatedly delete already purged objects.
+- Do not hard-delete image asset rows in this foundation task. Metadata remains useful for audit/history and future accounting.
+- Storage quota, retention days, log retention, scheduled cleanup, and frontend settings remain deferred until this cleanup foundation is merged.

@@ -78,6 +78,7 @@ P13 concurrency-policy contract:
 - Worker must resolve the tenant policy after loading the tenant-scoped task execution context and before acquiring Redis semaphore leases. A successfully acquired new lease uses the effective policy; existing leases are not retroactively changed.
 - Provider `concurrencyLimit`, when positive, remains an additional stricter Provider-dimensional cap; the effective Provider limit is the minimum of environment cap, tenant policy, and Provider limit.
 - Malformed stored concurrency policy must fail an eligible task with sanitized `TASK_CONFIGURATION_INVALID` before Provider execution, outputs, usage, or API call logging. A settings storage/infrastructure read failure must leave the task eligible for retry and must not bypass concurrency enforcement.
+- Implementation status: `P13-BE-CONCURRENCY-POLICY` is merged. Future queue or worker changes must preserve this policy resolution order, fail-closed behavior, and lease-release semantics.
 
 ## Worker idempotency
 

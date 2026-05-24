@@ -15,7 +15,7 @@ This baseline was preserved during the early platformization phases so existing 
 
 ## Current platform state during P13
 
-The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has passed R12 review. P13 is in progress: runtime-backed tenant task defaults and their malformed-row hardening are merged. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, reference asset management, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy settings, runtime-backed task defaults, release validation, and runtime hardening through P12.
+The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has passed R12 review. P13 is in progress: runtime-backed tenant task defaults, malformed-row hardening, and task-concurrency policy are merged. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, reference asset management, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy settings, runtime-backed task defaults, runtime-backed task concurrency settings, release validation, and runtime hardening through P12.
 
 Important current facts:
 
@@ -26,9 +26,10 @@ Important current facts:
 - The frontend has an API client, task/SSE client contracts, auth integration, user/role admin UI, project selection/creation/editing, project member entry points, project asset upload/list/filter/favorite/delete/download/detail/metadata-edit UI, project-scoped reference selection by backend `assetId`, admin Provider/model management UI, admin usage/audit/settings UI, backend task-backed workbench submission, backend result rendering, and backend unified-history/detail/download/re-edit flows.
 - The frontend consumes the backend-owned project history query at `GET /api/v1/projects/{projectId}/history`; it must not rebuild the production history feed by joining task and generated/edited asset lists in the browser.
 - The backend now exposes tenant `taskDefaults` and consumes them only when task creation omits both Provider/model IDs. Malformed persisted defaults fail closed for default-backed requests without task creation side effects.
+- The backend now exposes tenant `taskConcurrency` only with a Worker runtime consumer. Tenant values can narrow environment hard caps, global concurrency remains deployment-owned, and malformed persisted concurrency settings fail closed before Provider execution.
 - Docker Compose has buildable runtime foundations and passed P9 release validation; R12 re-verified Compose config. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P13 continues with runtime-backed `taskConcurrency` consumed by Worker Redis semaphore acquisition, then quotas and storage lifecycle, with the hard rule that writable settings cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P13 continues with backend storage cleanup foundation, then quota/retention settings and frontend settings, with the hard rule that writable settings cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 

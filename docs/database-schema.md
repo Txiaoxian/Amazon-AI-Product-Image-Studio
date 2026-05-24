@@ -78,6 +78,13 @@ P5 implementation notes:
 - `deleted_at` implements soft delete. Soft-deleted assets are hidden from normal lists and downloads.
 - Suggested indexes: `(tenant_id, project_id, created_at)`, `(tenant_id, project_id, kind)`, `(tenant_id, is_favorite)`, `(tenant_id, deleted_at)`.
 
+P13 storage cleanup foundation notes:
+
+- Add a nullable physical purge marker such as `purged_at` before implementing automated retention cleanup.
+- Physical cleanup queries must include `tenant_id`, `deleted_at IS NOT NULL`, `deleted_at < cutoff`, and `purged_at IS NULL`.
+- Add an index that supports the cleanup scan, for example `(tenant_id, deleted_at, purged_at)`.
+- `purged_at` records object cleanup completion only. It must not replace `deleted_at`, and cleanup must not hard-delete `image_assets` rows.
+
 ### prompt_templates
 
 Stores tenant/project prompt templates.
@@ -193,10 +200,10 @@ Implementation notes:
 - P13 has added the active key `task_defaults` because the runtime consumer is task creation. `task_defaults.value_json` stores `defaultProviderId` and `defaultModelId` for the tenant.
 - `task_defaults` rows must be tenant scoped. Task creation must revalidate the referenced Provider/model on every default-backed task create, including tenant ownership, enabled state, model ownership by Provider, and model capability support.
 - Malformed, partial, or otherwise invalid stored `task_defaults` values must fail closed for default-backed task creation; they must not create tasks, events, enqueue work, or successful operation logs. Explicit Provider/model task requests must not require reading unused defaults.
-- The next contracted key is `task_concurrency`. It may be persisted only in `P13-BE-CONCURRENCY-POLICY`, which must also wire the Worker runtime consumer. Its bounded JSON fields are `tenantLimit`, `userLimit`, `providerLimit`, and `modelLimit`.
+- `task_concurrency` was added in `P13-BE-CONCURRENCY-POLICY` with its Worker runtime consumer. Its bounded JSON fields are `tenantLimit`, `userLimit`, `providerLimit`, and `modelLimit`.
 - `task_concurrency` values are positive tenant overrides that may narrow or match the environment-configured tenant/user/Provider/model concurrency hard caps. It must not store or expose a tenant-controlled global limit.
 - Do not persist storage quota or log retention settings until their runtime consumers are deliberately in scope.
-- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `task_concurrency` is contract-frozen for the next serial implementation task but is not active until that task is merged.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption.
 
 ## Indexing expectations
 

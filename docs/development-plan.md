@@ -37,7 +37,7 @@ Phase status:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
-| P13 | In progress | Runtime-backed tenant task defaults and malformed-row hardening are merged; concurrency policy, storage lifecycle, frontend settings, and R13 remain. |
+| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, and task concurrency policy are merged; storage lifecycle, frontend settings, and R13 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -67,6 +67,8 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-RUNTIME-DEFAULTS-HARDENING` was reviewed and merged. Invalid JSON, partial IDs, unknown fields, and blank IDs in a manually corrupted or legacy `task_defaults` row now fail closed as `422 VALIDATION_ERROR` for default-backed task creation, without task/event/enqueue/success-audit side effects. Explicit valid Provider/model submissions do not read unused damaged defaults, and genuine settings-storage failures remain sanitized `500 INTERNAL_ERROR`. Validation passed focused API/task/settings tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
 
+`P13-BE-CONCURRENCY-POLICY` was reviewed, fixed, and merged. The backend now exposes tenant `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` only with a live Worker consumer. Tenant overrides can narrow or match environment hard caps, global concurrency stays environment-owned, Provider row `concurrencyLimit` remains an additional stricter cap, and malformed persisted concurrency settings fail closed before Provider execution or output/usage/API-call success side effects. Validation passed focused settings and Worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -83,6 +85,7 @@ The current `main` branch supports:
 - Seller workspace project/asset workflow supports project edit, reference upload, asset filtering, asset metadata edit, favorite/delete/download/detail/use-as-reference, and project member list/add/update/remove entry points through backend APIs.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
 - Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, task creation resolves it only when both IDs are omitted, and malformed persisted defaults fail closed without creation side effects.
+- Backend runtime-backed task concurrency policy: tenant admins can configure tenant/user/Provider/model limits within environment hard caps, and Worker Redis semaphore acquisition consumes those effective limits before Provider execution.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -161,13 +164,15 @@ Suggested order:
 2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
    - Completed and merged. Malformed or one-sided persisted `task_defaults` now fail closed under the public task validation contract without creation side effects; explicit Provider/model submissions remain independent of corrupted unused defaults.
 3. `P13-BE-CONCURRENCY-POLICY`
-   - Add `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` as a tenant settings slice only while wiring it into Worker Redis semaphore acquisition in the same task.
-   - Environment queue limits remain the hard caps and defaults; the tenant cannot configure global concurrency, and existing Provider `concurrencyLimit` remains an additional stricter cap.
-4. `P13-BE-STORAGE-QUOTA-RETENTION`
-   - Storage quota accounting, log/asset retention policy, orphan cleanup, and independent cleanup context/job.
-5. `P13-FE-SYSTEM-SETTINGS`
+   - Completed and merged. `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` is writable only within environment hard caps and is consumed by Worker Redis semaphore acquisition; global concurrency remains environment-owned.
+4. `P13-BE-STORAGE-CLEANUP-FOUNDATION`
+   - Fix uploaded-object cleanup after metadata persistence failure so request cancellation cannot strand the object, and add an idempotent, tenant-scoped physical asset cleanup service with durable purge tracking.
+   - This task must not expose storage quota or retention settings yet.
+5. `P13-BE-STORAGE-QUOTA-RETENTION`
+   - Storage quota accounting, retention policy, scheduled cleanup entry point, and orphan cleanup after the cleanup foundation is merged.
+6. `P13-FE-SYSTEM-SETTINGS`
    - Frontend admin UI only for settings that are active and runtime-backed.
-6. `R13`
+7. `R13`
    - Settings/quotas/storage lifecycle review.
 
 Parallelism: mostly serial because settings fields must not be exposed before runtime consumers exist.
@@ -261,4 +266,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P13-BE-CONCURRENCY-POLICY` serially from latest `main`. The public contract is frozen as `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`: values are positive tenant overrides that may narrow or match environment-configured hard caps and must be consumed by Worker semaphore acquisition in the same task. Global concurrency remains configuration-owned and Provider `concurrencyLimit` remains an additional stricter cap. Do not open storage/quota or frontend setting work until this slice is reviewed and merged.
+Run `P13-BE-STORAGE-CLEANUP-FOUNDATION` serially from latest `main`. The next slice is backend-only: close the request-cancellation cleanup gap for upload failures and add a durable, idempotent cleanup foundation for physically deleting soft-deleted asset objects after a caller-supplied retention cutoff. Do not expose storage quota, log retention, or frontend settings in this task; those remain blocked until the cleanup foundation has a real runtime or operator entry point.
