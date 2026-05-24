@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	KeyUploadPolicy = "upload_policy"
-	KeyTaskDefaults = "task_defaults"
+	KeyUploadPolicy    = "upload_policy"
+	KeyTaskDefaults    = "task_defaults"
+	KeyTaskConcurrency = "task_concurrency"
 
 	PermissionManage = "system:settings:manage"
 
@@ -17,14 +18,16 @@ const (
 )
 
 var (
-	ErrValidation                = errors.New("invalid system settings request")
-	ErrStoredTaskDefaultsInvalid = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
-	ErrForbidden                 = errors.New("system settings access forbidden")
+	ErrValidation                   = errors.New("invalid system settings request")
+	ErrStoredTaskDefaultsInvalid    = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
+	ErrStoredTaskConcurrencyInvalid = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
+	ErrForbidden                    = errors.New("system settings access forbidden")
 )
 
 type Response struct {
-	UploadPolicy UploadPolicy `json:"uploadPolicy"`
-	TaskDefaults TaskDefaults `json:"taskDefaults"`
+	UploadPolicy    UploadPolicy    `json:"uploadPolicy"`
+	TaskDefaults    TaskDefaults    `json:"taskDefaults"`
+	TaskConcurrency TaskConcurrency `json:"taskConcurrency"`
 }
 
 type UploadPolicy struct {
@@ -51,9 +54,24 @@ type TaskDefaultsPatch struct {
 	DefaultModelID    *string
 }
 
+type TaskConcurrency struct {
+	TenantLimit   int `json:"tenantLimit"`
+	UserLimit     int `json:"userLimit"`
+	ProviderLimit int `json:"providerLimit"`
+	ModelLimit    int `json:"modelLimit"`
+}
+
+type TaskConcurrencyPatch struct {
+	TenantLimit   *int64
+	UserLimit     *int64
+	ProviderLimit *int64
+	ModelLimit    *int64
+}
+
 type PatchRequest struct {
-	UploadPolicy *UploadPolicyPatch
-	TaskDefaults *TaskDefaultsPatch
+	UploadPolicy    *UploadPolicyPatch
+	TaskDefaults    *TaskDefaultsPatch
+	TaskConcurrency *TaskConcurrencyPatch
 }
 
 func uploadPolicyFromConfig(upload config.UploadConfig) UploadPolicy {
@@ -73,4 +91,29 @@ func uploadConfigFromPolicy(base config.UploadConfig, policy UploadPolicy) confi
 	base.MaxHeight = policy.MaxHeight
 	base.MaxPixels = policy.MaxPixels
 	return base
+}
+
+func taskConcurrencyFromQueueConfig(queueConfig config.QueueConfig) TaskConcurrency {
+	return normalizeTaskConcurrencyHardCap(TaskConcurrency{
+		TenantLimit:   queueConfig.TenantConcurrency,
+		UserLimit:     queueConfig.UserConcurrency,
+		ProviderLimit: queueConfig.ProviderConcurrency,
+		ModelLimit:    queueConfig.ModelConcurrency,
+	})
+}
+
+func normalizeTaskConcurrencyHardCap(policy TaskConcurrency) TaskConcurrency {
+	if policy.TenantLimit <= 0 {
+		policy.TenantLimit = 1
+	}
+	if policy.UserLimit <= 0 {
+		policy.UserLimit = 1
+	}
+	if policy.ProviderLimit <= 0 {
+		policy.ProviderLimit = 1
+	}
+	if policy.ModelLimit <= 0 {
+		policy.ModelLimit = 1
+	}
+	return policy
 }

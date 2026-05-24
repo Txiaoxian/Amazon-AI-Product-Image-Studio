@@ -615,6 +615,225 @@ func TestWorkerProcessorConcurrencyLimitsAllDimensions(t *testing.T) {
 	assertWorkerEvents(t, db, taskID, nil)
 }
 
+func TestWorkerProcessorUsesStoredTaskConcurrencyPolicyInAllEffectiveDimensions(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-concurrency", Status: StatusQueued})
+	seedWorkerTaskConcurrency(t, db, `{"tenantLimit":4,"userLimit":3,"providerLimit":2,"modelLimit":1}`)
+	limiter := &recordingLimiter{blocked: true}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter:             limiter,
+		GlobalConcurrency:   9,
+		TenantConcurrency:   8,
+		UserConcurrency:     7,
+		ProviderConcurrency: 6,
+		ModelConcurrency:    5,
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionRetry {
+		t.Fatalf("Process action = %v, want retry", result.Action)
+	}
+	wantDimensions := []queue.ConcurrencyDimension{
+		{Name: "global", Value: "all", Limit: 9},
+		{Name: "tenant", Value: "tenant-worker", Limit: 4},
+		{Name: "user", Value: "user-worker", Limit: 3},
+		{Name: "provider", Value: "provider-worker", Limit: 2},
+		{Name: "model", Value: "model-worker", Limit: 1},
+	}
+	if !reflect.DeepEqual(limiter.lastDimensions, wantDimensions) {
+		t.Fatalf("concurrency dimensions = %#v, want %#v", limiter.lastDimensions, wantDimensions)
+	}
+}
+
+func TestWorkerProcessorTaskConcurrencyAtEachFullDimensionRetriesBeforeExecutor(t *testing.T) {
+	for _, dimension := range []string{"tenant", "user", "provider", "model"} {
+		t.Run(dimension, func(t *testing.T) {
+			db := newWorkerTestDB(t)
+			seedWorkerBase(t, db)
+			taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-full-" + dimension, Status: StatusQueued})
+			seedWorkerTaskConcurrency(t, db, `{"tenantLimit":1,"userLimit":1,"providerLimit":1,"modelLimit":1}`)
+			limiter := newActiveLimitLimiter(dimension, 99)
+			limiter.active = 1
+			var executions int32
+			processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+				Limiter:             limiter,
+				TenantConcurrency:   8,
+				UserConcurrency:     7,
+				ProviderConcurrency: 6,
+				ModelConcurrency:    5,
+				Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+					atomic.AddInt32(&executions, 1)
+					return ExecutionResult{}
+				}),
+			})
+
+			result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+			if err != nil {
+				t.Fatalf("Process returned error: %v", err)
+			}
+			if result.Action != claimActionRetry {
+				t.Fatalf("Process action = %v, want retry at full %s limit", result.Action, dimension)
+			}
+			if got := atomic.LoadInt32(&executions); got != 0 {
+				t.Fatalf("executor calls = %d, want 0 at full %s limit", got, dimension)
+			}
+			record := loadWorkerTask(t, db, taskID)
+			if record.Status != StatusQueued {
+				t.Fatalf("task status = %q, want QUEUED at full %s limit", record.Status, dimension)
+			}
+			assertWorkerEvents(t, db, taskID, nil)
+		})
+	}
+}
+
+func TestWorkerProcessorTaskConcurrencyChangeOnlyAffectsNewLeases(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	firstTaskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-active-lease", Status: StatusQueued})
+	secondTaskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-new-lease", Status: StatusQueued})
+	seedWorkerTaskConcurrency(t, db, `{"tenantLimit":4,"userLimit":3,"providerLimit":2,"modelLimit":2}`)
+	limiter := &recordingLimiter{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var activeLeaseHeld int32
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter:             limiter,
+		GlobalConcurrency:   9,
+		TenantConcurrency:   8,
+		UserConcurrency:     7,
+		ProviderConcurrency: 6,
+		ModelConcurrency:    5,
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			if atomic.CompareAndSwapInt32(&activeLeaseHeld, 0, 1) {
+				close(started)
+				<-release
+			}
+			return ExecutionResult{}
+		}),
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: firstTaskID, DeliveryCount: 1})
+		firstDone <- err
+	}()
+	waitForTestSignal(t, started, time.Second, "first task to hold acquired lease")
+	firstDimensions := append([]queue.ConcurrencyDimension(nil), limiter.lastDimensions...)
+
+	if err := db.Model(&database.SystemSetting{}).
+		Where("tenant_id = ? AND `key` = ?", "tenant-worker", "task_concurrency").
+		Update("value_json", `{"tenantLimit":1,"userLimit":1,"providerLimit":1,"modelLimit":1}`).Error; err != nil {
+		t.Fatalf("update task concurrency policy: %v", err)
+	}
+	if _, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: secondTaskID, DeliveryCount: 1}); err != nil {
+		t.Fatalf("new lease Process returned error: %v", err)
+	}
+	newDimensions := append([]queue.ConcurrencyDimension(nil), limiter.lastDimensions...)
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("active lease Process returned error: %v", err)
+	}
+
+	if firstDimensions[1].Limit != 4 || firstDimensions[2].Limit != 3 || firstDimensions[3].Limit != 2 || firstDimensions[4].Limit != 2 {
+		t.Fatalf("existing lease dimensions = %#v, want original policy", firstDimensions)
+	}
+	if newDimensions[1].Limit != 1 || newDimensions[2].Limit != 1 || newDimensions[3].Limit != 1 || newDimensions[4].Limit != 1 {
+		t.Fatalf("new lease dimensions = %#v, want tightened policy", newDimensions)
+	}
+}
+
+func TestWorkerProcessorInvalidStoredTaskConcurrencyFailsClosedBeforeExecutor(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		valueJSON string
+	}{
+		{name: "malformed JSON", valueJSON: `{"tenantLimit":`},
+		{name: "missing dimension", valueJSON: `{"tenantLimit":1,"userLimit":1,"providerLimit":1}`},
+		{name: "over hard cap", valueJSON: `{"tenantLimit":9,"userLimit":1,"providerLimit":1,"modelLimit":1}`},
+		{name: "unknown sensitive field", valueJSON: `{"tenantLimit":1,"userLimit":1,"providerLimit":1,"modelLimit":1,"Authorization":"must-not-leak"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newWorkerTestDB(t)
+			seedWorkerBase(t, db)
+			taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-invalid-policy", Status: StatusQueued})
+			seedWorkerTaskConcurrency(t, db, tc.valueJSON)
+			limiter := &recordingLimiter{}
+			var executions int32
+			processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+				Limiter:             limiter,
+				TenantConcurrency:   8,
+				UserConcurrency:     7,
+				ProviderConcurrency: 6,
+				ModelConcurrency:    5,
+				Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+					atomic.AddInt32(&executions, 1)
+					return ExecutionResult{}
+				}),
+			})
+
+			result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+			if err != nil {
+				t.Fatalf("Process returned error: %v", err)
+			}
+			if result.Action != claimActionAck {
+				t.Fatalf("Process action = %v, want ack for invalid stored policy", result.Action)
+			}
+			record := loadWorkerTask(t, db, taskID)
+			if record.Status != StatusFailed || record.ErrorCode != "TASK_CONFIGURATION_INVALID" {
+				t.Fatalf("invalid policy task = %#v, want failed TASK_CONFIGURATION_INVALID", record)
+			}
+			if atomic.LoadInt32(&executions) != 0 || limiter.lastDimensions != nil {
+				t.Fatalf("invalid policy reached execution or limiter: executions=%d dimensions=%#v", executions, limiter.lastDimensions)
+			}
+			assertWorkerEvents(t, db, taskID, []string{EventTaskFailed})
+			assertWorkerNoOutputsOrUsage(t, db)
+			assertTableCount(t, db, &database.APICallLog{}, 0)
+			assertNoWorkerPersistedText(t, db, "must-not-leak")
+		})
+	}
+}
+
+func TestWorkerProcessorTaskConcurrencyStorageFailureRetriesWithoutExecutor(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-storage-failure", Status: StatusQueued})
+	if err := db.Exec("DROP TABLE system_settings").Error; err != nil {
+		t.Fatalf("drop system_settings test table: %v", err)
+	}
+	limiter := &recordingLimiter{}
+	var executions int32
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter: limiter,
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			atomic.AddInt32(&executions, 1)
+			return ExecutionResult{}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err == nil {
+		t.Fatal("Process returned nil error for settings storage failure")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "system_settings") || strings.Contains(strings.ToLower(err.Error()), "no such table") {
+		t.Fatalf("Process leaked settings infrastructure error: %v", err)
+	}
+	if result.Action != claimActionRetry {
+		t.Fatalf("Process action = %v, want retry for settings storage failure", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusQueued || record.ErrorCode != "" {
+		t.Fatalf("storage failure task = %#v, want still queued without configuration failure", record)
+	}
+	if atomic.LoadInt32(&executions) != 0 || limiter.lastDimensions != nil {
+		t.Fatalf("storage failure reached execution or limiter: executions=%d dimensions=%#v", executions, limiter.lastDimensions)
+	}
+	assertWorkerEvents(t, db, taskID, nil)
+}
+
 func TestWorkerRecoveryTimesOutRunningTaskAndReapsStaleLocks(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
@@ -1669,6 +1888,15 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 			updated_at TIMESTAMP NOT NULL,
 			deleted_at TIMESTAMP NULL
 		)`,
+		`CREATE TABLE system_settings (
+				id TEXT PRIMARY KEY,
+				tenant_id TEXT NOT NULL,
+				key TEXT NOT NULL,
+				value_json TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL,
+				UNIQUE (tenant_id, key)
+			)`,
 		`CREATE TABLE generation_tasks (
 		id TEXT PRIMARY KEY,
 		tenant_id TEXT NOT NULL,
@@ -1855,6 +2083,21 @@ func seedWorkerTask(t *testing.T, db *gorm.DB, seed workerTaskSeed) string {
 		t.Fatalf("seed task %s: %v", taskID, err)
 	}
 	return taskID
+}
+
+func seedWorkerTaskConcurrency(t *testing.T, db *gorm.DB, valueJSON string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "setting-task-concurrency",
+		TenantID:  "tenant-worker",
+		Key:       "task_concurrency",
+		ValueJSON: valueJSON,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed task concurrency policy: %v", err)
+	}
 }
 
 func loadWorkerTask(t *testing.T, db *gorm.DB, taskID string) database.GenerationTask {

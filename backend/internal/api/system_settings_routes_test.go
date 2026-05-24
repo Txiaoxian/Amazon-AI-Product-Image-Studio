@@ -29,17 +29,29 @@ func TestSystemSettingsRoutesRejectNonAdminAndRequireCSRF(t *testing.T) {
 	}
 
 	patchResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
-		"taskDefaults": map[string]any{"defaultProviderId": "provider-a", "defaultModelId": "model-a"},
+		"taskConcurrency": map[string]any{"tenantLimit": 1},
 	}, sellerSession.cookies, sellerSession.csrfHeader())
 	if patchResponse.Code != http.StatusForbidden {
 		t.Fatalf("seller PATCH status = %d, want %d: %s", patchResponse.Code, http.StatusForbidden, patchResponse.Body.String())
 	}
 
 	noCSRFResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
-		"taskDefaults": map[string]any{"defaultProviderId": "provider-a", "defaultModelId": "model-a"},
+		"taskConcurrency": map[string]any{"tenantLimit": 1},
 	}, adminSession.cookies, nil)
 	if noCSRFResponse.Code != http.StatusForbidden {
 		t.Fatalf("admin PATCH without CSRF status = %d, want %d: %s", noCSRFResponse.Code, http.StatusForbidden, noCSRFResponse.Body.String())
+	}
+
+	var settingRows int64
+	if err := db.Model(&database.SystemSetting{}).Where("`key` = ?", "task_concurrency").Count(&settingRows).Error; err != nil {
+		t.Fatalf("count rejected taskConcurrency rows: %v", err)
+	}
+	var logRows int64
+	if err := db.Model(&database.OperationLog{}).Where("resource_id = ?", "task_concurrency").Count(&logRows).Error; err != nil {
+		t.Fatalf("count rejected taskConcurrency logs: %v", err)
+	}
+	if settingRows != 0 || logRows != 0 {
+		t.Fatalf("rejected taskConcurrency writes created rows settings=%d logs=%d", settingRows, logRows)
 	}
 }
 
@@ -67,6 +79,129 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Fatalf("fallback GET created %d override rows, want 0", rows)
+	}
+}
+
+func TestSystemSettingsTaskConcurrencyFallbackPatchPartialAndTenantIsolation(t *testing.T) {
+	hardCaps := config.QueueConfig{
+		TenantConcurrency:   8,
+		UserConcurrency:     7,
+		ProviderConcurrency: 6,
+		ModelConcurrency:    5,
+	}
+	router, db, adminSession := newSystemSettingsRouteTestRouter(t, hardCaps)
+	tenantBSession := seedTenantAdminSession(t, router, db, "tenant-b", "tenant-b-admin", "tenant-b-admin@example.com", "tenant-b-password-123")
+
+	fallback := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if fallback.Code != http.StatusOK {
+		t.Fatalf("fallback GET status = %d, want %d: %s", fallback.Code, http.StatusOK, fallback.Body.String())
+	}
+	assertTaskConcurrency(t, fallback, 8, 7, 6, 5)
+
+	setResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskConcurrency": map[string]any{
+			"tenantLimit":   4,
+			"userLimit":     3,
+			"providerLimit": 2,
+			"modelLimit":    2,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setResponse.Code != http.StatusOK {
+		t.Fatalf("set taskConcurrency status = %d, want %d: %s", setResponse.Code, http.StatusOK, setResponse.Body.String())
+	}
+	assertTaskConcurrency(t, setResponse, 4, 3, 2, 2)
+
+	partialResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskConcurrency": map[string]any{"modelLimit": 1},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if partialResponse.Code != http.StatusOK {
+		t.Fatalf("partial taskConcurrency status = %d, want %d: %s", partialResponse.Code, http.StatusOK, partialResponse.Body.String())
+	}
+	assertTaskConcurrency(t, partialResponse, 4, 3, 2, 1)
+
+	tenantBGet := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, tenantBSession.cookies, nil)
+	if tenantBGet.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status = %d, want %d: %s", tenantBGet.Code, http.StatusOK, tenantBGet.Body.String())
+	}
+	assertTaskConcurrency(t, tenantBGet, 8, 7, 6, 5)
+
+	var logs []database.OperationLog
+	if err := db.Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, "task_concurrency").Find(&logs).Error; err != nil {
+		t.Fatalf("load taskConcurrency operation logs: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("taskConcurrency operation logs = %d, want 2: %#v", len(logs), logs)
+	}
+	for _, log := range logs {
+		metadata := strings.ToLower(log.MetadataJSON)
+		if !strings.Contains(metadata, "task_concurrency") || !strings.Contains(metadata, "changedfields") {
+			t.Fatalf("operation log missing sanitized concurrency metadata: %s", log.MetadataJSON)
+		}
+		for _, forbidden := range []string{"password", "token", "cookie", "authorization", "api_key", "apikey", "secret", "jwt", "base64", "data:image", "value_json"} {
+			if strings.Contains(metadata, forbidden) {
+				t.Fatalf("operation log metadata contains %q: %s", forbidden, log.MetadataJSON)
+			}
+		}
+	}
+}
+
+func TestSystemSettingsTaskConcurrencyRejectsInvalidFieldsAndHardCapViolations(t *testing.T) {
+	hardCaps := config.QueueConfig{
+		TenantConcurrency:   8,
+		UserConcurrency:     7,
+		ProviderConcurrency: 6,
+		ModelConcurrency:    5,
+	}
+	router, db, adminSession := newSystemSettingsRouteTestRouter(t, hardCaps)
+	initial := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskConcurrency": map[string]any{
+			"tenantLimit":   4,
+			"userLimit":     3,
+			"providerLimit": 2,
+			"modelLimit":    1,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial taskConcurrency PATCH status = %d, want %d: %s", initial.Code, http.StatusOK, initial.Body.String())
+	}
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{name: "zero", body: map[string]any{"taskConcurrency": map[string]any{"tenantLimit": 0}}},
+		{name: "negative", body: map[string]any{"taskConcurrency": map[string]any{"userLimit": -1}}},
+		{name: "non integer", body: map[string]any{"taskConcurrency": map[string]any{"providerLimit": 1.5}}},
+		{name: "string", body: map[string]any{"taskConcurrency": map[string]any{"modelLimit": "1"}}},
+		{name: "unknown nested field", body: map[string]any{"taskConcurrency": map[string]any{"extra": 1}}},
+		{name: "global field", body: map[string]any{"taskConcurrency": map[string]any{"globalLimit": 1}}},
+		{name: "empty slice", body: map[string]any{"taskConcurrency": map[string]any{}}},
+		{name: "tenant over cap", body: map[string]any{"taskConcurrency": map[string]any{"tenantLimit": 9}}},
+		{name: "user over cap", body: map[string]any{"taskConcurrency": map[string]any{"userLimit": 8}}},
+		{name: "provider over cap", body: map[string]any{"taskConcurrency": map[string]any{"providerLimit": 7}}},
+		{name: "model over cap", body: map[string]any{"taskConcurrency": map[string]any{"modelLimit": 6}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+			if getResponse.Code != http.StatusOK {
+				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+			}
+			assertTaskConcurrency(t, getResponse, 4, 3, 2, 1)
+		})
+	}
+
+	var logs int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, "task_concurrency").Count(&logs).Error; err != nil {
+		t.Fatalf("count taskConcurrency operation logs: %v", err)
+	}
+	if logs != 1 {
+		t.Fatalf("taskConcurrency operation logs = %d, want only initial successful update", logs)
 	}
 }
 
@@ -397,6 +532,17 @@ func assertTaskDefaults(t *testing.T, response *httptest.ResponseRecorder, expec
 	}
 }
 
+func assertTaskConcurrency(t *testing.T, response *httptest.ResponseRecorder, tenantLimit int, userLimit int, providerLimit int, modelLimit int) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	policy := objectField(t, data, "taskConcurrency")
+	assertNumericField(t, policy, "tenantLimit", int64(tenantLimit))
+	assertNumericField(t, policy, "userLimit", int64(userLimit))
+	assertNumericField(t, policy, "providerLimit", int64(providerLimit))
+	assertNumericField(t, policy, "modelLimit", int64(modelLimit))
+}
+
 func assertNumericField(t *testing.T, object map[string]any, field string, expected int64) {
 	t.Helper()
 
@@ -406,6 +552,40 @@ func assertNumericField(t *testing.T, object map[string]any, field string, expec
 	}
 	if int64(value) != expected {
 		t.Fatalf("%s = %v, want %d", field, value, expected)
+	}
+}
+
+func newSystemSettingsRouteTestRouter(t *testing.T, hardCaps config.QueueConfig) (http.Handler, *gorm.DB, projectRouteSession) {
+	t.Helper()
+
+	db := newAuthRouteTestDB(t)
+	cfg := authRouteTestConfig("test")
+	cfg.Storage = config.DefaultStorageConfig()
+	cfg.Upload = config.NormalizeUploadConfig(config.UploadConfig{})
+	cfg.Queue = hardCaps
+	router := NewRouter(RouterOptions{
+		Config:      cfg,
+		Logger:      discardLogger(),
+		Database:    db,
+		ObjectStore: newFakeObjectStore(),
+	})
+	initResponse := performJSON(router, http.MethodPost, "/api/v1/auth/init-admin", map[string]string{
+		"tenantName":  "Studio Tenant",
+		"email":       "admin@example.com",
+		"displayName": "Admin User",
+		"password":    "initial-password-123",
+	}, nil, nil)
+	if initResponse.Code != http.StatusCreated {
+		t.Fatalf("init admin status = %d, want %d: %s", initResponse.Code, http.StatusCreated, initResponse.Body.String())
+	}
+	data := decodeData(t, initResponse)
+	authCookie := findCookie(t, initResponse, "studio_auth")
+	csrfCookie := findCookie(t, initResponse, "studio_csrf")
+	return router, db, projectRouteSession{
+		tenantID: nestedString(t, data, "tenant", "id"),
+		userID:   nestedString(t, data, "user", "id"),
+		cookies:  []*http.Cookie{authCookie, csrfCookie},
+		csrf:     csrfCookie.Value,
 	}
 }
 

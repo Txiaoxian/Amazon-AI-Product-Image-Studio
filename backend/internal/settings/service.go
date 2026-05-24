@@ -26,22 +26,24 @@ import (
 )
 
 type Service struct {
-	db      *gorm.DB
-	repo    Repository
-	hardCap config.UploadConfig
-	log     *slog.Logger
-	now     func() time.Time
+	db                     *gorm.DB
+	repo                   Repository
+	hardCap                config.UploadConfig
+	taskConcurrencyHardCap TaskConcurrency
+	log                    *slog.Logger
+	now                    func() time.Time
 }
 
-func NewService(db *gorm.DB, log *slog.Logger, uploadConfig config.UploadConfig) *Service {
+func NewService(db *gorm.DB, log *slog.Logger, uploadConfig config.UploadConfig, queueConfig config.QueueConfig) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Service{
-		db:      db,
-		repo:    NewRepository(db),
-		hardCap: config.NormalizeUploadConfig(uploadConfig),
-		log:     log,
+		db:                     db,
+		repo:                   NewRepository(db),
+		hardCap:                config.NormalizeUploadConfig(uploadConfig),
+		taskConcurrencyHardCap: taskConcurrencyFromQueueConfig(queueConfig),
+		log:                    log,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -92,6 +94,12 @@ func (s *Service) PatchSystemSettings(c *gin.Context) {
 	}
 	if patch.TaskDefaults != nil {
 		if _, err := s.UpdateTaskDefaults(c.Request.Context(), principal, *patch.TaskDefaults, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			s.respondError(c, err)
+			return
+		}
+	}
+	if patch.TaskConcurrency != nil {
+		if _, err := s.UpdateTaskConcurrency(c.Request.Context(), principal, *patch.TaskConcurrency, c.ClientIP(), c.Request.UserAgent()); err != nil {
 			s.respondError(c, err)
 			return
 		}
@@ -151,7 +159,11 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{UploadPolicy: policy, TaskDefaults: defaults}, nil
+	taskConcurrency, err := LoadTaskConcurrency(ctx, s.repo, scope, s.taskConcurrencyHardCap)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency}, nil
 }
 
 func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) (TaskDefaults, error) {
@@ -182,6 +194,25 @@ func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) 
 		defaults.DefaultModelID = &modelID
 	}
 	return defaults, nil
+}
+
+func LoadTaskConcurrency(ctx context.Context, repo Repository, scope tenant.Scope, hardCap TaskConcurrency) (TaskConcurrency, error) {
+	hardCap = normalizeTaskConcurrencyHardCap(hardCap)
+	record, ok, err := repo.FindByKey(ctx, scope, KeyTaskConcurrency)
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+	if !ok {
+		return hardCap, nil
+	}
+	policy, err := decodeStoredTaskConcurrency(record.ValueJSON)
+	if err != nil {
+		return TaskConcurrency{}, ErrStoredTaskConcurrencyInvalid
+	}
+	if err := validateTaskConcurrencyWithinHardCap(policy, hardCap); err != nil {
+		return TaskConcurrency{}, ErrStoredTaskConcurrencyInvalid
+	}
+	return policy, nil
 }
 
 func (s *Service) UpdateUploadPolicy(ctx context.Context, principal auth.Principal, patch UploadPolicyPatch, ip string, userAgent string) (UploadPolicy, error) {
@@ -296,6 +327,63 @@ func (s *Service) UpdateTaskDefaults(ctx context.Context, principal auth.Princip
 	return updated, nil
 }
 
+func (s *Service) UpdateTaskConcurrency(ctx context.Context, principal auth.Principal, patch TaskConcurrencyPatch, ip string, userAgent string) (TaskConcurrency, error) {
+	if s.db == nil {
+		return TaskConcurrency{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+	current, err := LoadTaskConcurrency(ctx, s.repo, scope, s.taskConcurrencyHardCap)
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+	updated, changedFields, err := applyTaskConcurrencyPatch(current, patch, s.taskConcurrencyHardCap)
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+	if len(changedFields) == 0 {
+		return TaskConcurrency{}, ErrValidation
+	}
+	valueJSON, err := json.Marshal(updated)
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+
+	now := s.now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		if err := repo.Upsert(ctx, scope, KeyTaskConcurrency, string(valueJSON), now); err != nil {
+			return err
+		}
+		sort.Strings(changedFields)
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       ActionUpdateSystemSettings,
+			ResourceType: "system_settings",
+			ResourceID:   KeyTaskConcurrency,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"key":           KeyTaskConcurrency,
+				"changedFields": changedFields,
+				"taskConcurrency": map[string]any{
+					"tenantLimit":   updated.TenantLimit,
+					"userLimit":     updated.UserLimit,
+					"providerLimit": updated.ProviderLimit,
+					"modelLimit":    updated.ModelLimit,
+				},
+			},
+		})
+	})
+	if err != nil {
+		return TaskConcurrency{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) requireAdminPermission(c *gin.Context) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
@@ -348,6 +436,13 @@ func parsePatchRequest(body io.Reader) (PatchRequest, error) {
 			return PatchRequest{}, err
 		}
 		return PatchRequest{TaskDefaults: &patch}, nil
+	}
+	if rawConcurrency, ok := root["taskConcurrency"]; ok {
+		patch, err := parseTaskConcurrencyPatch(rawConcurrency)
+		if err != nil {
+			return PatchRequest{}, err
+		}
+		return PatchRequest{TaskConcurrency: &patch}, nil
 	}
 	return PatchRequest{}, ErrValidation
 }
@@ -425,6 +520,39 @@ func parseTaskDefaultsPatch(raw json.RawMessage) (TaskDefaultsPatch, error) {
 	return TaskDefaultsPatch{DefaultProviderID: &providerID, DefaultModelID: &modelID}, nil
 }
 
+func parseTaskConcurrencyPatch(raw json.RawMessage) (TaskConcurrencyPatch, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return TaskConcurrencyPatch{}, ErrValidation
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return TaskConcurrencyPatch{}, ErrValidation
+	}
+	if len(fields) == 0 {
+		return TaskConcurrencyPatch{}, ErrValidation
+	}
+	var patch TaskConcurrencyPatch
+	for key, value := range fields {
+		parsed, err := decodeJSONInt64(value)
+		if err != nil {
+			return TaskConcurrencyPatch{}, err
+		}
+		switch key {
+		case "tenantLimit":
+			patch.TenantLimit = &parsed
+		case "userLimit":
+			patch.UserLimit = &parsed
+		case "providerLimit":
+			patch.ProviderLimit = &parsed
+		case "modelLimit":
+			patch.ModelLimit = &parsed
+		default:
+			return TaskConcurrencyPatch{}, ErrValidation
+		}
+	}
+	return patch, nil
+}
+
 func decodeJSONInt64(raw json.RawMessage) (int64, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return 0, ErrValidation
@@ -467,6 +595,20 @@ func decodeStoredTaskDefaults(valueJSON string) (TaskDefaults, error) {
 		return TaskDefaults{}, ErrValidation
 	}
 	return defaults, nil
+}
+
+func decodeStoredTaskConcurrency(valueJSON string) (TaskConcurrency, error) {
+	var policy TaskConcurrency
+	decoder := json.NewDecoder(strings.NewReader(valueJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&policy); err != nil {
+		return TaskConcurrency{}, ErrValidation
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return TaskConcurrency{}, ErrValidation
+	}
+	return policy, nil
 }
 
 func applyUploadPolicyPatch(current UploadPolicy, patch UploadPolicyPatch, hardCap config.UploadConfig) (UploadPolicy, []string, error) {
@@ -519,6 +661,57 @@ func validatePolicyWithinHardCap(policy UploadPolicy, hardCap config.UploadConfi
 
 func validatePositivePolicy(policy UploadPolicy) error {
 	if policy.MaxFileSizeBytes <= 0 || policy.MaxWidth <= 0 || policy.MaxHeight <= 0 || policy.MaxPixels <= 0 {
+		return ErrValidation
+	}
+	return nil
+}
+
+func applyTaskConcurrencyPatch(current TaskConcurrency, patch TaskConcurrencyPatch, hardCap TaskConcurrency) (TaskConcurrency, []string, error) {
+	updated := current
+	changedFields := make([]string, 0, 4)
+	if patch.TenantLimit != nil {
+		if *patch.TenantLimit > maxIntValue() {
+			return TaskConcurrency{}, nil, ErrValidation
+		}
+		updated.TenantLimit = int(*patch.TenantLimit)
+		changedFields = append(changedFields, "taskConcurrency.tenantLimit")
+	}
+	if patch.UserLimit != nil {
+		if *patch.UserLimit > maxIntValue() {
+			return TaskConcurrency{}, nil, ErrValidation
+		}
+		updated.UserLimit = int(*patch.UserLimit)
+		changedFields = append(changedFields, "taskConcurrency.userLimit")
+	}
+	if patch.ProviderLimit != nil {
+		if *patch.ProviderLimit > maxIntValue() {
+			return TaskConcurrency{}, nil, ErrValidation
+		}
+		updated.ProviderLimit = int(*patch.ProviderLimit)
+		changedFields = append(changedFields, "taskConcurrency.providerLimit")
+	}
+	if patch.ModelLimit != nil {
+		if *patch.ModelLimit > maxIntValue() {
+			return TaskConcurrency{}, nil, ErrValidation
+		}
+		updated.ModelLimit = int(*patch.ModelLimit)
+		changedFields = append(changedFields, "taskConcurrency.modelLimit")
+	}
+	if err := validateTaskConcurrencyWithinHardCap(updated, hardCap); err != nil {
+		return TaskConcurrency{}, nil, err
+	}
+	return updated, changedFields, nil
+}
+
+func validateTaskConcurrencyWithinHardCap(policy TaskConcurrency, hardCap TaskConcurrency) error {
+	hardCap = normalizeTaskConcurrencyHardCap(hardCap)
+	if policy.TenantLimit <= 0 || policy.UserLimit <= 0 || policy.ProviderLimit <= 0 || policy.ModelLimit <= 0 {
+		return ErrValidation
+	}
+	if policy.TenantLimit > hardCap.TenantLimit ||
+		policy.UserLimit > hardCap.UserLimit ||
+		policy.ProviderLimit > hardCap.ProviderLimit ||
+		policy.ModelLimit > hardCap.ModelLimit {
 		return ErrValidation
 	}
 	return nil
