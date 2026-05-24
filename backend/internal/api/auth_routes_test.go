@@ -332,7 +332,8 @@ var authRouteTestSchema = []string{
 		created_by TEXT NOT NULL,
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL,
-		deleted_at TIMESTAMP NULL
+		deleted_at TIMESTAMP NULL,
+		purged_at TIMESTAMP NULL
 	)`,
 	`CREATE TABLE ai_providers (
 		id TEXT PRIMARY KEY,

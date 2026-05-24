@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	KeyUploadPolicy    = "upload_policy"
-	KeyTaskDefaults    = "task_defaults"
-	KeyTaskConcurrency = "task_concurrency"
+	KeyUploadPolicy     = "upload_policy"
+	KeyTaskDefaults     = "task_defaults"
+	KeyTaskConcurrency  = "task_concurrency"
+	KeyStorageRetention = "storage_retention"
 
 	PermissionManage = "system:settings:manage"
 
@@ -18,16 +19,18 @@ const (
 )
 
 var (
-	ErrValidation                   = errors.New("invalid system settings request")
-	ErrStoredTaskDefaultsInvalid    = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
-	ErrStoredTaskConcurrencyInvalid = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
-	ErrForbidden                    = errors.New("system settings access forbidden")
+	ErrValidation                    = errors.New("invalid system settings request")
+	ErrStoredTaskDefaultsInvalid     = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
+	ErrStoredTaskConcurrencyInvalid  = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
+	ErrStoredStorageRetentionInvalid = fmt.Errorf("%w: invalid stored storage retention", ErrValidation)
+	ErrForbidden                     = errors.New("system settings access forbidden")
 )
 
 type Response struct {
-	UploadPolicy    UploadPolicy    `json:"uploadPolicy"`
-	TaskDefaults    TaskDefaults    `json:"taskDefaults"`
-	TaskConcurrency TaskConcurrency `json:"taskConcurrency"`
+	UploadPolicy     UploadPolicy     `json:"uploadPolicy"`
+	TaskDefaults     TaskDefaults     `json:"taskDefaults"`
+	TaskConcurrency  TaskConcurrency  `json:"taskConcurrency"`
+	StorageRetention StorageRetention `json:"storageRetention"`
 }
 
 type UploadPolicy struct {
@@ -68,10 +71,31 @@ type TaskConcurrencyPatch struct {
 	ModelLimit    *int64
 }
 
+type StorageRetention struct {
+	DeletedAssetRetentionDays *int `json:"deletedAssetRetentionDays"`
+}
+
+type StorageRetentionPatch struct {
+	DeletedAssetRetentionDays      *int64
+	ClearDeletedAssetRetentionDays bool
+	HasDeletedAssetRetentionDays   bool
+}
+
+type EnabledStorageRetention struct {
+	TenantID                  string
+	DeletedAssetRetentionDays int
+}
+
+type InvalidStorageRetention struct {
+	TenantID string
+	Err      error
+}
+
 type PatchRequest struct {
-	UploadPolicy    *UploadPolicyPatch
-	TaskDefaults    *TaskDefaultsPatch
-	TaskConcurrency *TaskConcurrencyPatch
+	UploadPolicy     *UploadPolicyPatch
+	TaskDefaults     *TaskDefaultsPatch
+	TaskConcurrency  *TaskConcurrencyPatch
+	StorageRetention *StorageRetentionPatch
 }
 
 func uploadPolicyFromConfig(upload config.UploadConfig) UploadPolicy {

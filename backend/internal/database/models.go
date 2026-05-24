@@ -174,6 +174,7 @@ type ImageAsset struct {
 	CreatedAt          time.Time      `gorm:"type:datetime(3);not null;index:idx_image_assets_tenant_project_created,priority:3"`
 	UpdatedAt          time.Time      `gorm:"type:datetime(3);not null"`
 	DeletedAt          gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_image_assets_tenant_deleted,priority:2"`
+	PurgedAt           *time.Time     `gorm:"type:datetime(3);index:idx_image_assets_tenant_deleted_purged,priority:3"`
 }
 
 func (ImageAsset) TableName() string {

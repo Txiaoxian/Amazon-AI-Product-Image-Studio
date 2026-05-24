@@ -156,69 +156,71 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	values := map[string]string{
-		"APP_ENV":                      "production",
-		"LOG_LEVEL":                    "warn",
-		"BACKEND_HTTP_HOST":            "127.0.0.1",
-		"BACKEND_HTTP_PORT":            "9090",
-		"CORS_ALLOWED_ORIGINS":         "http://localhost:8080,https://studio.example.com",
-		"API_READ_TIMEOUT":             "3s",
-		"API_WRITE_TIMEOUT":            "4s",
-		"API_SHUTDOWN_TIMEOUT":         "5s",
-		"WORKER_NAME":                  "image-worker",
-		"WORKER_SHUTDOWN_TIMEOUT":      "6s",
-		"WORKER_CONCURRENCY":           "3",
-		"MYSQL_HOST":                   "mysql",
-		"MYSQL_PORT":                   "3307",
-		"MYSQL_DATABASE":               "studio_test",
-		"MYSQL_USER":                   "studio_user",
-		"MYSQL_PASSWORD":               "local-password",
-		"MYSQL_CONNECT_TIMEOUT":        "7s",
-		"MYSQL_MAX_OPEN_CONNS":         "12",
-		"MYSQL_MAX_IDLE_CONNS":         "4",
-		"MYSQL_CONN_MAX_LIFETIME":      "8m",
-		"MIGRATIONS_MODE":              "disabled",
-		"JWT_SIGNING_SECRET":           "0123456789abcdef0123456789abcdef",
-		"JWT_ISSUER":                   "studio-test",
-		"JWT_ACCESS_TOKEN_TTL_MINUTES": "30",
-		"AUTH_COOKIE_NAME":             "auth_test",
-		"COOKIE_DOMAIN":                ".example.com",
-		"COOKIE_SECURE":                "true",
-		"COOKIE_SAME_SITE":             "Strict",
-		"CSRF_ENABLED":                 "false",
-		"CSRF_COOKIE_NAME":             "csrf_test",
-		"CSRF_HEADER_NAME":             "X-Test-CSRF",
-		"MINIO_ENDPOINT":               "https://minio.example.com",
-		"MINIO_REGION":                 "us-west-2",
-		"MINIO_ACCESS_KEY":             "local-access",
-		"MINIO_SECRET_KEY":             "local-secret",
-		"MINIO_BUCKET_ORIGINALS":       "originals-test",
-		"MINIO_BUCKET_GENERATED":       "generated-test",
-		"MINIO_BUCKET_THUMBNAILS":      "thumbs-test",
-		"UPLOAD_MAX_FILE_SIZE_MB":      "9",
-		"UPLOAD_MAX_WIDTH":             "2048",
-		"UPLOAD_MAX_HEIGHT":            "1536",
-		"UPLOAD_MAX_PIXELS":            "3000000",
-		"UPLOAD_ALLOWED_MIME_TYPES":    "image/png,image/webp",
-		"API_KEY_ENCRYPTION_KEY":       "0123456789abcdef0123456789abcdef",
-		"API_KEY_ENCRYPTION_KEY_ID":    "test-key-v1",
-		"PROVIDER_TIMEOUT_SECONDS":     "45",
-		"PROVIDER_MAX_RETRIES":         "5",
-		"REDIS_ADDR":                   "redis.example.com:6380",
-		"REDIS_PASSWORD":               "local-redis-password",
-		"REDIS_DB":                     "2",
-		"TASK_QUEUE_NAME":              "task-queue-test",
-		"TASK_ENQUEUE_TIMEOUT":         "9s",
-		"TASK_CLAIM_TIMEOUT":           "10s",
-		"TASK_VISIBILITY_TIMEOUT":      "11s",
-		"TASK_RETRY_BACKOFF":           "12s",
-		"TASK_RECOVERY_INTERVAL":       "13s",
-		"TASK_CONCURRENCY_LEASE_TTL":   "14s",
-		"TASK_MAX_DELIVERIES":          "6",
-		"TASK_GLOBAL_CONCURRENCY":      "7",
-		"TASK_TENANT_CONCURRENCY":      "8",
-		"TASK_USER_CONCURRENCY":        "9",
-		"TASK_PROVIDER_CONCURRENCY":    "10",
-		"TASK_MODEL_CONCURRENCY":       "11",
+		"APP_ENV":                                  "production",
+		"LOG_LEVEL":                                "warn",
+		"BACKEND_HTTP_HOST":                        "127.0.0.1",
+		"BACKEND_HTTP_PORT":                        "9090",
+		"CORS_ALLOWED_ORIGINS":                     "http://localhost:8080,https://studio.example.com",
+		"API_READ_TIMEOUT":                         "3s",
+		"API_WRITE_TIMEOUT":                        "4s",
+		"API_SHUTDOWN_TIMEOUT":                     "5s",
+		"WORKER_NAME":                              "image-worker",
+		"WORKER_SHUTDOWN_TIMEOUT":                  "6s",
+		"WORKER_CONCURRENCY":                       "3",
+		"WORKER_RETENTION_MAINTENANCE_INTERVAL":    "15m",
+		"WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT": "25",
+		"MYSQL_HOST":                               "mysql",
+		"MYSQL_PORT":                               "3307",
+		"MYSQL_DATABASE":                           "studio_test",
+		"MYSQL_USER":                               "studio_user",
+		"MYSQL_PASSWORD":                           "local-password",
+		"MYSQL_CONNECT_TIMEOUT":                    "7s",
+		"MYSQL_MAX_OPEN_CONNS":                     "12",
+		"MYSQL_MAX_IDLE_CONNS":                     "4",
+		"MYSQL_CONN_MAX_LIFETIME":                  "8m",
+		"MIGRATIONS_MODE":                          "disabled",
+		"JWT_SIGNING_SECRET":                       "0123456789abcdef0123456789abcdef",
+		"JWT_ISSUER":                               "studio-test",
+		"JWT_ACCESS_TOKEN_TTL_MINUTES":             "30",
+		"AUTH_COOKIE_NAME":                         "auth_test",
+		"COOKIE_DOMAIN":                            ".example.com",
+		"COOKIE_SECURE":                            "true",
+		"COOKIE_SAME_SITE":                         "Strict",
+		"CSRF_ENABLED":                             "false",
+		"CSRF_COOKIE_NAME":                         "csrf_test",
+		"CSRF_HEADER_NAME":                         "X-Test-CSRF",
+		"MINIO_ENDPOINT":                           "https://minio.example.com",
+		"MINIO_REGION":                             "us-west-2",
+		"MINIO_ACCESS_KEY":                         "local-access",
+		"MINIO_SECRET_KEY":                         "local-secret",
+		"MINIO_BUCKET_ORIGINALS":                   "originals-test",
+		"MINIO_BUCKET_GENERATED":                   "generated-test",
+		"MINIO_BUCKET_THUMBNAILS":                  "thumbs-test",
+		"UPLOAD_MAX_FILE_SIZE_MB":                  "9",
+		"UPLOAD_MAX_WIDTH":                         "2048",
+		"UPLOAD_MAX_HEIGHT":                        "1536",
+		"UPLOAD_MAX_PIXELS":                        "3000000",
+		"UPLOAD_ALLOWED_MIME_TYPES":                "image/png,image/webp",
+		"API_KEY_ENCRYPTION_KEY":                   "0123456789abcdef0123456789abcdef",
+		"API_KEY_ENCRYPTION_KEY_ID":                "test-key-v1",
+		"PROVIDER_TIMEOUT_SECONDS":                 "45",
+		"PROVIDER_MAX_RETRIES":                     "5",
+		"REDIS_ADDR":                               "redis.example.com:6380",
+		"REDIS_PASSWORD":                           "local-redis-password",
+		"REDIS_DB":                                 "2",
+		"TASK_QUEUE_NAME":                          "task-queue-test",
+		"TASK_ENQUEUE_TIMEOUT":                     "9s",
+		"TASK_CLAIM_TIMEOUT":                       "10s",
+		"TASK_VISIBILITY_TIMEOUT":                  "11s",
+		"TASK_RETRY_BACKOFF":                       "12s",
+		"TASK_RECOVERY_INTERVAL":                   "13s",
+		"TASK_CONCURRENCY_LEASE_TTL":               "14s",
+		"TASK_MAX_DELIVERIES":                      "6",
+		"TASK_GLOBAL_CONCURRENCY":                  "7",
+		"TASK_TENANT_CONCURRENCY":                  "8",
+		"TASK_USER_CONCURRENCY":                    "9",
+		"TASK_PROVIDER_CONCURRENCY":                "10",
+		"TASK_MODEL_CONCURRENCY":                   "11",
 	}
 
 	cfg, err := load(func(key string) (string, bool) {
@@ -264,6 +266,12 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Worker.Concurrency != 3 {
 		t.Fatalf("Worker.Concurrency = %d, want 3", cfg.Worker.Concurrency)
+	}
+	if cfg.Worker.RetentionMaintenanceInterval != 15*time.Minute {
+		t.Fatalf("Worker.RetentionMaintenanceInterval = %s, want 15m", cfg.Worker.RetentionMaintenanceInterval)
+	}
+	if cfg.Worker.RetentionMaintenanceBatchLimit != 25 {
+		t.Fatalf("Worker.RetentionMaintenanceBatchLimit = %d, want 25", cfg.Worker.RetentionMaintenanceBatchLimit)
 	}
 	if cfg.Database.Host != "mysql" {
 		t.Fatalf("Database.Host = %q, want mysql", cfg.Database.Host)
@@ -530,6 +538,76 @@ func TestLoadRejectsInvalidWorkerConcurrency(t *testing.T) {
 			}
 			if got := err.Error(); got != tt.want {
 				t.Fatalf("load error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadWorkerRetentionMaintenanceConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		intervalRaw  string
+		batchRaw     string
+		wantInterval time.Duration
+		wantBatch    int
+	}{
+		{name: "missing", wantInterval: time.Hour, wantBatch: 100},
+		{name: "configured", intervalRaw: "30m", batchRaw: "250", wantInterval: 30 * time.Minute, wantBatch: 250},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := load(func(key string) (string, bool) {
+				switch key {
+				case "WORKER_RETENTION_MAINTENANCE_INTERVAL":
+					if tt.intervalRaw != "" {
+						return tt.intervalRaw, true
+					}
+				case "WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT":
+					if tt.batchRaw != "" {
+						return tt.batchRaw, true
+					}
+				}
+				return "", false
+			})
+			if err != nil {
+				t.Fatalf("load returned error: %v", err)
+			}
+			if cfg.Worker.RetentionMaintenanceInterval != tt.wantInterval {
+				t.Fatalf("Worker.RetentionMaintenanceInterval = %s, want %s", cfg.Worker.RetentionMaintenanceInterval, tt.wantInterval)
+			}
+			if cfg.Worker.RetentionMaintenanceBatchLimit != tt.wantBatch {
+				t.Fatalf("Worker.RetentionMaintenanceBatchLimit = %d, want %d", cfg.Worker.RetentionMaintenanceBatchLimit, tt.wantBatch)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidWorkerRetentionMaintenanceConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    string
+		raw    string
+		wantIn string
+	}{
+		{name: "invalid interval", key: "WORKER_RETENTION_MAINTENANCE_INTERVAL", raw: "soon", wantIn: "invalid duration for WORKER_RETENTION_MAINTENANCE_INTERVAL"},
+		{name: "zero batch", key: "WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT", raw: "0", wantIn: "invalid WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT: must be positive"},
+		{name: "too large batch", key: "WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT", raw: "1001", wantIn: "invalid WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT: must be <= 1000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(func(key string) (string, bool) {
+				if key == tt.key {
+					return tt.raw, true
+				}
+				return "", false
+			})
+			if err == nil {
+				t.Fatal("load returned nil error for invalid worker retention maintenance config")
+			}
+			if !strings.Contains(err.Error(), tt.wantIn) {
+				t.Fatalf("load error = %q, want containing %q", err.Error(), tt.wantIn)
 			}
 		})
 	}

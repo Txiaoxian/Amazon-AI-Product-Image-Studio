@@ -1,6 +1,7 @@
 package database
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -218,6 +219,20 @@ func TestImageAssetsPurgeMarkerMigrationIsTenantScopedAndBatchFriendly(t *testin
 		if strings.Contains(strings.ToUpper(joined), strings.ToUpper(forbidden)) {
 			t.Fatalf("image asset purge marker migration must not include %q", forbidden)
 		}
+	}
+}
+
+func TestImageAssetModelIncludesNullablePurgedAt(t *testing.T) {
+	field, ok := reflect.TypeOf(ImageAsset{}).FieldByName("PurgedAt")
+	if !ok {
+		t.Fatal("ImageAsset model missing PurgedAt field")
+	}
+	if field.Type.String() != "*time.Time" {
+		t.Fatalf("PurgedAt type = %s, want *time.Time", field.Type.String())
+	}
+	tag := string(field.Tag.Get("gorm"))
+	if !strings.Contains(tag, "datetime(3)") {
+		t.Fatalf("PurgedAt gorm tag = %q, want datetime(3)", tag)
 	}
 }
 
