@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-CLEANUP-FOUNDATION`、`P13-BE-STORAGE-RETENTION-RUNTIME` 与 `P13-BE-STORAGE-QUOTA-ACCOUNTING` 已 review 并合并，P13 仍在进行中。
+R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-CLEANUP-FOUNDATION`、`P13-BE-STORAGE-RETENTION-RUNTIME`、`P13-BE-STORAGE-QUOTA-ACCOUNTING` 与 `P13-FE-SYSTEM-SETTINGS` 已 review、合并并完成整批回归。
 
 已完成的平台基础：
 
@@ -95,7 +95,7 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - P7-P8：任务队列、Worker、Provider Adapter 运行时、SSE、前端后端化。
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
-- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`，以及引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`。
+- P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
 
 当前已知后续项：
 
@@ -105,7 +105,7 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一串行任务只做前端系统设置 UI：展示并编辑已经后端生效的设置，不新增后端合同或未生效设置入口。
+- 下一任务是 `P14-BE-PROVIDER-MODEL-INTEGRITY`，串行强化 Provider/model 生命周期完整性。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -166,9 +166,9 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
    - 已完成并合并。`storageQuota.maxBytes` 默认 `null`/unlimited，`storageQuota.usedBytes` 从 tenant-scoped 未 purged 资产 metadata 计算；引用图上传和 Worker 输出资产持久化都会在写入前执行配额校验。
 7. `P13-FE-SYSTEM-SETTINGS`
-   - 下一个任务。仅为已经运行时生效的设置提供前端 admin UI。
+   - 已完成并合并。前端 admin settings tab 仅展示 active runtime-backed 设置，并按分组发送 CSRF-protected patch；未暴露 log retention、orphan cleanup、manual cleanup、MinIO listing 或 Provider secrets。
 8. `R13`
-   - 设置和存储生命周期 review。
+   - 已完成。完整 P13 范围通过前端 lint/type-check/test/build、后端 test/race/vet/build、Compose config、whitespace 检查，以及前端 Provider 直连、Provider Key 存储、task polling、deferred settings、bucket/object key 和敏感 auth 字符串扫描。
 
 ### P14：Provider、模型、用量与成本运营
 
@@ -200,210 +200,197 @@ R12 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P13-FE-SYSTEM-SETTINGS
+## 下一个任务包：P14-BE-PROVIDER-MODEL-INTEGRITY
 
 ### 调度决策
 
-- 本任务串行执行，不与后端 settings、orphan cleanup、log retention 或发布任务并行。
-- 理由：前端系统设置页要跟随已经合并的后端运行时设置合同，不能抢先暴露未生效字段。
-- 本任务只改前端 admin 设置 UI、前端类型/API 合同和前端测试，不改后端、部署、公共文档或 Agent 规则。
+- 本任务串行执行，不与用量/成本统计、前端成本看板或发布任务并行。
+- 理由：Provider/model 生命周期是后续成本统计和任务默认模型选择的基础数据，必须先保证并发写入和删除/禁用边界不会制造不一致状态。
+- 本任务只改后端 Provider/model 生命周期相关实现和测试，不改前端、部署、公共合同文档或 Agent 规则。
 
 ### 任务信息
 
-- 任务名称：`P13-FE-SYSTEM-SETTINGS`
-- 目标：扩展现有 admin 设置页，使 tenant admin 能查看和编辑已经 runtime-backed 的设置：`uploadPolicy`、`taskDefaults`、`taskConcurrency`、`storageRetention`、`storageQuota`。继续隐藏 log retention、orphan cleanup、manual cleanup、MinIO listing、Provider secrets 等未开放能力。
-- 推荐线程名：`P13-FE-SYSTEM-SETTINGS`
-- 推荐分支名：`codex/p13-frontend-system-settings`
-- 起始分支：已合并 `P13-BE-STORAGE-QUOTA-ACCOUNTING` 与本任务公共合同文档的最新 `main`
-- 前置依赖：`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-RETENTION-RUNTIME`、`P13-BE-STORAGE-QUOTA-ACCOUNTING` 均已合并；`docs/api-contract.md` 已确认可前端展示/编辑的 active settings 字段。
+- 任务名称：`P14-BE-PROVIDER-MODEL-INTEGRITY`
+- 目标：强化 Provider 与模型管理的生命周期完整性，重点处理 Provider 删除/禁用与模型创建、更新、启用之间的并发和事务边界，避免出现可用模型指向已删除 Provider、默认模型指向不可用 Provider/model、跨租户泄漏或成功审计日志误记。
+- 推荐线程名：`P14-BE-PROVIDER-MODEL-INTEGRITY`
+- 推荐分支名：`codex/p14-backend-provider-model-integrity`
+- 起始分支：已完成 R13 文档更新的最新 `main`
+- 前置依赖：P13 已完成；系统设置中的 `taskDefaults` 已依赖 enabled same-tenant Provider/model；Provider/model 后端管理接口和 admin UI 已存在。
 
 ### 子 agent 完整启动 prompt
 
 ```text
-你是本项目的子 agent，负责 `P13-FE-SYSTEM-SETTINGS`。
+你是本项目的子 agent，负责 `P14-BE-PROVIDER-MODEL-INTEGRITY`。
 
-你必须在分支 `codex/p13-frontend-system-settings` 上工作；如果当前不在该分支，先执行 `git switch codex/p13-frontend-system-settings`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`，若不包含先停止并报告，不要自行合并公共合同。
+你必须在分支 `codex/p14-backend-provider-model-integrity` 上工作；如果当前不在该分支，先执行 `git switch codex/p14-backend-provider-model-integrity`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`；如果 `git merge-base --is-ancestor main codex/p14-backend-provider-model-integrity` 不通过，先停止并报告，不要自行修改公共合同。
 
 任务目标：
-扩展现有前端 admin observability/settings 面板，让具备 `system:settings:manage` 的 tenant admin 能查看并编辑后端已经真正 runtime-backed 的设置：
-- `uploadPolicy.{maxFileSizeBytes,maxWidth,maxHeight,maxPixels}`
-- `taskDefaults.{defaultProviderId,defaultModelId}`
-- `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`
-- `storageRetention.deletedAssetRetentionDays`
-- `storageQuota.maxBytes`，并显示 read-only `storageQuota.usedBytes`
+强化后端 Provider/model 生命周期完整性，确保 Provider 删除、禁用、模型创建、模型更新、模型启用在事务和并发边界下不会产生不一致业务状态。重点覆盖：
+- 模型不能创建、迁移或启用到已删除、跨租户或不可用 Provider。
+- Provider 删除不能与模型创建/更新/启用并发穿透，不能留下未删除模型指向已删除 Provider。
+- Provider 禁用后，后续模型创建/启用和 `taskDefaults` 解析不能把不可用 Provider 当成可用运行时入口。
+- 失败写入不得记录成功 operation log，错误响应不得泄露跨租户 Provider/model 名称或 secret。
 
 必须遵守：
-1. 不修改后端、部署、docs、AGENTS.md、agent-instructions。
-2. 不暴露 log retention、orphan cleanup、manual cleanup trigger、MinIO listing、bucket/object key、Provider API Key 或任何未 runtime-backed 的设置。
-3. 前端不得直连 OpenAI/Gemini/任何 AI Provider，不得保存 Provider API Key，不得新增轮询、setInterval 或循环 fetch。
-4. 所有写请求继续使用现有 `adminApi.updateSystemSettings(request, csrfToken)` 和 CSRF token。
-5. PATCH 请求必须只发送当前用户正在保存的设置分组，避免把未编辑字段、read-only 字段或后端额外字段回写。
-6. `storageQuota.usedBytes` 永远只读；`storageQuota.maxBytes = null` 与 `storageRetention.deletedAssetRetentionDays = null` 都是合法禁用状态。
-7. 如果需要 Provider/model 下拉数据，复用现有 frontend API client，不新增 Provider 直连或敏感字段展示。Provider/model 选择只使用安全展示字段和 ID，不显示 API Key。
-8. UI 风格延续现有 `AdminObservabilitySettingsPanel`，不要重写整个 admin 面板，不做无关视觉重构。
+1. 不修改 frontend、deploy、docs、AGENTS.md、agent-instructions。
+2. 不修改 Provider Adapter runtime、task execution 主流程、SSE、Redis queue，除非发现编译必须调整测试 helper；如需越界，停止并报告。
+3. 不解密 Provider API Key，不把 Provider API Key、Authorization、Cookie、图片 base64 写入日志、响应或测试快照。
+4. 所有业务查询必须继续带 tenant_id/object-level authorization。
+5. API 响应和错误码尽量保持兼容；新增错误必须复用现有稳定错误风格。
+6. 若需要数据库约束或索引，必须通过现有 database/migration 机制实现，并提供兼容已有数据的策略；不要破坏已有测试数据。
+7. 可以使用 `docs/local-development.md` 中的共享 MySQL/Redis/MinIO 做功能验证，但只允许操作任务自有测试数据，并在交付中说明。
 
 建议实现：
-1. 更新 `frontend/src/types/admin.ts` 的 `SystemSettings` 与 `UpdateSystemSettingsRequest` 类型，覆盖 active settings 字段，并保持 deferred 字段不存在。
-2. 扩展 `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`：
-   - 保留现有 upload policy 表单行为。
-   - 为 task defaults 增加 Provider/model 选择或 ID 输入；保存时成对提交，支持清除为 `null`。
-   - 为 task concurrency 增加正整数输入。
-   - 为 storage retention 增加正整数输入和清除/禁用状态。
-   - 为 storage quota 增加 max bytes 输入、清除/禁用状态，并显示 read-only used bytes。
-   - 每个设置分组应有独立保存状态、错误状态和成功后刷新/本地更新，避免一个分组的无效草稿阻塞其他分组。
-3. 更新 `frontend/src/api/admin.ts` 与测试，确保 GET/PATCH 路径、CSRF header、请求 body 均正确。
-4. 更新 `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`：
-   - 验证 active settings 能显示。
-   - 验证保存每个分组时只 PATCH 对应分组。
-   - 验证 `storageQuota.usedBytes` 不可编辑且不会出现在 PATCH body。
-   - 验证 null/clear 行为。
-   - 验证 deferred 字段仍不显示、不发送。
-   - 验证无 `system:settings:manage` 时不会加载或写 settings。
-5. 更新必要的 legacy/forbidden-pattern 测试，确保不引入 Provider 直连、API Key 浏览器存储或 task polling。
+1. 先阅读 `backend/internal/provider/**`、`backend/internal/model/**`、`backend/internal/settings/**` 中 `taskDefaults` Provider/model 校验路径，以及现有 `backend/internal/api/*provider*test.go`、`backend/internal/api/*model*test.go`。
+2. 先写或补充回归测试，再实现：
+   - Provider 删除时如果同租户存在未删除模型，必须稳定返回冲突，并且不删除 Provider、不写成功 operation log。
+   - Provider 删除与模型创建/更新并发时必须有事务序列化或数据库约束兜底；不能出现模型成功指向刚被删除的 Provider。
+   - 模型创建、Provider 迁移、模型启用必须拒绝 disabled/deleted/cross-tenant Provider；如果现有产品允许 disabled Provider 下保留 disabled 模型，明确只允许“保留/编辑非运行时字段”，不允许启用为可运行模型。
+   - Provider 禁用后，已存在模型的状态处理要与任务创建和 `taskDefaults` 解析一致：不能被运行时当作可用模型。
+   - 失败路径不得记录 `provider.delete`、`model.create`、`model.update`、`model.enable` 成功日志。
+   - 跨租户 Provider/model ID 在错误响应和 operation log 中不得泄露对方名称、模型名或租户信息。
+3. 评估是否需要 `(tenant_id, provider_id, model_name)` 对未删除模型的唯一性约束：
+   - 如果实现，必须覆盖重复创建、soft delete 后重建、跨租户同名、同租户不同 Provider 同名等场景。
+   - 如果不实现，必须在最终交付中说明原因和残余风险。
+4. 需要锁或事务时，优先使用现有 GORM transaction/repository 模式；如使用 row lock 或 DB-specific 行为，测试必须能在当前单元测试环境和 MySQL 语义下保持清楚。
+5. 保持 Provider API Key 加密/脱敏、SSRF URL 校验、RBAC 和租户隔离现有行为不回归。
 
 验收命令：
 ```bash
-cd frontend
-npm run lint
-npm run type-check
-npm run test -- adminApi adminObservabilitySettingsPanel legacyRetirement
-npm run test
-npm run build
+cd backend
+go test ./internal/provider ./internal/model ./internal/settings ./internal/api -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
 
 cd ..
 git diff --check main...HEAD
-! rg -n "api\\.openai\\.com|generativelanguage|localhost:|127\\.0\\.0\\.1|setInterval\\(|localStorage\\.|sessionStorage\\.|indexedDB|api[_-]?key|Authorization" frontend/src --glob '!**/test/**'
+docker compose -f deploy/docker-compose.yml config
 ```
 
 最终交付必须包含：
 - 修改文件清单。
 - 执行的测试命令和结果。
 - 每个 failure mode 对应的测试文件/测试名映射。
-- 安全自查结果，明确没有新增 Provider 直连、API Key 存储、轮询、未生效设置 UI、object key/bucket/MinIO URL 展示。
+- 安全自查结果，明确没有泄露 Provider Key、Authorization、Cookie、跨租户名称或图片 base64。
 - 刻意未修改范围。
+- 是否实现模型名称唯一约束的决策说明。
 - 如发现公共合同缺口，只报告给主 agent，不修改 docs。
 ```
 
 ### 允许修改文件
 
-- `frontend/src/types/admin.ts`
-- `frontend/src/api/admin.ts`
-- `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`
-- `frontend/src/components/admin/AdminApiCallLogsView.tsx`，仅限必要的类型/布局兼容；默认不改
-- `frontend/src/api/providers.ts`、`frontend/src/api/models.ts`，仅限复用 Provider/model select 所需的安全类型或 helper；默认不改
-- `frontend/src/types/platform.ts`，仅限复用安全 Provider/model 展示类型；默认不改
-- `frontend/src/test/adminApi.test.ts`
-- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
-- `frontend/src/test/legacyRetirement.test.tsx`
-- `frontend/src/test/setup.ts`，仅限测试必要 mock；默认不改
+- `backend/internal/provider/**`
+- `backend/internal/model/**`
+- `backend/internal/settings/**`，仅限验证 Provider/model 可用性和默认模型一致性所需；默认不改
+- `backend/internal/database/**`，仅限必要 migration/model/index/helper 与测试
+- `backend/internal/api/*provider*test.go`
+- `backend/internal/api/*model*test.go`
+- `backend/internal/api/*settings*test.go`，仅限 taskDefaults 与 Provider/model lifecycle 交叉测试
+- `backend/internal/api/**` 中 Provider/model route wiring 或测试 helper 必要的小范围调整
 
 ### 禁止修改文件
 
-- `backend/**`
+- `frontend/**`
 - `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `frontend/src/api/tasks.ts`
-- `frontend/src/lib/taskSseClient.ts`
-- `frontend/src/hooks/useGeneration.ts`
-- `frontend/src/db/**`
-- Provider/model admin 主流程文件，除非只是复用安全类型且在交付中说明
-- 任何 OpenAI/Gemini/AI relay 直连、Provider API Key 浏览器存储、task polling、MinIO public URL、object key/bucket 展示、log retention UI、orphan cleanup UI、manual cleanup UI
+- `backend/internal/task/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/queue/**`
+- `backend/internal/sse/**`
+- `backend/internal/asset/**`
+- `backend/cmd/**`，除非编译因新增 migration wiring 必须调整；默认不改
+- 任何 AI Provider runtime 调用逻辑、API Key 解密路径、task/SSE/queue 主流程
 
 ### 具体开发内容
 
-1. 先更新或新增前端测试，明确 active settings 与 deferred settings 的边界。
-2. 扩展前端 system settings 类型：
-   - `uploadPolicy`
-   - `taskDefaults`
-   - `taskConcurrency`
-   - `storageRetention`
-   - `storageQuota`
-3. 扩展 settings tab UI：
-   - 用紧凑工作型布局，不做营销式重排。
-   - 每个设置分组独立保存，PATCH body 只包含对应 top-level 字段。
-   - 保留 loading、empty、error、disabled、saving 状态。
-4. 处理可空字段：
-   - task defaults 支持 provider/model 成对设置或成对清除。
-   - storage retention 支持设置天数或清除为 `null`。
-   - storage quota 支持设置 max bytes 或清除为 `null`，显示 `usedBytes` 和当前状态。
-5. 保持已合并的 upload policy UI 行为不回归。
-6. 更新 forbidden-pattern 测试或断言，防止重新出现 deferred 字段、Provider 直连、敏感存储、轮询。
+1. 梳理现有 Provider/model 生命周期规则，记录你实际采用的产品语义：
+   - 删除 Provider 是否只允许在无未删除模型时发生。
+   - 禁用 Provider 是否允许保留模型但禁止新增/启用可运行模型。
+   - 模型名称唯一性是否需要本次落地。
+2. 补充 Provider 删除与模型 create/update/enable 的边界测试。
+3. 如需要，增加 repository/service 层锁定、事务内二次校验或数据库约束，保证并发下数据库最终状态一致。
+4. 确保 taskDefaults 的 Provider/model 解析继续拒绝 disabled/deleted/cross-tenant Provider 或模型，不因本次改动回归。
+5. 确保失败路径不写成功 operation log，错误响应稳定且不泄露对象详情。
+6. 保持现有 Provider 响应不返回 API Key；保持 Provider URL SSRF 校验不回归。
 
 ### 必须保持的现有行为
 
-- 无 `system:settings:manage` 权限时，settings tab 不加载、不渲染、不写入 settings。
-- usage、operation logs、API call logs 三个 observability tab 行为不变。
-- Provider/model 管理 UI、用户角色 UI、项目/资产/任务工作台不变。
-- 前端任务状态仍只通过 SSE，不新增 polling。
-- 前端不保存 Provider API Key，不展示后端脱敏之外的 secret。
+- Provider CRUD、enable/disable/test 的现有响应结构保持兼容，且不返回完整 API Key。
+- Provider base URL SSRF 防护保持现有覆盖。
+- Model capability 校验、enabled model list、RBAC、tenant scope、CSRF route behavior 不回归。
+- `taskDefaults` 仍只能解析 enabled same-tenant Provider/model；显式 task 请求仍走现有 task validation。
+- 成功 operation log 只在事务成功后写入；被拒绝的写入不记录成功 action。
 
 ### 允许的中间态
 
-- 前端可展示 active settings，但更深层的成本看板、orphan cleanup、log retention、thumbnail policy 继续留给后续任务。
-- task defaults 可以先用安全 Provider/model 选择器；如果现有 API 不足以提供选择数据，可使用 ID 输入并在交付中说明限制，不能新增后端合同。
+- 可以先通过服务层事务和锁解决并发完整性；数据库唯一约束如风险过大可推迟，但必须说明原因。
+- 可以保留 disabled Provider 下已有 disabled 模型的管理能力，只要不能被运行时用作 enabled model。
+- 成本统计、前端 UI 和 Provider Adapter runtime 不在本任务范围内。
 
 ### 禁止的半迁移状态
 
-- UI 展示某个设置但保存时没有调用真实后端 `PATCH /admin/system-settings`。
-- PATCH 回写整个 GET response，导致 `usedBytes`、未知字段或 deferred 字段被发送。
-- 展示或提交 `logRetention`、`orphanCleanup`、`manualCleanup`、`allowedMimeTypes`、`storageQuotaBytes` 等未开放字段。
-- 因保存一个分组，把另一个分组的无效草稿或旧值一起发送。
-- 引入 Provider 直连、Provider Key 存储、task polling、object key/bucket/MinIO URL 暴露。
+- Provider 删除成功后仍存在未删除模型指向该 Provider。
+- 模型创建、迁移或启用成功后指向 disabled/deleted/cross-tenant Provider。
+- 失败写入返回错误但已经写了成功 operation log。
+- 为解决管理接口问题而修改 task execution、Provider Adapter runtime、SSE 或 queue 主流程。
+- 通过错误信息、日志或测试快照暴露 Provider API Key、跨租户对象名称、Authorization、Cookie 或图片 base64。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| 用户无 settings 权限 | 不加载 settings，不显示 settings tab，不发 PATCH | 是 |
-| GET 返回全部 active settings | UI 正确显示 upload policy、defaults、concurrency、retention、quota | 是 |
-| 保存 upload policy | 只 PATCH `uploadPolicy` | 是 |
-| 保存 task defaults | 只 PATCH `taskDefaults`；provider/model 成对提交或成对清除 | 是 |
-| 保存 task concurrency | 只 PATCH `taskConcurrency` 正整数字段 | 是 |
-| 保存 storage retention | 支持正整数和 `null` 清除 | 是 |
-| 保存 storage quota | 只 PATCH `storageQuota.maxBytes`；`usedBytes` 不可写不发送 | 是 |
-| backend validation error | 保留当前分组草稿并显示错误，不污染其他分组 | 是 |
-| deferred/legacy 字段出现在 mock response | 不显示、不发送 | 是 |
+| 删除仍有关联未删除模型的 Provider | `409`/稳定冲突错误；Provider/model 不变；无成功 delete log | 是 |
+| 删除 Provider 与创建模型并发 | 最终不能同时出现 Provider deleted 且模型未删除指向它 | 是 |
+| 更新模型 Provider 到 deleted/cross-tenant Provider | 拒绝，响应不泄露目标对象详情，无成功 update log | 是 |
+| 创建模型到 disabled Provider | 拒绝或仅允许明确非运行时安全语义；不能创建 enabled 可运行模型 | 是 |
+| 启用模型但 Provider disabled/deleted | 拒绝，无成功 enable log | 是 |
+| Provider 禁用后 taskDefaults 仍指向该 Provider/model | 后续任务默认解析 fail closed | 是 |
+| 重复模型名称 | 若本次实现唯一约束，应稳定拒绝；若不实现，应说明风险 | 按决策覆盖 |
+| 跨租户模型/Provider ID | 404/422/403 风格保持稳定，不泄露名称或租户信息 | 是 |
 
 ### 安全要求
 
-- 所有 settings 写请求必须带 CSRF token。
-- 不在 localStorage、sessionStorage、IndexedDB 或源码中保存 Provider API Key。
-- 不显示 bucket、object key、MinIO URL、Authorization、Cookie、JWT、Provider API Key、图片 base64。
-- 不新增 setInterval、循环 fetch 或 task polling。
-- 不新增任何 AI Provider 直连 URL。
+- 所有 Provider/model 查询和写入必须带 tenant_id 过滤。
+- 只授权 tenant admin 或具备对应 `provider:*` / `model:*` 权限的用户。
+- Provider API Key 仍只加密存储，不返回、不解密、不写日志。
+- Provider base_url SSRF 校验不得弱化。
+- Operation log metadata 必须脱敏，且不能包含跨租户对象详情。
+- 错误响应使用稳定错误码和泛化消息。
 
 ### 必须新增或更新的回归测试
 
-- `frontend/src/test/adminApi.test.ts`：系统设置类型和 PATCH body 覆盖 active settings，证明 CSRF header 保持存在。
-- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`：覆盖五个 active settings 分组、只 PATCH 当前分组、null clear、read-only usedBytes、权限 gating、backend error 保留草稿、deferred 字段不显示不发送。
-- `frontend/src/test/legacyRetirement.test.tsx` 或等价 forbidden-pattern 测试：确认没有 Provider 直连、API Key 存储、task polling、legacy/deferred settings 重新出现。
+- Provider route/service 测试：Provider delete linked models、delete/create race 或等价事务边界、禁用 Provider 后模型启用/创建边界、失败日志不存在。
+- Model route/service 测试：create/update/enable 对 deleted/disabled/cross-tenant Provider 的拒绝和脱敏响应。
+- Settings/taskDefaults 交叉测试：Provider 或 model disabled/deleted 后，默认任务创建 fail closed，无 task/event/enqueue/success-audit 副作用。
+- 如果实现模型名称唯一约束：覆盖重复创建、soft delete 后重建、跨租户同名和不同 Provider 同名。
 
 ### 验收标准
 
-- Admin settings tab 能查看并编辑所有已 runtime-backed 设置。
-- 每个保存动作只发送一个 top-level settings patch，且不会发送 read-only/deferred 字段。
-- `storageQuota.usedBytes` 只读展示；`storageQuota.maxBytes = null` 和 `storageRetention.deletedAssetRetentionDays = null` 能表达 disabled 状态。
-- 前端权限、CSRF、错误态、loading 态和现有 observability tab 行为不回归。
-- 未修改后端、部署、公共合同文档或 Agent 规则。
+- 并发或交错写入下，数据库不会产生 enabled/active 模型指向不可用 Provider 的状态。
+- Provider 删除、禁用、模型创建、模型更新、模型启用的边界行为有测试覆盖。
+- RBAC、租户隔离、Provider Key 脱敏、SSRF 校验、operation log 行为不回归。
+- 未修改前端、部署、公共合同文档或 Agent 规则。
 
 ### 测试命令
 
 ```bash
-cd frontend
-npm run lint
-npm run type-check
-npm run test -- adminApi adminObservabilitySettingsPanel legacyRetirement
-npm run test
-npm run build
+cd backend
+go test ./internal/provider ./internal/model ./internal/settings ./internal/api -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
 
 cd ..
 git diff --check main...HEAD
-! rg -n "api\\.openai\\.com|generativelanguage|setInterval\\(|localStorage\\.|sessionStorage\\.|api[_-]?key|Authorization" frontend/src --glob '!**/test/**'
+docker compose -f deploy/docker-compose.yml config
 ```
 
-如使用共享本地服务做额外前后端功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录；本任务默认不需要写共享 MySQL/Redis/MinIO 数据。
+如使用共享本地服务做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录；本任务默认可以只用自动化测试完成。
 
 ## 标准验证命令
 

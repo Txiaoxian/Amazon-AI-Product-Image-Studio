@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State During P13 Runtime Settings Work
+## Current State After R13 Runtime Settings Review
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -37,7 +37,7 @@ Phase status:
 | P10 | Complete | Worker pool, SSE bridge lifecycle, Provider/model lifecycle, admin UI hardening, backend history query. |
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
-| P13 | In progress | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, and storage quota accounting are merged; frontend settings and R13 remain. |
+| P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -75,6 +75,10 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-STORAGE-QUOTA-ACCOUNTING` was reviewed and merged. The backend now exposes nullable `storageQuota.maxBytes` with read-only computed `storageQuota.usedBytes`, computes usage from tenant-scoped `image_assets.size_bytes` where `purged_at IS NULL`, and enforces quota before reference uploads and Worker output asset persistence. Quota failures return sanitized stable errors and avoid successful asset rows, task outputs, output events, usage records, successful operation logs, and object leaks. Validation passed focused system-settings/settings/asset/database/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-ups remain: strict concurrent quota reservation/counters and a dedicated storage usage index can be evaluated later.
 
+`P13-FE-SYSTEM-SETTINGS` was reviewed and merged. The frontend admin settings tab now displays and edits only runtime-backed settings: upload policy, task defaults, task concurrency, storage retention, and storage quota. Each save sends one top-level settings patch with CSRF, `storageQuota.usedBytes` remains read-only, and deferred settings such as log retention, orphan cleanup, manual cleanup, MinIO listing, and Provider secrets remain hidden. Validation passed frontend lint, type-check, targeted admin settings tests, full frontend tests, build, whitespace checks, and forbidden-pattern scans.
+
+R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging frontend system settings. No blocking issues were found. Validation passed frontend lint, type-check, tests, build; backend tests, race tests, vet, API/Worker builds; Docker Compose config; whitespace checks; and frontend forbidden-pattern scans for direct AI Provider calls, browser Provider-key storage, task polling, deferred settings, bucket/object-key exposure, and sensitive auth strings. Non-blocking follow-ups remain: strict concurrent quota reservation/counters, a dedicated storage usage index, optional minimum bound for `WORKER_RETENTION_MAINTENANCE_INTERVAL`, built-in `asset:*` permission reconciliation for existing tenants, thumbnail policy, complete orphan cleanup, log retention, and stronger Provider/model transaction serialization.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -95,6 +99,7 @@ The current `main` branch supports:
 - Backend storage cleanup foundation: upload rollback cleanup no longer depends on canceled request contexts, and soft-deleted image assets can be physically purged through an internal tenant-scoped, cutoff-based, idempotent cleanup service.
 - Backend runtime-backed storage retention policy: tenant admins can optionally set `storageRetention.deletedAssetRetentionDays`; Worker maintenance consumes it and defaults to disabled when unset or cleared.
 - Backend runtime-backed storage quota policy: tenant admins can optionally set `storageQuota.maxBytes`; `storageQuota.usedBytes` is computed from tenant-scoped asset metadata, and uploads/Worker output persistence enforce the quota before creating new asset metadata.
+- Frontend admin system settings UI for active runtime-backed settings only: upload policy, task defaults, task concurrency, storage retention, and storage quota.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -181,9 +186,9 @@ Suggested order:
 6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
    - Completed and merged. Nullable `storageQuota.maxBytes` is writable only with reference-upload and Worker-output consumers; `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata.
 7. `P13-FE-SYSTEM-SETTINGS`
-   - Next. Frontend admin UI only for settings that are active and runtime-backed: upload policy, task defaults, task concurrency, storage retention, and storage quota.
+   - Completed and merged. Frontend admin UI exposes only active runtime-backed settings and sends one CSRF-protected top-level patch per settings group.
 8. `R13`
-   - Settings/quotas/storage lifecycle review.
+   - Completed. No blocking issues found across runtime settings honesty, malformed settings fail-closed behavior, Worker-consumed concurrency and retention settings, storage quota enforcement, frontend settings safety, and forbidden frontend patterns.
 
 Parallelism: mostly serial because settings fields must not be exposed before runtime consumers exist.
 
@@ -276,4 +281,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P13-FE-SYSTEM-SETTINGS` serially from latest `main`. The next slice is frontend-only: extend the existing admin settings tab to display and edit only backend-active, runtime-backed settings: upload policy, task defaults, task concurrency, storage retention, and storage quota. Do not add frontend UI for log retention, orphan cleanup, manual cleanup triggers, MinIO object listing, Provider secrets, or any setting that lacks a backend runtime consumer.
+Run `P14-BE-PROVIDER-MODEL-INTEGRITY` from latest `main`. The next slice is backend-only and should harden Provider/model lifecycle integrity, especially Provider delete/status changes racing with model create/update/enable paths. Do not start cost reporting until Provider/model invariants are stable.

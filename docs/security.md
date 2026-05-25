@@ -54,7 +54,7 @@ Resolved transition item:
 
 Storage and P5 review hardening backlog:
 
-- Frontend settings UI must expose only active runtime-backed settings. It may show `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`, but must not expose log retention, orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, or any setting without a backend consumer.
+- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`, and must continue to hide log retention, orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
 - Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
 - Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.
