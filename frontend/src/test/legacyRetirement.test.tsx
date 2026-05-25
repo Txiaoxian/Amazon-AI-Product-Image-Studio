@@ -104,7 +104,7 @@ describe('legacy frontend retirement', () => {
     expect(source).not.toMatch(/\bsetInterval\b|\bsetTimeout\b/)
     expect(source).not.toMatch(/api\.openai\.com|generativelanguage\.googleapis\.com|api\.tutujin\.(?:app|com)|api\.flymux\.com/)
     expect(source).not.toMatch(/\bminio\b|\bs3[.-]|X-Amz-Signature|objectKey|bucketOriginals/i)
-    expect(source).not.toMatch(/defaultProviderId|defaultModelId|tenantConcurrency|storageQuotaBytes|logRetentionDays|allowedMimeTypes/)
+    expect(source).not.toMatch(/tenantConcurrency|storageQuotaBytes|logRetentionDays|allowedMimeTypes/)
   })
 
   it('does not expose the retired ordinary settings or legacy history entry points', async () => {

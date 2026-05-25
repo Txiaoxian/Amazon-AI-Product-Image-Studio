@@ -8,13 +8,14 @@ import {
   Save,
   Settings2,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { adminApi as defaultAdminApi, type AdminApi } from '../../api/admin'
 import { isApiClientError } from '../../api/client'
 import type {
   ApiCallLog,
   OperationLog,
   SystemSettings,
+  UpdateSystemSettingsRequest,
   UsageRecord,
   UsageSummary,
   UsageSummaryDimension,
@@ -49,6 +50,36 @@ interface UploadPolicyDraft {
   maxHeight: string
   maxPixels: string
 }
+
+interface TaskDefaultsDraft {
+  defaultProviderId: string
+  defaultModelId: string
+}
+
+interface TaskConcurrencyDraft {
+  tenantLimit: string
+  userLimit: string
+  providerLimit: string
+  modelLimit: string
+}
+
+interface StorageRetentionDraft {
+  deletedAssetRetentionDays: string
+}
+
+interface StorageQuotaDraft {
+  maxBytes: string
+}
+
+interface SystemSettingsDraft {
+  uploadPolicy: UploadPolicyDraft
+  taskDefaults: TaskDefaultsDraft
+  taskConcurrency: TaskConcurrencyDraft
+  storageRetention: StorageRetentionDraft
+  storageQuota: StorageQuotaDraft
+}
+
+type SystemSettingsGroup = keyof SystemSettingsDraft
 
 const PAGE_SIZE = 10
 const METADATA_PREVIEW_LIMIT = 1200
@@ -94,8 +125,8 @@ export function AdminObservabilitySettingsPanel({
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null)
-  const [settingsDraft, setSettingsDraft] = useState<UploadPolicyDraft>(() => emptyUploadPolicyDraft())
-  const [isSavingSettings, setSavingSettings] = useState(false)
+  const [settingsDraft, setSettingsDraft] = useState<SystemSettingsDraft>(() => emptySystemSettingsDraft())
+  const [savingSettingsGroup, setSavingSettingsGroup] = useState<SystemSettingsGroup | null>(null)
   const [selectedApiCallLogId, setSelectedApiCallLogId] = useState<ApiCallLog['id'] | null>(null)
   const [selectedApiCallLog, setSelectedApiCallLog] = useState<ApiCallLog | null>(null)
   const [apiCallDetailError, setApiCallDetailError] = useState<string | null>(null)
@@ -273,30 +304,25 @@ export function AdminObservabilitySettingsPanel({
     }
   }
 
-  const saveSystemSettings = async () => {
+  const saveSystemSettingsGroup = async (group: SystemSettingsGroup) => {
     if (!csrfToken) {
       setSettingsError('登录状态缺少 CSRF 凭据，请重新登录。')
       setSettingsNotice(null)
       return
     }
 
-    setSavingSettings(true)
+    setSavingSettingsGroup(group)
     setSettingsError(null)
     setSettingsNotice(null)
     try {
-      const saved = await adminApi.updateSystemSettings(
-        {
-          uploadPolicy: parseUploadPolicyDraft(settingsDraft),
-        },
-        csrfToken,
-      )
+      const saved = await adminApi.updateSystemSettings(parseSettingsGroupPatch(group, settingsDraft), csrfToken)
       setSystemSettings(saved)
       setSettingsDraft(draftFromSettings(saved))
-      setSettingsNotice('上传策略已更新。')
+      setSettingsNotice(`${settingsGroupLabel(group)}已更新。`)
     } catch (error) {
       setSettingsError(formatAdminError(error))
     } finally {
-      setSavingSettings(false)
+      setSavingSettingsGroup(null)
     }
   }
 
@@ -388,10 +414,10 @@ export function AdminObservabilitySettingsPanel({
             draft={settingsDraft}
             error={settingsError}
             isLoading={isLoadingSettings}
-            isSaving={isSavingSettings}
             notice={settingsNotice}
             onDraftChange={setSettingsDraft}
-            onSubmit={() => void saveSystemSettings()}
+            onSubmit={(group) => void saveSystemSettingsGroup(group)}
+            savingGroup={savingSettingsGroup}
             settings={systemSettings}
           />
         ) : null}
@@ -586,25 +612,27 @@ function OperationLogsView({ page, isLoading, error, onPageChange }: OperationLo
 
 interface SystemSettingsViewProps {
   settings: SystemSettings | null
-  draft: UploadPolicyDraft
+  draft: SystemSettingsDraft
   isLoading: boolean
-  isSaving: boolean
   error: string | null
   notice: string | null
-  onDraftChange: (draft: UploadPolicyDraft | ((current: UploadPolicyDraft) => UploadPolicyDraft)) => void
-  onSubmit: () => void
+  onDraftChange: (draft: SystemSettingsDraft | ((current: SystemSettingsDraft) => SystemSettingsDraft)) => void
+  onSubmit: (group: SystemSettingsGroup) => void
+  savingGroup: SystemSettingsGroup | null
 }
 
 function SystemSettingsView({
   settings,
   draft,
   isLoading,
-  isSaving,
   error,
   notice,
   onDraftChange,
   onSubmit,
+  savingGroup,
 }: SystemSettingsViewProps) {
+  const isDisabled = isLoading || savingGroup !== null
+
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-2">
@@ -615,54 +643,206 @@ function SystemSettingsView({
       <StatusMessage message={notice} tone="success" />
       {isLoading ? <LoadingState text="正在加载系统设置..." /> : null}
       {!isLoading && !error && !settings ? <EmptyState body="尚未读取到后端 system settings。" title="暂无系统设置" /> : null}
-      <form
-        className="grid gap-4 rounded-lg border border-ink-200 bg-ink-50 p-4"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit()
-        }}
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="uploadPolicy"
+        isSaving={savingGroup === 'uploadPolicy'}
+        onSubmit={onSubmit}
+        title="Upload policy"
+        submitLabel="保存上传策略"
       >
         <div>
-          <h4 className="text-sm font-semibold text-ink-900">Upload policy</h4>
           <p className="mt-1 text-xs text-ink-400">仅显示后端已生效并由上传校验消费的四个字段。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <NumberField
             label="最大文件字节数"
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, maxFileSizeBytes: value }))}
-            value={draft.maxFileSizeBytes}
+            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxFileSizeBytes: value } }))}
+            value={draft.uploadPolicy.maxFileSizeBytes}
           />
           <NumberField
             label="最大宽度"
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, maxWidth: value }))}
-            value={draft.maxWidth}
+            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxWidth: value } }))}
+            value={draft.uploadPolicy.maxWidth}
           />
           <NumberField
             label="最大高度"
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, maxHeight: value }))}
-            value={draft.maxHeight}
+            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxHeight: value } }))}
+            value={draft.uploadPolicy.maxHeight}
           />
           <NumberField
             label="最大像素数"
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, maxPixels: value }))}
-            value={draft.maxPixels}
+            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxPixels: value } }))}
+            value={draft.uploadPolicy.maxPixels}
           />
         </div>
-        <Button
-          className="justify-self-start"
-          disabled={isLoading || isSaving}
-          icon={isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          type="submit"
-          variant="primary"
-        >
-          保存上传策略
-        </Button>
-      </form>
+      </SettingsGroupForm>
+
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="taskDefaults"
+        isSaving={savingGroup === 'taskDefaults'}
+        onSubmit={onSubmit}
+        title="Task defaults"
+        submitLabel="保存任务默认模型"
+      >
+        <div>
+          <p className="mt-1 text-xs text-ink-400">Provider 与模型必须成对保存；两个输入都留空会清除默认值。</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <TextField
+            label="默认 Provider ID"
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskDefaults: { ...current.taskDefaults, defaultProviderId: value } }))
+            }
+            placeholder="留空表示清除"
+            value={draft.taskDefaults.defaultProviderId}
+          />
+          <TextField
+            label="默认模型 ID"
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskDefaults: { ...current.taskDefaults, defaultModelId: value } }))
+            }
+            placeholder="留空表示清除"
+            value={draft.taskDefaults.defaultModelId}
+          />
+        </div>
+      </SettingsGroupForm>
+
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="taskConcurrency"
+        isSaving={savingGroup === 'taskConcurrency'}
+        onSubmit={onSubmit}
+        title="Task concurrency"
+        submitLabel="保存并发限制"
+      >
+        <div>
+          <p className="mt-1 text-xs text-ink-400">这些值只会收紧或等于后端环境硬上限；全局并发不在租户设置内。</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <NumberField
+            label="租户并发上限"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, tenantLimit: value } }))
+            }
+            value={draft.taskConcurrency.tenantLimit}
+          />
+          <NumberField
+            label="用户并发上限"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, userLimit: value } }))
+            }
+            value={draft.taskConcurrency.userLimit}
+          />
+          <NumberField
+            label="Provider 并发上限"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, providerLimit: value } }))
+            }
+            value={draft.taskConcurrency.providerLimit}
+          />
+          <NumberField
+            label="模型并发上限"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, modelLimit: value } }))
+            }
+            value={draft.taskConcurrency.modelLimit}
+          />
+        </div>
+      </SettingsGroupForm>
+
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="storageRetention"
+        isSaving={savingGroup === 'storageRetention'}
+        onSubmit={onSubmit}
+        title="Storage retention"
+        submitLabel="保存删除资产保留期"
+      >
+        <div>
+          <p className="mt-1 text-xs text-ink-400">留空会设置为 null，并禁用软删除资产的自动物理清理。</p>
+        </div>
+        <NumberField
+          label="删除资产保留天数"
+          min={1}
+          onChange={(value) =>
+            onDraftChange((current) => ({ ...current, storageRetention: { deletedAssetRetentionDays: value } }))
+          }
+          value={draft.storageRetention.deletedAssetRetentionDays}
+        />
+      </SettingsGroupForm>
+
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="storageQuota"
+        isSaving={savingGroup === 'storageQuota'}
+        onSubmit={onSubmit}
+        title="Storage quota"
+        submitLabel="保存存储配额"
+      >
+        <div>
+          <p className="mt-1 text-xs text-ink-400">留空会设置为 null，表示不限制租户资产存储配额。</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <NumberField
+            label="最大存储字节数"
+            min={1}
+            onChange={(value) => onDraftChange((current) => ({ ...current, storageQuota: { maxBytes: value } }))}
+            value={draft.storageQuota.maxBytes}
+          />
+          <ReadOnlyField label="已用存储字节数" value={settings ? formatNumber(settings.storageQuota.usedBytes) : '0'} />
+        </div>
+      </SettingsGroupForm>
     </section>
+  )
+}
+
+function SettingsGroupForm({
+  children,
+  disabled,
+  group,
+  isSaving,
+  onSubmit,
+  submitLabel,
+  title,
+}: {
+  children: ReactNode
+  disabled: boolean
+  group: SystemSettingsGroup
+  isSaving: boolean
+  onSubmit: (group: SystemSettingsGroup) => void
+  submitLabel: string
+  title: string
+}) {
+  return (
+    <form
+      className="grid gap-4 rounded-lg border border-ink-200 bg-ink-50 p-4"
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit(group)
+      }}
+    >
+      <h4 className="text-sm font-semibold text-ink-900">{title}</h4>
+      {children}
+      <Button
+        className="justify-self-start"
+        disabled={disabled}
+        icon={isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+        type="submit"
+        variant="primary"
+      >
+        {submitLabel}
+      </Button>
+    </form>
   )
 }
 
@@ -673,6 +853,38 @@ function NumberField({ label, min, value, onChange }: { label: string; min: numb
     <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
       <span className="field-label">{label}</span>
       <input className="field-input" id={id} min={min} onChange={(event) => onChange(event.target.value)} type="number" value={value} />
+    </label>
+  )
+}
+
+function TextField({
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  label: string
+  placeholder?: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  const id = `admin-observability-${label}`
+
+  return (
+    <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
+      <span className="field-label">{label}</span>
+      <input className="field-input" id={id} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type="text" value={value} />
+    </label>
+  )
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  const id = `admin-observability-${label}`
+
+  return (
+    <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
+      <span className="field-label">{label}</span>
+      <input className="field-input bg-ink-100 text-ink-500" id={id} readOnly type="text" value={value} />
     </label>
   )
 }
@@ -807,21 +1019,87 @@ function pageFromResponse<TRecord>(page: ApiPage<TRecord>): PageViewState<TRecor
   }
 }
 
-function emptyUploadPolicyDraft(): UploadPolicyDraft {
+function emptySystemSettingsDraft(): SystemSettingsDraft {
   return {
-    maxFileSizeBytes: '',
-    maxWidth: '',
-    maxHeight: '',
-    maxPixels: '',
+    uploadPolicy: {
+      maxFileSizeBytes: '',
+      maxWidth: '',
+      maxHeight: '',
+      maxPixels: '',
+    },
+    taskDefaults: {
+      defaultProviderId: '',
+      defaultModelId: '',
+    },
+    taskConcurrency: {
+      tenantLimit: '',
+      userLimit: '',
+      providerLimit: '',
+      modelLimit: '',
+    },
+    storageRetention: {
+      deletedAssetRetentionDays: '',
+    },
+    storageQuota: {
+      maxBytes: '',
+    },
   }
 }
 
-function draftFromSettings(settings: SystemSettings): UploadPolicyDraft {
+function draftFromSettings(settings: SystemSettings): SystemSettingsDraft {
   return {
-    maxFileSizeBytes: String(settings.uploadPolicy.maxFileSizeBytes),
-    maxWidth: String(settings.uploadPolicy.maxWidth),
-    maxHeight: String(settings.uploadPolicy.maxHeight),
-    maxPixels: String(settings.uploadPolicy.maxPixels),
+    uploadPolicy: {
+      maxFileSizeBytes: String(settings.uploadPolicy.maxFileSizeBytes),
+      maxWidth: String(settings.uploadPolicy.maxWidth),
+      maxHeight: String(settings.uploadPolicy.maxHeight),
+      maxPixels: String(settings.uploadPolicy.maxPixels),
+    },
+    taskDefaults: {
+      defaultProviderId: settings.taskDefaults.defaultProviderId ?? '',
+      defaultModelId: settings.taskDefaults.defaultModelId ?? '',
+    },
+    taskConcurrency: {
+      tenantLimit: String(settings.taskConcurrency.tenantLimit),
+      userLimit: String(settings.taskConcurrency.userLimit),
+      providerLimit: String(settings.taskConcurrency.providerLimit),
+      modelLimit: String(settings.taskConcurrency.modelLimit),
+    },
+    storageRetention: {
+      deletedAssetRetentionDays: settings.storageRetention.deletedAssetRetentionDays === null ? '' : String(settings.storageRetention.deletedAssetRetentionDays),
+    },
+    storageQuota: {
+      maxBytes: settings.storageQuota.maxBytes === null ? '' : String(settings.storageQuota.maxBytes),
+    },
+  }
+}
+
+function parseSettingsGroupPatch(group: SystemSettingsGroup, draft: SystemSettingsDraft): UpdateSystemSettingsRequest {
+  if (group === 'uploadPolicy') {
+    return {
+      uploadPolicy: parseUploadPolicyDraft(draft.uploadPolicy),
+    }
+  }
+  if (group === 'taskDefaults') {
+    return {
+      taskDefaults: parseTaskDefaultsDraft(draft.taskDefaults),
+    }
+  }
+  if (group === 'taskConcurrency') {
+    return {
+      taskConcurrency: parseTaskConcurrencyDraft(draft.taskConcurrency),
+    }
+  }
+  if (group === 'storageRetention') {
+    return {
+      storageRetention: {
+        deletedAssetRetentionDays: parseNullablePositiveInteger(draft.storageRetention.deletedAssetRetentionDays, '删除资产保留天数'),
+      },
+    }
+  }
+  return {
+    storageQuota: {
+      maxBytes: parseNullablePositiveInteger(draft.storageQuota.maxBytes, '最大存储字节数'),
+    },
   }
 }
 
@@ -834,12 +1112,62 @@ function parseUploadPolicyDraft(draft: UploadPolicyDraft): SystemSettings['uploa
   }
 }
 
+function parseTaskDefaultsDraft(draft: TaskDefaultsDraft): SystemSettings['taskDefaults'] {
+  const defaultProviderId = draft.defaultProviderId.trim()
+  const defaultModelId = draft.defaultModelId.trim()
+  if (!defaultProviderId && !defaultModelId) {
+    return {
+      defaultProviderId: null,
+      defaultModelId: null,
+    }
+  }
+  if (!defaultProviderId || !defaultModelId) {
+    throw new Error('默认 Provider ID 与默认模型 ID 必须成对填写或同时清空。')
+  }
+  return {
+    defaultProviderId: defaultProviderId as SystemSettings['taskDefaults']['defaultProviderId'],
+    defaultModelId: defaultModelId as SystemSettings['taskDefaults']['defaultModelId'],
+  }
+}
+
+function parseTaskConcurrencyDraft(draft: TaskConcurrencyDraft): SystemSettings['taskConcurrency'] {
+  return {
+    tenantLimit: parsePositiveInteger(draft.tenantLimit, '租户并发上限'),
+    userLimit: parsePositiveInteger(draft.userLimit, '用户并发上限'),
+    providerLimit: parsePositiveInteger(draft.providerLimit, 'Provider 并发上限'),
+    modelLimit: parsePositiveInteger(draft.modelLimit, '模型并发上限'),
+  }
+}
+
+function parseNullablePositiveInteger(value: string, label: string): number | null {
+  if (value.trim() === '') {
+    return null
+  }
+  return parsePositiveInteger(value, label)
+}
+
 function parsePositiveInteger(value: string, label: string): number {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${label}必须是正整数。`)
   }
   return parsed
+}
+
+function settingsGroupLabel(group: SystemSettingsGroup): string {
+  if (group === 'uploadPolicy') {
+    return '上传策略'
+  }
+  if (group === 'taskDefaults') {
+    return '任务默认模型'
+  }
+  if (group === 'taskConcurrency') {
+    return '并发限制'
+  }
+  if (group === 'storageRetention') {
+    return '删除资产保留期'
+  }
+  return '存储配额'
 }
 
 function activeTabIsLoading(

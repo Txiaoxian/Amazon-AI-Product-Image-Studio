@@ -78,6 +78,23 @@ const systemSettings = {
     maxHeight: 8192,
     maxPixels: 40000000,
   },
+  taskDefaults: {
+    defaultProviderId: 'provider_1',
+    defaultModelId: 'model_1',
+  },
+  taskConcurrency: {
+    tenantLimit: 4,
+    userLimit: 3,
+    providerLimit: 2,
+    modelLimit: 1,
+  },
+  storageRetention: {
+    deletedAssetRetentionDays: null,
+  },
+  storageQuota: {
+    maxBytes: null,
+    usedBytes: 2048,
+  },
 }
 
 function page(records: unknown[], total = records.length) {
@@ -149,15 +166,25 @@ describe('admin observability and settings API wrappers', () => {
     }
   })
 
-  it('uses GET and CSRF-protected PATCH for system settings with uploadPolicy only', async () => {
+  it('uses GET and CSRF-protected PATCH for one system settings group at a time', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(systemSettings))
       .mockResolvedValueOnce(
         jsonResponse({
+          ...systemSettings,
           uploadPolicy: {
             ...systemSettings.uploadPolicy,
             maxWidth: 4096,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...systemSettings,
+          storageQuota: {
+            maxBytes: null,
+            usedBytes: 2048,
           },
         }),
       )
@@ -175,14 +202,25 @@ describe('admin observability and settings API wrappers', () => {
       },
       'csrf_memory_only',
     )
+    await adminApi.updateSystemSettings(
+      {
+        storageQuota: {
+          maxBytes: null,
+        },
+      },
+      'csrf_memory_only',
+    )
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/admin/system-settings',
       '/api/v1/admin/system-settings',
       '/api/v1/admin/system-settings',
     ])
     expect(fetchImpl.mock.calls[0][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'GET' }))
     expect(fetchImpl.mock.calls[1][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'PATCH' }))
+    expect(fetchImpl.mock.calls[2][1]).toEqual(expect.objectContaining({ credentials: 'include', method: 'PATCH' }))
     expect((fetchImpl.mock.calls[1][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    expect((fetchImpl.mock.calls[2][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
     expect(JSON.parse(fetchImpl.mock.calls[1][1]?.body as string)).toEqual({
       uploadPolicy: {
         maxFileSizeBytes: 10485760,
@@ -191,10 +229,16 @@ describe('admin observability and settings API wrappers', () => {
         maxPixels: 16000000,
       },
     })
+    expect(JSON.parse(fetchImpl.mock.calls[2][1]?.body as string)).toEqual({
+      storageQuota: {
+        maxBytes: null,
+      },
+    })
     expect(fetchImpl.mock.calls[1][1]?.body).not.toContain('defaultProviderId')
     expect(fetchImpl.mock.calls[1][1]?.body).not.toContain('defaultModelId')
     expect(fetchImpl.mock.calls[1][1]?.body).not.toContain('tenantConcurrency')
     expect(fetchImpl.mock.calls[1][1]?.body).not.toContain('storageQuotaBytes')
     expect(fetchImpl.mock.calls[1][1]?.body).not.toContain('logRetentionDays')
+    expect(fetchImpl.mock.calls[2][1]?.body).not.toContain('usedBytes')
   })
 })
