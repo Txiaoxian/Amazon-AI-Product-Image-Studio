@@ -305,9 +305,16 @@ P10 Provider lifecycle policy:
 - The response must use the standard error envelope with a non-sensitive code such as `PROVIDER_HAS_LINKED_MODELS`; it may include a linked-model count but must not leak model names from another tenant.
 - Soft-deleted models do not block Provider deletion.
 - Cross-tenant models must never block or reveal another tenant's Provider deletion.
-- `POST /providers/{providerId}/disable` remains allowed and does not cascade to linked models; task creation continues to reject disabled Providers.
 - Provider deletion must not cascade-delete or cascade-disable models in this phase.
-- Current P10 implementation status: this policy is implemented and merged. The conflict response uses `PROVIDER_HAS_LINKED_MODELS`, Provider disable remains unchanged, and tests cover same-tenant enabled/disabled linked models, soft-deleted linked models, cross-tenant linked models, RBAC/not-found behavior, and non-leaky responses/logs.
+- Current P10 implementation status: this deletion policy is implemented and merged. The conflict response uses `PROVIDER_HAS_LINKED_MODELS`, and tests cover same-tenant enabled/disabled linked models, soft-deleted linked models, cross-tenant linked models, RBAC/not-found behavior, and non-leaky responses/logs. Provider disable behavior was later tightened by P14.
+
+P14 Provider lifecycle policy:
+
+- `POST /providers/{providerId}/disable` and `PATCH /providers/{providerId}` with `status=DISABLED` must fail with `409 CONFLICT` while same-tenant non-deleted enabled models still reference the Provider.
+- The conflict response uses `PROVIDER_HAS_ENABLED_MODELS` and must not leak model names, Provider secrets, cross-tenant identifiers, Authorization headers, Cookies, or raw Provider payloads.
+- Provider disable may succeed when linked same-tenant models are already disabled; it does not cascade-delete or cascade-disable models.
+- Model create, model Provider migration, and model enable must reject disabled, deleted, or cross-tenant Providers. Failed writes must not record successful `provider.*` or `model.*` operation logs.
+- Current P14 implementation status: Provider/model lifecycle integrity is implemented and merged. Same-Provider `model_name` uniqueness remains deferred because runtime task execution uses stable `modelId` references.
 
 ## Model APIs
 
@@ -342,7 +349,8 @@ Current P6 model backend implementation status:
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
 - Current P7 task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the runtime path. A later admin/data-integrity decision may still tighten that invariant.
-- P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first. Same-Provider `model_name` uniqueness remains deferred.
+- P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first.
+- P14 tightens model write behavior: create/update/enable must reject disabled, deleted, or cross-tenant Providers; task defaults loaded from persisted settings must also fail closed when the referenced Provider/model is no longer enabled and same-tenant. Same-Provider `model_name` uniqueness remains deferred.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 
@@ -359,12 +367,20 @@ Current P9 backend contract:
 - All routes above require tenant admin access plus the matching RBAC permission: `usage:read` for usage endpoints, `audit:read` for operation/API call logs.
 - List endpoints return the standard envelope with `records`, `total`, `pageNum`, and `pageSize`.
 - Shared query parameters: `pageNum`, `pageSize`, `sortBy=createdAt`, `sortOrder=asc|desc`, `createdAtFrom`, `createdAtTo`.
-- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary also accepts `dimension=user|project|provider|model`.
+- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary accepts `dimension=user|project|provider|model`.
 - Operation log filters: `actorUserId`, `action`, `resourceType`, `resourceId`.
 - API call log filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`, `status=SUCCESS|FAILURE`, `requestId`.
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` consumes these routes through `frontend/src/api/admin.ts`, keeps list reads paginated, and gates visible sections by `usage:read` or `audit:read`.
+
+P14 usage/cost reporting contract:
+
+- Backend cost estimation must be deterministic and use model `pricing.unitPrices` plus Provider usage metadata without relying on frontend-calculated costs.
+- Persisted `usage_records.estimated_cost` must be formatted with 8 decimal places and never be negative. Missing or invalid pricing must produce a zero estimated cost rather than failing an otherwise successful Provider task.
+- Usage summary will add a tenant-scoped aggregate view with `dimension=tenant` in addition to user, project, Provider, and model. `dimensionId` for the tenant view is the current tenant ID.
+- Usage/cost queries must remain tenant-scoped, paginated, stable under equal timestamps, and redacted. Raw usage may be returned only after recursive redaction.
+- Frontend cost observability is deferred until this backend reporting behavior is merged and reviewed.
 
 Current settings contract:
 

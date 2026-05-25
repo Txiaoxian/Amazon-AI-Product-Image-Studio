@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNTIME-DEFAULTS-HARDENING`、`P13-BE-CONCURRENCY-POLICY`、`P13-BE-STORAGE-CLEANUP-FOUNDATION`、`P13-BE-STORAGE-RETENTION-RUNTIME`、`P13-BE-STORAGE-QUOTA-ACCOUNTING` 与 `P13-FE-SYSTEM-SETTINGS` 已 review、合并并完成整批回归。
+R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 已 review、修复阻塞项并合并，P14 进入后端用量/成本统计切片。
 
 已完成的平台基础：
 
@@ -96,6 +96,7 @@ R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
 - P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
+- P14 已合并切片：Provider/model 生命周期完整性，包括 Provider delete/disable 与 model create/update/enable 的可用性边界、默认 task settings 读取重校验和失败写入不记成功日志。
 
 当前已知后续项：
 
@@ -105,7 +106,7 @@ R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `P14-BE-PROVIDER-MODEL-INTEGRITY`，串行强化 Provider/model 生命周期完整性。
+- 下一任务是 `P14-BE-USAGE-COST-REPORTING`，串行强化后端用量/成本估算和聚合。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -177,9 +178,9 @@ R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 建议任务：
 
 1. `P14-BE-PROVIDER-MODEL-INTEGRITY`
-   - 强化 Provider 删除与模型创建/更新之间的事务序列化；按需要决定是否实现模型名称唯一约束。
+   - 已完成并合并。Provider delete/disable、model create/update/enable 和 taskDefaults 读取现在会保持 Provider/model 生命周期一致性；同 Provider `model_name` 唯一约束暂不落地。
 2. `P14-BE-USAGE-COST-REPORTING`
-   - 改进按租户、用户、项目、Provider、模型聚合的用量和成本统计。
+   - 下一个任务。改进后端确定性成本估算和按租户、用户、项目、Provider、模型聚合的用量/成本统计。
 3. `P14-FE-COST-OBSERVABILITY`
    - 前端成本/用量看板和明细钻取。
 4. `R14`
@@ -200,65 +201,67 @@ R13 已完成，未发现阻塞问题。`P13-BE-RUNTIME-DEFAULTS`、`P13-BE-RUNT
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P14-BE-PROVIDER-MODEL-INTEGRITY
+## 下一个任务包：P14-BE-USAGE-COST-REPORTING
 
 ### 调度决策
 
-- 本任务串行执行，不与用量/成本统计、前端成本看板或发布任务并行。
-- 理由：Provider/model 生命周期是后续成本统计和任务默认模型选择的基础数据，必须先保证并发写入和删除/禁用边界不会制造不一致状态。
-- 本任务只改后端 Provider/model 生命周期相关实现和测试，不改前端、部署、公共合同文档或 Agent 规则。
+- 本任务串行执行，不与前端成本看板或 R14 review 并行。
+- 理由：成本估算和用量汇总是前端成本看板的后端合同基础，必须先保证后端聚合、分页、红线和成本计算稳定。
+- 本任务只改后端用量/成本估算、admin usage API 和测试，不改前端、部署、公共合同文档或 Agent 规则。
 
 ### 任务信息
 
-- 任务名称：`P14-BE-PROVIDER-MODEL-INTEGRITY`
-- 目标：强化 Provider 与模型管理的生命周期完整性，重点处理 Provider 删除/禁用与模型创建、更新、启用之间的并发和事务边界，避免出现可用模型指向已删除 Provider、默认模型指向不可用 Provider/model、跨租户泄漏或成功审计日志误记。
-- 推荐线程名：`P14-BE-PROVIDER-MODEL-INTEGRITY`
-- 推荐分支名：`codex/p14-backend-provider-model-integrity`
-- 起始分支：已完成 R13 文档更新的最新 `main`
-- 前置依赖：P13 已完成；系统设置中的 `taskDefaults` 已依赖 enabled same-tenant Provider/model；Provider/model 后端管理接口和 admin UI 已存在。
+- 任务名称：`P14-BE-USAGE-COST-REPORTING`
+- 目标：强化后端用量/成本统计，使 Worker 持久化的 `usage_records.estimated_cost` 确定、非负且 8 位小数稳定，并让 admin usage summary 支持 tenant/user/project/Provider/model 维度的租户内聚合，为后续前端成本看板提供可信合同。
+- 推荐线程名：`P14-BE-USAGE-COST-REPORTING`
+- 推荐分支名：`codex/p14-backend-usage-cost-reporting`
+- 起始分支：已合并 `P14-BE-PROVIDER-MODEL-INTEGRITY` 与本任务公共合同文档的最新 `main`
+- 前置依赖：P14 Provider/model integrity 已完成；P9 admin usage read APIs、P7 Worker usage record persistence、P6/P14 model pricing metadata 均已存在。
 
 ### 子 agent 完整启动 prompt
 
 ```text
-你是本项目的子 agent，负责 `P14-BE-PROVIDER-MODEL-INTEGRITY`。
+你是本项目的子 agent，负责 `P14-BE-USAGE-COST-REPORTING`。
 
-你必须在分支 `codex/p14-backend-provider-model-integrity` 上工作；如果当前不在该分支，先执行 `git switch codex/p14-backend-provider-model-integrity`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`；如果 `git merge-base --is-ancestor main codex/p14-backend-provider-model-integrity` 不通过，先停止并报告，不要自行修改公共合同。
+你必须在分支 `codex/p14-backend-usage-cost-reporting` 上工作；如果当前不在该分支，先执行 `git switch codex/p14-backend-usage-cost-reporting`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`；如果 `git merge-base --is-ancestor main codex/p14-backend-usage-cost-reporting` 不通过，先停止并报告，不要自行修改公共合同。
 
 任务目标：
-强化后端 Provider/model 生命周期完整性，确保 Provider 删除、禁用、模型创建、模型更新、模型启用在事务和并发边界下不会产生不一致业务状态。重点覆盖：
-- 模型不能创建、迁移或启用到已删除、跨租户或不可用 Provider。
-- Provider 删除不能与模型创建/更新/启用并发穿透，不能留下未删除模型指向已删除 Provider。
-- Provider 禁用后，后续模型创建/启用和 `taskDefaults` 解析不能把不可用 Provider 当成可用运行时入口。
-- 失败写入不得记录成功 operation log，错误响应不得泄露跨租户 Provider/model 名称或 secret。
+强化后端用量/成本统计：
+- Worker 持久化 `usage_records.estimated_cost` 时必须使用确定性、非负、8 位小数格式，不允许因为 float 漂移导致不稳定结果。
+- 缺失、非法、负数或不完整的模型 pricing 配置必须产生 `0.00000000` 估算成本，而不能让已经成功的 Provider 任务失败。
+- Admin usage summary 必须支持 `dimension=tenant|user|project|provider|model`，其中 `tenant` 只返回当前租户聚合，不允许跨租户。
+- 用量/成本读取必须保持分页、时间范围、过滤、排序、红线脱敏和 RBAC 行为不回归。
 
 必须遵守：
 1. 不修改 frontend、deploy、docs、AGENTS.md、agent-instructions。
-2. 不修改 Provider Adapter runtime、task execution 主流程、SSE、Redis queue，除非发现编译必须调整测试 helper；如需越界，停止并报告。
-3. 不解密 Provider API Key，不把 Provider API Key、Authorization、Cookie、图片 base64 写入日志、响应或测试快照。
-4. 所有业务查询必须继续带 tenant_id/object-level authorization。
-5. API 响应和错误码尽量保持兼容；新增错误必须复用现有稳定错误风格。
-6. 若需要数据库约束或索引，必须通过现有 database/migration 机制实现，并提供兼容已有数据的策略；不要破坏已有测试数据。
+2. 不修改 Provider Adapter outbound runtime、SSE、Redis queue、task state machine 或 asset persistence 主流程；如确实必须越界，停止并报告。
+3. 不解密 Provider API Key，不把 Provider API Key、Authorization、Cookie、JWT、图片 base64、MinIO object key 或 raw Provider payload 写入日志、响应或测试快照。
+4. 所有 usage/API-call/operation 查询必须继续 tenant_id 过滤并保持 admin + RBAC 权限要求。
+5. API 响应路径和已有字段保持兼容；新增 `dimension=tenant` 必须使用现有分页 envelope 和错误风格。
+6. 如果新增数据库索引或 migration，必须兼容已有数据并只服务本任务查询性能。
 7. 可以使用 `docs/local-development.md` 中的共享 MySQL/Redis/MinIO 做功能验证，但只允许操作任务自有测试数据，并在交付中说明。
 
 建议实现：
-1. 先阅读 `backend/internal/provider/**`、`backend/internal/model/**`、`backend/internal/settings/**` 中 `taskDefaults` Provider/model 校验路径，以及现有 `backend/internal/api/*provider*test.go`、`backend/internal/api/*model*test.go`。
-2. 先写或补充回归测试，再实现：
-   - Provider 删除时如果同租户存在未删除模型，必须稳定返回冲突，并且不删除 Provider、不写成功 operation log。
-   - Provider 删除与模型创建/更新并发时必须有事务序列化或数据库约束兜底；不能出现模型成功指向刚被删除的 Provider。
-   - 模型创建、Provider 迁移、模型启用必须拒绝 disabled/deleted/cross-tenant Provider；如果现有产品允许 disabled Provider 下保留 disabled 模型，明确只允许“保留/编辑非运行时字段”，不允许启用为可运行模型。
-   - Provider 禁用后，已存在模型的状态处理要与任务创建和 `taskDefaults` 解析一致：不能被运行时当作可用模型。
-   - 失败路径不得记录 `provider.delete`、`model.create`、`model.update`、`model.enable` 成功日志。
-   - 跨租户 Provider/model ID 在错误响应和 operation log 中不得泄露对方名称、模型名或租户信息。
-3. 评估是否需要 `(tenant_id, provider_id, model_name)` 对未删除模型的唯一性约束：
-   - 如果实现，必须覆盖重复创建、soft delete 后重建、跨租户同名、同租户不同 Provider 同名等场景。
-   - 如果不实现，必须在最终交付中说明原因和残余风险。
-4. 需要锁或事务时，优先使用现有 GORM transaction/repository 模式；如使用 row lock 或 DB-specific 行为，测试必须能在当前单元测试环境和 MySQL 语义下保持清楚。
-5. 保持 Provider API Key 加密/脱敏、SSRF URL 校验、RBAC 和租户隔离现有行为不回归。
+1. 先阅读：
+   - `backend/internal/task/runtime_persistence.go` 中 usage record 创建和当前 `estimateCost` 逻辑。
+   - `backend/internal/audit/**` 中 usage records 和 summary 查询/响应。
+   - `backend/internal/api/audit_usage_routes.go` 与 `backend/internal/api/audit_usage_routes_test.go`。
+   - `backend/internal/model/**` 中 pricing JSON 校验。
+2. 先补测试，再实现：
+   - 将成本估算逻辑收敛到可测试的后端函数或小包，避免复制在 API 层和 Worker 层。
+   - 用确定性 decimal/整数/`math/big` 方案计算成本，避免直接 float 累加造成 8 位小数不稳定。不要为了这个任务引入重型依赖，除非你能证明标准库无法满足。
+   - 支持当前 pricing key：`inputToken`/`input_token`/`inputTokens`/`input_tokens`，`outputToken`/`output_token`/`outputTokens`/`output_tokens`，`image`/`images`/`outputImage`/`output_image`。
+   - currency 继续规范化为 3 位大写代码，非法或缺失默认 `USD`。
+   - 负数、NaN、非法 JSON、非法 unit price、缺失 unit price 都不得产生负成本或任务失败。
+   - Admin usage summary 增加 `dimension=tenant`，保持现有 user/project/provider/model 维度兼容。
+   - Usage summary 的 `total`、分页、排序、同 timestamp 稳定性和多 currency 分组保持清楚。
+3. 保持 `rawUsage` 递归脱敏，不能为了成本统计返回未脱敏 Provider metadata。
+4. 如果查询需要索引优化，只新增最小必要索引，并补 migration/schema 测试。
 
 验收命令：
 ```bash
 cd backend
-go test ./internal/provider ./internal/model ./internal/settings ./internal/api -count=1
+go test ./internal/audit ./internal/api ./internal/task ./internal/database -count=1
 go test ./...
 go test -race ./...
 go vet ./...
@@ -273,22 +276,22 @@ docker compose -f deploy/docker-compose.yml config
 - 修改文件清单。
 - 执行的测试命令和结果。
 - 每个 failure mode 对应的测试文件/测试名映射。
-- 安全自查结果，明确没有泄露 Provider Key、Authorization、Cookie、跨租户名称或图片 base64。
+- 安全自查结果，明确没有泄露 Provider Key、Authorization、Cookie、JWT、跨租户数据、图片 base64 或 MinIO object key。
 - 刻意未修改范围。
-- 是否实现模型名称唯一约束的决策说明。
+- 成本计算规则说明，包括支持的 pricing key、非法 pricing 行为和 rounding/format 策略。
 - 如发现公共合同缺口，只报告给主 agent，不修改 docs。
 ```
 
 ### 允许修改文件
 
-- `backend/internal/provider/**`
-- `backend/internal/model/**`
-- `backend/internal/settings/**`，仅限验证 Provider/model 可用性和默认模型一致性所需；默认不改
-- `backend/internal/database/**`，仅限必要 migration/model/index/helper 与测试
-- `backend/internal/api/*provider*test.go`
-- `backend/internal/api/*model*test.go`
-- `backend/internal/api/*settings*test.go`，仅限 taskDefaults 与 Provider/model lifecycle 交叉测试
-- `backend/internal/api/**` 中 Provider/model route wiring 或测试 helper 必要的小范围调整
+- `backend/internal/task/runtime_persistence.go`
+- `backend/internal/task/*test.go`
+- `backend/internal/audit/**`
+- `backend/internal/api/audit_usage_routes.go`
+- `backend/internal/api/audit_usage_routes_test.go`
+- `backend/internal/model/**`，仅限 pricing validation/fixtures/tests 必要调整
+- `backend/internal/database/**`，仅限 usage/cost 查询所需最小 migration/model/index/helper 与测试
+- 可新增 `backend/internal/usagecost/**` 或等价小包，用于确定性成本估算
 
 ### 禁止修改文件
 
@@ -297,89 +300,88 @@ docker compose -f deploy/docker-compose.yml config
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `backend/internal/task/**`
+- `backend/internal/provider/**`，除非只读测试 fixture 需要；默认不改
 - `backend/internal/provideradapter/**`
 - `backend/internal/queue/**`
 - `backend/internal/sse/**`
 - `backend/internal/asset/**`
 - `backend/cmd/**`，除非编译因新增 migration wiring 必须调整；默认不改
-- 任何 AI Provider runtime 调用逻辑、API Key 解密路径、task/SSE/queue 主流程
+- 任何 AI Provider outbound runtime、API Key 解密路径、task status state machine、SSE/queue 主流程
 
 ### 具体开发内容
 
-1. 梳理现有 Provider/model 生命周期规则，记录你实际采用的产品语义：
-   - 删除 Provider 是否只允许在无未删除模型时发生。
-   - 禁用 Provider 是否允许保留模型但禁止新增/启用可运行模型。
-   - 模型名称唯一性是否需要本次落地。
-2. 补充 Provider 删除与模型 create/update/enable 的边界测试。
-3. 如需要，增加 repository/service 层锁定、事务内二次校验或数据库约束，保证并发下数据库最终状态一致。
-4. 确保 taskDefaults 的 Provider/model 解析继续拒绝 disabled/deleted/cross-tenant Provider 或模型，不因本次改动回归。
-5. 确保失败路径不写成功 operation log，错误响应稳定且不泄露对象详情。
-6. 保持现有 Provider 响应不返回 API Key；保持 Provider URL SSRF 校验不回归。
+1. 抽出或重构成本估算函数，供 Worker usage persistence 使用，并提供直接单元测试。
+2. 确认 `usage_records.estimated_cost` 始终为 `0.00000000` 或正数 8 位小数字符串。
+3. 增加 `dimension=tenant` summary 查询和响应，保持租户内过滤、分页、时间范围和排序。
+4. 保持现有 `dimension=user|project|provider|model` 响应兼容。
+5. 强化测试覆盖 raw usage redaction、跨租户隔离、多 currency 分组、同 timestamp 稳定分页、非法 query validation。
+6. 如新增索引，更新 migration 测试并确认 MySQL/SQLite 测试兼容。
 
 ### 必须保持的现有行为
 
-- Provider CRUD、enable/disable/test 的现有响应结构保持兼容，且不返回完整 API Key。
-- Provider base URL SSRF 防护保持现有覆盖。
-- Model capability 校验、enabled model list、RBAC、tenant scope、CSRF route behavior 不回归。
-- `taskDefaults` 仍只能解析 enabled same-tenant Provider/model；显式 task 请求仍走现有 task validation。
-- 成功 operation log 只在事务成功后写入；被拒绝的写入不记录成功 action。
+- `GET /admin/usage/records` 响应字段保持兼容。
+- `GET /admin/usage/summary` 现有维度、分页、过滤和排序保持兼容。
+- Usage、operation log、API call log 读取仍只允许 tenant admin + 对应 RBAC 权限。
+- `rawUsage`、operation metadata、API call metadata 继续递归脱敏。
+- Worker 成功任务不因 pricing 缺失或非法而失败。
 
 ### 允许的中间态
 
-- 可以先通过服务层事务和锁解决并发完整性；数据库唯一约束如风险过大可推迟，但必须说明原因。
-- 可以保留 disabled Provider 下已有 disabled 模型的管理能力，只要不能被运行时用作 enabled model。
-- 成本统计、前端 UI 和 Provider Adapter runtime 不在本任务范围内。
+- 后端可先提供更准确的 usage/cost API；前端成本看板留给 `P14-FE-COST-OBSERVABILITY`。
+- 价格配置仍来自模型 `pricing_json`，不新增 billing account 或 invoice 表。
+- 不要求历史脏数据重算成本；如发现历史成本有 float 误差，只记录为后续 migration/maintenance 事项。
 
 ### 禁止的半迁移状态
 
-- Provider 删除成功后仍存在未删除模型指向该 Provider。
-- 模型创建、迁移或启用成功后指向 disabled/deleted/cross-tenant Provider。
-- 失败写入返回错误但已经写了成功 operation log。
-- 为解决管理接口问题而修改 task execution、Provider Adapter runtime、SSE 或 queue 主流程。
-- 通过错误信息、日志或测试快照暴露 Provider API Key、跨租户对象名称、Authorization、Cookie 或图片 base64。
+- API summary 声称支持 tenant 维度但仍返回跨租户数据或未过滤数据。
+- Worker 因 pricing 缺失/非法而把成功 Provider 任务标记失败。
+- 成本估算直接使用不稳定 float 累加并导致不可预测的 8 位小数。
+- 为了成本展示把 raw Provider usage、Authorization、Cookie、Provider Key 或 image base64 暴露给前端。
+- 改动前端成本 UI 或部署配置。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| 删除仍有关联未删除模型的 Provider | `409`/稳定冲突错误；Provider/model 不变；无成功 delete log | 是 |
-| 删除 Provider 与创建模型并发 | 最终不能同时出现 Provider deleted 且模型未删除指向它 | 是 |
-| 更新模型 Provider 到 deleted/cross-tenant Provider | 拒绝，响应不泄露目标对象详情，无成功 update log | 是 |
-| 创建模型到 disabled Provider | 拒绝或仅允许明确非运行时安全语义；不能创建 enabled 可运行模型 | 是 |
-| 启用模型但 Provider disabled/deleted | 拒绝，无成功 enable log | 是 |
-| Provider 禁用后 taskDefaults 仍指向该 Provider/model | 后续任务默认解析 fail closed | 是 |
-| 重复模型名称 | 若本次实现唯一约束，应稳定拒绝；若不实现，应说明风险 | 按决策覆盖 |
-| 跨租户模型/Provider ID | 404/422/403 风格保持稳定，不泄露名称或租户信息 | 是 |
+| pricing 缺失或空 | 成本 `0.00000000`，任务成功路径不失败 | 是 |
+| pricing 非法 JSON 或非法数字 | 成本 `0.00000000`，不 panic，不泄露内部错误 | 是 |
+| pricing 为负数 | 负数忽略或归零，成本不为负 | 是 |
+| 多种 supported pricing key | input/output/image 都按兼容 key 计算 | 是 |
+| 小数价格和大 token/image 数 | 8 位小数确定性 rounding/format | 是 |
+| summary `dimension=tenant` | 只聚合当前租户，`dimensionId` 为当前 tenant ID | 是 |
+| summary 多 currency | 按 dimension + currency 分组，total 与分页稳定 | 是 |
+| 过滤 user/project/provider/model/date | 过滤仍 tenant-scoped 且不串租户 | 是 |
+| raw usage 含 secret/base64 | 响应递归脱敏 | 是 |
+| 非 admin 或缺 `usage:read` | 拒绝读取 | 是 |
 
 ### 安全要求
 
-- 所有 Provider/model 查询和写入必须带 tenant_id 过滤。
-- 只授权 tenant admin 或具备对应 `provider:*` / `model:*` 权限的用户。
-- Provider API Key 仍只加密存储，不返回、不解密、不写日志。
-- Provider base_url SSRF 校验不得弱化。
-- Operation log metadata 必须脱敏，且不能包含跨租户对象详情。
-- 错误响应使用稳定错误码和泛化消息。
+- 所有 usage/cost 查询必须带 tenant_id 过滤。
+- 不引入任何 Provider API Key 解密路径。
+- `rawUsage` 和 API call metadata 必须继续递归脱敏。
+- 不返回 MinIO object keys、bucket names、image base64、Authorization、Cookie、JWT 或 Provider API keys。
+- 错误响应保持稳定泛化，不泄露 SQL、pricing 原文、Provider 原始响应。
 
 ### 必须新增或更新的回归测试
 
-- Provider route/service 测试：Provider delete linked models、delete/create race 或等价事务边界、禁用 Provider 后模型启用/创建边界、失败日志不存在。
-- Model route/service 测试：create/update/enable 对 deleted/disabled/cross-tenant Provider 的拒绝和脱敏响应。
-- Settings/taskDefaults 交叉测试：Provider 或 model disabled/deleted 后，默认任务创建 fail closed，无 task/event/enqueue/success-audit 副作用。
-- 如果实现模型名称唯一约束：覆盖重复创建、soft delete 后重建、跨租户同名和不同 Provider 同名。
+- 成本估算单元测试：缺失/非法/负数 pricing、多 key 兼容、decimal rounding、currency fallback。
+- Worker usage persistence 测试：成功任务在 pricing 异常时仍成功，usage record 成本为零且不重复创建。
+- Admin usage summary 测试：`dimension=tenant`、现有维度不回归、多 currency、分页稳定、过滤与跨租户隔离。
+- Admin usage records 测试：raw usage redaction 不回归。
+- 如果新增 migration/index：数据库 migration 测试。
 
 ### 验收标准
 
-- 并发或交错写入下，数据库不会产生 enabled/active 模型指向不可用 Provider 的状态。
-- Provider 删除、禁用、模型创建、模型更新、模型启用的边界行为有测试覆盖。
-- RBAC、租户隔离、Provider Key 脱敏、SSRF 校验、operation log 行为不回归。
+- Worker usage cost 估算确定、非负、8 位小数稳定。
+- Admin usage summary 支持 tenant/user/project/provider/model 维度并保持 tenant isolation。
+- 现有 usage records、operation logs、API call logs 读取不回归。
 - 未修改前端、部署、公共合同文档或 Agent 规则。
 
 ### 测试命令
 
 ```bash
 cd backend
-go test ./internal/provider ./internal/model ./internal/settings ./internal/api -count=1
+go test ./internal/audit ./internal/api ./internal/task ./internal/database -count=1
 go test ./...
 go test -race ./...
 go vet ./...

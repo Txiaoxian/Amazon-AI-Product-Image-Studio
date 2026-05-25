@@ -126,7 +126,7 @@ P6 implementation notes:
 - Implemented additional fields: `created_by`, `deleted_at`.
 - Implemented indexes include `(tenant_id, provider_id)`, `(tenant_id, status)`, `(tenant_id, provider_id, model_name)`, `(tenant_id, supports_generate)`, `(tenant_id, supports_edit)`, `(tenant_id, deleted_at)`, and `created_by`.
 - Current implementation does not enforce uniqueness on `(tenant_id, provider_id, model_name)`; R7 confirmed current task execution uses `modelId`, so runtime does not require that invariant. A later management/data-integrity decision may still tighten it.
-- Current implementation keeps model rows independently soft-deletable. P10 resolved the linked-model behavior: Provider deletion is blocked while any non-deleted same-tenant model still references that Provider; soft-deleted models do not block deletion, and Provider disable does not cascade to models.
+- Current implementation keeps model rows independently soft-deletable. P10 resolved Provider deletion behavior: deletion is blocked while any non-deleted same-tenant model still references that Provider; soft-deleted models do not block deletion. P14 tightened Provider disable and model write behavior: Provider disable is blocked while enabled linked models exist, disabled linked models may remain, and model create/update/enable rejects disabled, deleted, or cross-tenant Providers.
 - Generated and edited task execution must not begin in P6; models are configuration data for P7/P8.
 
 ### generation_tasks
@@ -177,6 +177,8 @@ Do not store API keys, Authorization headers, Cookies, or image base64.
 Stores usage and estimated cost.
 
 Key fields: `id`, `tenant_id`, `task_id`, `user_id`, `project_id`, `provider_id`, `model_id`, `input_tokens`, `output_tokens`, `image_count`, `estimated_cost`, `currency`, `raw_usage_json`, `created_at`.
+
+P14 usage/cost reporting must keep `estimated_cost` deterministic, non-negative, and formatted to 8 decimal places. Missing or invalid model pricing should produce zero estimated cost rather than failing otherwise successful task completion. Usage records must remain queryable by tenant, user, project, Provider, model, and tenant-wide aggregate views.
 
 ### operation_logs
 

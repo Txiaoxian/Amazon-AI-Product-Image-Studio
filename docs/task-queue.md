@@ -175,6 +175,12 @@ P10 SSE bridge lifecycle plan:
 P10 Provider/model lifecycle plan:
 
 - Provider deletion must be blocked while any non-deleted linked models exist in the same tenant.
-- Provider disable remains allowed and does not cascade to linked models; task creation already rejects disabled Providers.
 - Soft-deleted models no longer block Provider deletion.
 - Cross-tenant models must not block or reveal another tenant's Provider deletion.
+
+P14 Provider/model lifecycle update:
+
+- Provider disable through both `/disable` and `PATCH status=DISABLED` must be blocked while enabled same-tenant linked models exist.
+- Model create/update/enable must reject disabled, deleted, or cross-tenant Providers.
+- Loaded `taskDefaults` must be revalidated before task creation, so disabled/deleted Provider or model references fail closed and do not enqueue tasks.
+- Same-Provider `model_name` uniqueness remains deferred because task execution uses stable `modelId` references.

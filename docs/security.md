@@ -13,9 +13,9 @@ The current `main` branch has completed P10 runtime hardening, P11 backend/front
 
 Remaining security and hardening risks:
 
-- Provider deletion is now blocked while same-tenant non-deleted linked models exist, but a future maintenance task may add stronger transaction serialization for concurrent Provider delete and model create/update races.
+- Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, and failed lifecycle writes do not record successful operation logs. Same-Provider `model_name` uniqueness remains a deferred data-integrity decision.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, and `storageRetention` is backed by Worker maintenance cleanup. Storage quota may become writable only in the same task that enforces quota in asset creation paths. Log retention remains deferred until its cleanup consumer is explicit.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, and `storageQuota` is backed by reference upload and Worker output persistence checks. Log retention remains deferred until its cleanup consumer is explicit.
 
 Resolved transition item:
 
@@ -50,6 +50,7 @@ Resolved transition item:
 - P13 task concurrency policy now exposes tenant/user/Provider/model limits only with a Worker runtime consumer. Tenant values may only narrow or match environment hard caps, global concurrency remains environment-owned, Provider row limits remain additional stricter caps, and malformed persisted `task_concurrency` fails closed before Provider execution or successful output/usage/API-call side effects.
 - P13 storage cleanup foundation now uses an independent bounded cleanup context for upload rollback after object write and adds an internal tenant-scoped physical cleanup service for soft-deleted assets. It deletes only metadata-selected original/thumbnail objects older than a caller-supplied cutoff, treats missing objects as idempotent success, leaves failed deletes retryable, and tracks physical cleanup with `purged_at`.
 - P13 storage retention runtime now exposes nullable `storageRetention.deletedAssetRetentionDays` only with a Worker maintenance consumer. Unset or cleared retention is disabled, malformed persisted settings fail closed, inactive tenants are skipped, and cleanup logs avoid object keys, bucket names, MinIO URLs, image bytes, Authorization, Cookie, JWT, and Provider API keys.
+- P14 Provider/model lifecycle integrity prevents enabled models from pointing at disabled or deleted Providers through normal management APIs, revalidates loaded task defaults, and keeps lifecycle conflict responses non-sensitive.
 - P13 storage quota accounting now exposes nullable `storageQuota.maxBytes` only with real backend consumers. `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata; upload and Worker output quota failures must not create successful metadata, output events, usage records, success logs, or leak object identifiers.
 
 Storage and P5 review hardening backlog:

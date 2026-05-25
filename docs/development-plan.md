@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After R13 Runtime Settings Review
+## Current State During P14 Provider And Cost Operations
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -38,6 +38,7 @@ Phase status:
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
+| P14 | In progress | Provider/model lifecycle integrity is merged. Backend usage/cost reporting is next; frontend cost observability and R14 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -79,6 +80,8 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging frontend system settings. No blocking issues were found. Validation passed frontend lint, type-check, tests, build; backend tests, race tests, vet, API/Worker builds; Docker Compose config; whitespace checks; and frontend forbidden-pattern scans for direct AI Provider calls, browser Provider-key storage, task polling, deferred settings, bucket/object-key exposure, and sensitive auth strings. Non-blocking follow-ups remain: strict concurrent quota reservation/counters, a dedicated storage usage index, optional minimum bound for `WORKER_RETENTION_MAINTENANCE_INTERVAL`, built-in `asset:*` permission reconciliation for existing tenants, thumbnail policy, complete orphan cleanup, log retention, and stronger Provider/model transaction serialization.
 
+`P14-BE-PROVIDER-MODEL-INTEGRITY` was reviewed, fixed, and merged. Provider/model management now rejects model create/update/enable paths that target disabled, deleted, or cross-tenant Providers; default task settings are revalidated when loaded; Provider delete takes a row lock and remains blocked while same-tenant non-deleted linked models exist; Provider disable through both `/disable` and `PATCH status=DISABLED` is rejected while enabled linked models remain. Failed writes do not record successful operation logs and conflict responses stay non-sensitive. Validation passed focused Provider/model/settings/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Same-Provider `model_name` uniqueness remains deferred because runtime task execution uses stable `modelId` references.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -100,6 +103,7 @@ The current `main` branch supports:
 - Backend runtime-backed storage retention policy: tenant admins can optionally set `storageRetention.deletedAssetRetentionDays`; Worker maintenance consumes it and defaults to disabled when unset or cleared.
 - Backend runtime-backed storage quota policy: tenant admins can optionally set `storageQuota.maxBytes`; `storageQuota.usedBytes` is computed from tenant-scoped asset metadata, and uploads/Worker output persistence enforce the quota before creating new asset metadata.
 - Frontend admin system settings UI for active runtime-backed settings only: upload policy, task defaults, task concurrency, storage retention, and storage quota.
+- Backend Provider/model lifecycle integrity: Provider delete and disable are guarded against linked model states that would leave active models pointing at unavailable Providers, and model write paths reject disabled, deleted, or cross-tenant Providers.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -199,16 +203,15 @@ Goal: harden Provider/model operations and usage/cost reporting for real operati
 Suggested order:
 
 1. `P14-BE-PROVIDER-MODEL-INTEGRITY`
-   - Stronger transaction serialization for Provider delete versus model create/update.
-   - Decide and implement optional `(tenant_id, provider_id, model_name)` uniqueness if required.
+   - Completed and merged. Provider delete/disable and model create/update/enable now preserve Provider/model lifecycle integrity; same-Provider `model_name` uniqueness remains deferred by decision.
 2. `P14-BE-USAGE-COST-REPORTING`
-   - Improve cost estimation and aggregation by tenant, user, project, Provider, and model.
+   - Next. Improve deterministic cost estimation and backend usage/cost aggregation by tenant, user, project, Provider, and model.
 3. `P14-FE-COST-OBSERVABILITY`
    - Frontend views for cost/usage trends and drilldowns.
 4. `R14`
    - Review Provider lifecycle, data integrity, and cost reporting.
 
-Parallelism: backend Provider integrity and usage reporting may run in parallel only after their contracts are frozen.
+Parallelism: keep `P14-BE-USAGE-COST-REPORTING` serial because it may touch Worker usage persistence and admin usage API contracts. Start frontend cost observability only after backend reporting behavior is merged.
 
 ### P15: Release Hardening And End-To-End QA
 
@@ -281,4 +284,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P14-BE-PROVIDER-MODEL-INTEGRITY` from latest `main`. The next slice is backend-only and should harden Provider/model lifecycle integrity, especially Provider delete/status changes racing with model create/update/enable paths. Do not start cost reporting until Provider/model invariants are stable.
+Run `P14-BE-USAGE-COST-REPORTING` from latest `main`. The next slice is backend-only and should make cost estimation deterministic, expose tenant-scoped usage/cost aggregation that includes tenant/user/project/Provider/model views, and preserve existing redaction and pagination behavior. Do not start the frontend cost observability task until this backend slice is reviewed and merged.
