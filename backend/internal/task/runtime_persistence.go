@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"image/jpeg"
 	"image/png"
@@ -19,6 +18,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/usagecost"
 	"golang.org/x/image/webp"
 	"gorm.io/gorm"
 )
@@ -289,7 +289,11 @@ func (p *WorkerProcessor) createUsageIfAbsent(ctx context.Context, tx *gorm.DB, 
 	if count > 0 {
 		return database.UsageRecord{}, nil
 	}
-	currency, estimatedCost := estimateCost(modelRecord, usage)
+	cost := usagecost.Estimate(modelRecord.PricingJSON, usagecost.Usage{
+		InputTokens:  nonNegativeInt64(usage.InputTokens),
+		OutputTokens: nonNegativeInt64(usage.OutputTokens),
+		ImageCount:   nonNegativeInt(usage.ImageCount),
+	})
 	record := database.UsageRecord{
 		ID:            idgen.New(),
 		TenantID:      scope.ID(),
@@ -301,8 +305,8 @@ func (p *WorkerProcessor) createUsageIfAbsent(ctx context.Context, tx *gorm.DB, 
 		InputTokens:   nonNegativeInt64(usage.InputTokens),
 		OutputTokens:  nonNegativeInt64(usage.OutputTokens),
 		ImageCount:    nonNegativeInt(usage.ImageCount),
-		EstimatedCost: estimatedCost,
-		Currency:      currency,
+		EstimatedCost: cost.EstimatedCost,
+		Currency:      cost.Currency,
 		RawUsageJSON:  provideradapter.JSONString(usage.Raw),
 		CreatedAt:     now,
 	}
@@ -314,39 +318,6 @@ func (p *WorkerProcessor) createUsageIfAbsent(ctx context.Context, tx *gorm.DB, 
 
 func shouldCreateUsage(usage UsageResult) bool {
 	return usage.ImageCount > 0 || usage.InputTokens > 0 || usage.OutputTokens > 0 || len(usage.Raw) > 0
-}
-
-func estimateCost(modelRecord database.AIModel, usage UsageResult) (string, string) {
-	var pricing struct {
-		Currency   string             `json:"currency"`
-		UnitPrices map[string]float64 `json:"unitPrices"`
-	}
-	_ = json.Unmarshal([]byte(modelRecord.PricingJSON), &pricing)
-	currency := "USD"
-	if strings.TrimSpace(pricing.Currency) != "" {
-		currency = strings.ToUpper(strings.TrimSpace(pricing.Currency))
-	}
-	if len(currency) != 3 {
-		currency = "USD"
-	}
-	unitPrices := pricing.UnitPrices
-	cost := 0.0
-	cost += float64(nonNegativeInt64(usage.InputTokens)) * firstPrice(unitPrices, "inputToken", "input_token", "inputTokens", "input_tokens")
-	cost += float64(nonNegativeInt64(usage.OutputTokens)) * firstPrice(unitPrices, "outputToken", "output_token", "outputTokens", "output_tokens")
-	cost += float64(nonNegativeInt(usage.ImageCount)) * firstPrice(unitPrices, "image", "images", "outputImage", "output_image")
-	return currency, fmt.Sprintf("%.8f", cost)
-}
-
-func firstPrice(values map[string]float64, keys ...string) float64 {
-	for _, key := range keys {
-		if values == nil {
-			return 0
-		}
-		if value, ok := values[key]; ok && value > 0 {
-			return value
-		}
-	}
-	return 0
 }
 
 func (p *WorkerProcessor) cleanupUploadedOutputs(ctx context.Context, outputs []uploadedOutput) {

@@ -318,6 +318,51 @@ func TestWorkerProcessorPersistsOutputsWithinStorageQuota(t *testing.T) {
 	assertTableCount(t, db, &database.TaskOutput{}, 1)
 }
 
+func TestWorkerProcessorPersistsZeroCostForIncompletePricingWithoutFailingTask(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	if err := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND id = ?", "tenant-worker", "model-worker").
+		Update("pricing_json", `{"currency":"gbp","unitPrices":{"inputToken":0.01}}`).Error; err != nil {
+		t.Fatalf("update model pricing: %v", err)
+	}
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-incomplete-pricing", Status: StatusQueued})
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{
+				Usage: UsageResult{
+					InputTokens:  10,
+					OutputTokens: 5,
+					Raw:          map[string]any{"source": "incomplete-pricing-test"},
+				},
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	var usage database.UsageRecord
+	if err := db.Where("tenant_id = ? AND task_id = ?", "tenant-worker", taskID).First(&usage).Error; err != nil {
+		t.Fatalf("load usage record: %v", err)
+	}
+	if usage.Currency != "GBP" {
+		t.Fatalf("usage currency = %q, want GBP", usage.Currency)
+	}
+	if usage.EstimatedCost != "0.00000000" {
+		t.Fatalf("usage estimated cost = %q, want 0.00000000", usage.EstimatedCost)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventUsageRecorded, EventTaskCompleted})
+}
+
 func TestWorkerProcessorFailsOutputsExceedingStorageQuotaWithoutOutputSideEffects(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)

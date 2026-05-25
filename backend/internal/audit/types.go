@@ -3,19 +3,19 @@ package audit
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/redaction"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/usagecost"
 )
 
 const (
 	PermissionUsageRead = "usage:read"
 	PermissionAuditRead = "audit:read"
 
+	UsageSummaryDimensionTenant   = "tenant"
 	UsageSummaryDimensionUser     = "user"
 	UsageSummaryDimensionProject  = "project"
 	UsageSummaryDimensionProvider = "provider"
@@ -248,7 +248,7 @@ func APICallLogResponseFromRecord(record database.APICallLog, redactor *redactio
 
 func ValidUsageSummaryDimension(dimension string) bool {
 	switch dimension {
-	case UsageSummaryDimensionUser, UsageSummaryDimensionProject, UsageSummaryDimensionProvider, UsageSummaryDimensionModel:
+	case UsageSummaryDimensionTenant, UsageSummaryDimensionUser, UsageSummaryDimensionProject, UsageSummaryDimensionProvider, UsageSummaryDimensionModel:
 		return true
 	default:
 		return false
@@ -305,9 +305,5 @@ func formatTimeString(value string) string {
 }
 
 func formatDecimal(value string) string {
-	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	if err != nil || parsed < 0 {
-		return "0.00000000"
-	}
-	return fmt.Sprintf("%.8f", parsed)
+	return usagecost.FormatDecimal8(value)
 }

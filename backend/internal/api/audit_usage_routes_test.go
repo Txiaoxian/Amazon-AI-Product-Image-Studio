@@ -127,19 +127,36 @@ func TestAdminUsageSummaryAggregatesWithinTenant(t *testing.T) {
 	seedUsageRecord(t, db, usageSeed{ID: "usage-summary-a2", TenantID: adminSession.tenantID, TaskID: "task-a2", UserID: adminSession.userID, ProjectID: "project-a", ProviderID: "provider-a", ModelID: "model-b", InputTokens: 30, OutputTokens: 40, ImageCount: 2, EstimatedCost: "0.30000000", RawUsageJSON: `{}`, CreatedAt: now.Add(time.Minute)})
 	seedUsageRecord(t, db, usageSeed{ID: "usage-summary-b", TenantID: "tenant-b", TaskID: "task-b", UserID: "user-b", ProjectID: "project-b", ProviderID: "provider-a", ModelID: "model-b", InputTokens: 1000, OutputTokens: 1000, ImageCount: 10, EstimatedCost: "10.00000000", RawUsageJSON: `{}`, CreatedAt: now.Add(2 * time.Minute)})
 
-	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=provider&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
-	if response.Code != http.StatusOK {
-		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	for _, dimension := range []string{"tenant", "user", "project", "provider", "model"} {
+		t.Run(dimension, func(t *testing.T) {
+			response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension="+dimension+"&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+			if response.Code != http.StatusOK {
+				t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+			assertResponseExcludes(t, response.Body.String(), "tenant-b", "task-b", "user-b", "project-b", "10.00000000")
+			data := decodeData(t, response)
+			records := recordsField(t, data)
+			if len(records) == 0 {
+				t.Fatalf("summary records empty for dimension %s", dimension)
+			}
+			for _, record := range records {
+				summary := record.(map[string]any)
+				if stringField(t, summary, "dimension") != dimension {
+					t.Fatalf("summary dimension = %#v, want %s", summary, dimension)
+				}
+				if dimension == "tenant" && stringField(t, summary, "dimensionId") != adminSession.tenantID {
+					t.Fatalf("tenant summary dimensionId = %q, want current tenant", stringField(t, summary, "dimensionId"))
+				}
+			}
+		})
 	}
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=provider&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
 	data := decodeData(t, response)
 	assertPageMeta(t, data, 1, 1, 10)
-	records := recordsField(t, data)
-	if len(records) != 1 {
-		t.Fatalf("summary len = %d, want 1", len(records))
-	}
-	summary := records[0].(map[string]any)
-	if stringField(t, summary, "dimension") != "provider" || stringField(t, summary, "dimensionId") != "provider-a" {
-		t.Fatalf("summary dimension = %#v", summary)
+	summary := recordsField(t, data)[0].(map[string]any)
+	if stringField(t, summary, "dimensionId") != "provider-a" {
+		t.Fatalf("summary dimensionId = %#v", summary)
 	}
 	assertFloatField(t, summary, "inputTokens", 40)
 	assertFloatField(t, summary, "outputTokens", 60)
@@ -148,9 +165,120 @@ func TestAdminUsageSummaryAggregatesWithinTenant(t *testing.T) {
 		t.Fatalf("summary estimatedCost = %q, want 0.40000000", stringField(t, summary, "estimatedCost"))
 	}
 
-	invalid := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant", nil, adminSession.cookies, nil)
+	invalid := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=account", nil, adminSession.cookies, nil)
 	if invalid.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid summary dimension status = %d, want %d", invalid.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestAdminUsageSummaryTenantDimensionReturnsExactAggregate(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	seedUsageRecord(t, db, usageSeed{ID: "usage-tenant-exact-a", TenantID: adminSession.tenantID, TaskID: "task-tenant-exact-a", UserID: adminSession.userID, ProjectID: "project-a", ProviderID: "provider-a", ModelID: "model-a", InputTokens: 10, OutputTokens: 20, ImageCount: 1, EstimatedCost: "0.10000000", RawUsageJSON: `{}`, CreatedAt: now})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-tenant-exact-b", TenantID: adminSession.tenantID, TaskID: "task-tenant-exact-b", UserID: adminSession.userID, ProjectID: "project-b", ProviderID: "provider-b", ModelID: "model-b", InputTokens: 30, OutputTokens: 40, ImageCount: 2, EstimatedCost: "0.30000000", RawUsageJSON: `{}`, CreatedAt: now.Add(time.Minute)})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-tenant-exact-cross", TenantID: "tenant-b", TaskID: "task-tenant-exact-cross", UserID: "user-b", ProjectID: "project-cross", ProviderID: "provider-cross", ModelID: "model-cross", InputTokens: 1000, OutputTokens: 1000, ImageCount: 10, EstimatedCost: "10.00000000", RawUsageJSON: `{}`, CreatedAt: now.Add(2 * time.Minute)})
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	assertResponseExcludes(t, response.Body.String(), "tenant-b", "task-tenant-exact-cross", "10.00000000")
+	data := decodeData(t, response)
+	assertPageMeta(t, data, 1, 1, 10)
+	records := recordsField(t, data)
+	if len(records) != 1 {
+		t.Fatalf("tenant summary len = %d, want 1", len(records))
+	}
+	assertUsageSummary(t, records[0].(map[string]any), "tenant", adminSession.tenantID, "USD", 2, 40, 60, 3, "0.40000000")
+}
+
+func TestAdminUsageSummaryGroupsByDimensionAndCurrency(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	seedUsageRecord(t, db, usageSeed{ID: "usage-currency-usd", TenantID: adminSession.tenantID, TaskID: "task-currency-usd", UserID: adminSession.userID, ProjectID: "project-a", ProviderID: "provider-a", ModelID: "model-a", InputTokens: 1, OutputTokens: 2, ImageCount: 1, EstimatedCost: "0.10000000", Currency: "USD", RawUsageJSON: `{}`, CreatedAt: now})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-currency-eur", TenantID: adminSession.tenantID, TaskID: "task-currency-eur", UserID: adminSession.userID, ProjectID: "project-a", ProviderID: "provider-a", ModelID: "model-a", InputTokens: 3, OutputTokens: 4, ImageCount: 2, EstimatedCost: "0.30000000", Currency: "EUR", RawUsageJSON: `{}`, CreatedAt: now})
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=provider&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	data := decodeData(t, response)
+	assertPageMeta(t, data, 2, 1, 10)
+	records := recordsField(t, data)
+	if len(records) != 2 {
+		t.Fatalf("currency summary len = %d, want 2", len(records))
+	}
+	assertUsageSummary(t, records[0].(map[string]any), "provider", "provider-a", "EUR", 1, 3, 4, 2, "0.30000000")
+	assertUsageSummary(t, records[1].(map[string]any), "provider", "provider-a", "USD", 1, 1, 2, 1, "0.10000000")
+}
+
+func TestAdminUsageSummaryPaginationIsStableWhenLatestCreatedAtMatches(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	createdAt := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	for _, projectID := range []string{"project-c", "project-a", "project-b"} {
+		seedUsageRecord(t, db, usageSeed{
+			ID:            "usage-summary-" + projectID,
+			TenantID:      adminSession.tenantID,
+			TaskID:        "task-summary-" + projectID,
+			UserID:        adminSession.userID,
+			ProjectID:     projectID,
+			ProviderID:    "provider-a",
+			ModelID:       "model-a",
+			InputTokens:   1,
+			OutputTokens:  1,
+			ImageCount:    1,
+			EstimatedCost: "0.01000000",
+			RawUsageJSON:  `{}`,
+			CreatedAt:     createdAt,
+		})
+	}
+
+	pageOne := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=project&pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
+	pageTwo := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=project&pageNum=2&pageSize=2", nil, adminSession.cookies, nil)
+	repeatedPageOne := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=project&pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
+	repeatedPageTwo := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=project&pageNum=2&pageSize=2", nil, adminSession.cookies, nil)
+
+	assertSummaryDimensionIDs(t, pageOne, []string{"project-a", "project-b"})
+	assertSummaryDimensionIDs(t, pageTwo, []string{"project-c"})
+	assertSummaryDimensionIDs(t, repeatedPageOne, []string{"project-a", "project-b"})
+	assertSummaryDimensionIDs(t, repeatedPageTwo, []string{"project-c"})
+}
+
+func TestAdminUsageSummaryFiltersRemainTenantScoped(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	seedUsageRecord(t, db, usageSeed{ID: "usage-filter-match", TenantID: adminSession.tenantID, TaskID: "task-filter-match", UserID: adminSession.userID, ProjectID: "project-filter", ProviderID: "provider-filter", ModelID: "model-filter", InputTokens: 5, OutputTokens: 6, ImageCount: 1, EstimatedCost: "0.11000000", RawUsageJSON: `{}`, CreatedAt: now})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-filter-time-out", TenantID: adminSession.tenantID, TaskID: "task-filter-time-out", UserID: adminSession.userID, ProjectID: "project-filter", ProviderID: "provider-filter", ModelID: "model-filter", InputTokens: 100, OutputTokens: 100, ImageCount: 10, EstimatedCost: "1.00000000", RawUsageJSON: `{}`, CreatedAt: now.Add(-2 * time.Hour)})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-filter-other-project", TenantID: adminSession.tenantID, TaskID: "task-filter-other-project", UserID: adminSession.userID, ProjectID: "project-other", ProviderID: "provider-filter", ModelID: "model-filter", InputTokens: 100, OutputTokens: 100, ImageCount: 10, EstimatedCost: "1.00000000", RawUsageJSON: `{}`, CreatedAt: now})
+	seedUsageRecord(t, db, usageSeed{ID: "usage-filter-cross-tenant", TenantID: "tenant-b", TaskID: "task-filter-cross-tenant", UserID: adminSession.userID, ProjectID: "project-filter", ProviderID: "provider-filter", ModelID: "model-filter", InputTokens: 1000, OutputTokens: 1000, ImageCount: 10, EstimatedCost: "10.00000000", RawUsageJSON: `{}`, CreatedAt: now})
+
+	path := "/api/v1/admin/usage/summary?dimension=tenant&userId=" + adminSession.userID + "&projectId=project-filter&providerId=provider-filter&modelId=model-filter&createdAtFrom=2026-05-18T09:00:00Z&createdAtTo=2026-05-18T11:00:00Z"
+	response := performJSON(router, http.MethodGet, path, nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	assertResponseExcludes(t, response.Body.String(), "tenant-b", "task-filter-cross-tenant", "project-other", "10.00000000")
+	data := decodeData(t, response)
+	assertPageMeta(t, data, 1, 1, 20)
+	records := recordsField(t, data)
+	if len(records) != 1 {
+		t.Fatalf("filtered summary len = %d, want 1", len(records))
+	}
+	assertUsageSummary(t, records[0].(map[string]any), "tenant", adminSession.tenantID, "USD", 1, 5, 6, 1, "0.11000000")
+}
+
+func TestAdminUsageSummaryPreservesLargeDecimalCost(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	seedUsageRecord(t, db, usageSeed{ID: "usage-large-decimal", TenantID: adminSession.tenantID, TaskID: "task-large-decimal", UserID: adminSession.userID, ProjectID: "project-large-decimal", ProviderID: "provider-large-decimal", ModelID: "model-large-decimal", InputTokens: 1, OutputTokens: 1, ImageCount: 1, EstimatedCost: "1234567890.12345678", RawUsageJSON: `{}`, CreatedAt: now})
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	summary := recordsField(t, decodeData(t, response))[0].(map[string]any)
+	if stringField(t, summary, "estimatedCost") != "1234567890.12345678" {
+		t.Fatalf("summary estimatedCost = %q, want 1234567890.12345678", stringField(t, summary, "estimatedCost"))
 	}
 }
 
@@ -407,12 +535,17 @@ type usageSeed struct {
 	OutputTokens  int64
 	ImageCount    int
 	EstimatedCost string
+	Currency      string
 	RawUsageJSON  string
 	CreatedAt     time.Time
 }
 
 func seedUsageRecord(t *testing.T, db *gorm.DB, seed usageSeed) {
 	t.Helper()
+	currency := strings.ToUpper(strings.TrimSpace(seed.Currency))
+	if currency == "" {
+		currency = "USD"
+	}
 	if err := db.Create(&database.UsageRecord{
 		ID:            seed.ID,
 		TenantID:      seed.TenantID,
@@ -425,7 +558,7 @@ func seedUsageRecord(t *testing.T, db *gorm.DB, seed usageSeed) {
 		OutputTokens:  seed.OutputTokens,
 		ImageCount:    seed.ImageCount,
 		EstimatedCost: seed.EstimatedCost,
-		Currency:      "USD",
+		Currency:      currency,
 		RawUsageJSON:  seed.RawUsageJSON,
 		CreatedAt:     seed.CreatedAt,
 	}).Error; err != nil {
@@ -543,6 +676,42 @@ func assertRecordIDs(t *testing.T, response *httptest.ResponseRecorder, want []s
 		if actual := stringField(t, records[index].(map[string]any), "id"); actual != id {
 			t.Fatalf("record id[%d] = %q, want %q", index, actual, id)
 		}
+	}
+}
+
+func assertSummaryDimensionIDs(t *testing.T, response *httptest.ResponseRecorder, want []string) {
+	t.Helper()
+	if response.Code != http.StatusOK {
+		t.Fatalf("summary page status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	records := recordsField(t, decodeData(t, response))
+	if len(records) != len(want) {
+		t.Fatalf("summary page len = %d, want %d: %s", len(records), len(want), response.Body.String())
+	}
+	for index, id := range want {
+		if actual := stringField(t, records[index].(map[string]any), "dimensionId"); actual != id {
+			t.Fatalf("summary dimensionId[%d] = %q, want %q", index, actual, id)
+		}
+	}
+}
+
+func assertUsageSummary(t *testing.T, data map[string]any, dimension string, dimensionID string, currency string, recordCount int64, inputTokens int64, outputTokens int64, imageCount int64, estimatedCost string) {
+	t.Helper()
+	if stringField(t, data, "dimension") != dimension {
+		t.Fatalf("summary dimension = %q, want %q", stringField(t, data, "dimension"), dimension)
+	}
+	if stringField(t, data, "dimensionId") != dimensionID {
+		t.Fatalf("summary dimensionId = %q, want %q", stringField(t, data, "dimensionId"), dimensionID)
+	}
+	if stringField(t, data, "currency") != currency {
+		t.Fatalf("summary currency = %q, want %q", stringField(t, data, "currency"), currency)
+	}
+	assertFloatField(t, data, "recordCount", float64(recordCount))
+	assertFloatField(t, data, "inputTokens", float64(inputTokens))
+	assertFloatField(t, data, "outputTokens", float64(outputTokens))
+	assertFloatField(t, data, "imageCount", float64(imageCount))
+	if stringField(t, data, "estimatedCost") != estimatedCost {
+		t.Fatalf("summary estimatedCost = %q, want %q", stringField(t, data, "estimatedCost"), estimatedCost)
 	}
 }
 
