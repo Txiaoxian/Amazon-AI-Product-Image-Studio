@@ -106,6 +106,7 @@ export function AdminObservabilitySettingsPanel({
   adminApi = defaultAdminApi,
 }: AdminObservabilitySettingsPanelProps) {
   const apiCallDetailRequestSeqRef = useRef(0)
+  const usageRequestSeqRef = useRef(0)
   const availableTabs = useMemo(
     () => getAvailableTabs({ canManageSystemSettings, canReadAudit, canReadUsage }),
     [canManageSystemSettings, canReadAudit, canReadUsage],
@@ -150,6 +151,7 @@ export function AdminObservabilitySettingsPanel({
 
   useEffect(() => {
     if (!isOpen) {
+      usageRequestSeqRef.current += 1
       setSettingsNotice(null)
       resetApiCallDetail()
       return
@@ -165,6 +167,8 @@ export function AdminObservabilitySettingsPanel({
       return
     }
 
+    const requestSeq = usageRequestSeqRef.current + 1
+    usageRequestSeqRef.current = requestSeq
     setLoadingUsage(true)
     setUsageError(null)
     try {
@@ -201,13 +205,21 @@ export function AdminObservabilitySettingsPanel({
           sortOrder: 'desc',
         }),
       ])
+      if (usageRequestSeqRef.current !== requestSeq) {
+        return
+      }
       setTenantTotalsPage(pageFromResponse(tenantTotals))
       setSummaryPage(pageFromResponse(summary))
       setUsageRecordsPage(pageFromResponse(records))
     } catch (error) {
+      if (usageRequestSeqRef.current !== requestSeq) {
+        return
+      }
       setUsageError(formatAdminError(error))
     } finally {
-      setLoadingUsage(false)
+      if (usageRequestSeqRef.current === requestSeq) {
+        setLoadingUsage(false)
+      }
     }
   }, [adminApi, canReadUsage, summaryPageNum, usageDimension, usageFilters, usageRecordsPageNum])
 
@@ -608,10 +620,10 @@ function UsageFilterForm({
           label="开始时间"
           name="createdAtFrom"
           onChange={onDraftChange}
-          type="datetime-local"
+          type="date"
           value={draft.createdAtFrom}
         />
-        <UsageFilterFieldInput label="结束时间" name="createdAtTo" onChange={onDraftChange} type="datetime-local" value={draft.createdAtTo} />
+        <UsageFilterFieldInput label="结束时间" name="createdAtTo" onChange={onDraftChange} type="date" value={draft.createdAtTo} />
         <UsageFilterFieldInput label="Task ID" name="taskId" onChange={onDraftChange} value={draft.taskId} />
         <UsageFilterFieldInput label="User ID" name="userId" onChange={onDraftChange} value={draft.userId} />
         <UsageFilterFieldInput label="Project ID" name="projectId" onChange={onDraftChange} value={draft.projectId} />
@@ -639,7 +651,7 @@ function UsageFilterFieldInput({
 }: {
   label: string
   name: UsageFilterField
-  type?: 'datetime-local' | 'text'
+  type?: 'date' | 'text'
   value: string
   onChange: (draft: UsageFiltersDraft | ((current: UsageFiltersDraft) => UsageFiltersDraft)) => void
 }) {
@@ -661,9 +673,9 @@ function UsageFilterFieldInput({
 function TenantTotalsGrid({ records }: { records: UsageSummary[] }) {
   return (
     <section className="space-y-2">
-      <h4 className="text-sm font-semibold text-ink-900">Tenant totals</h4>
+      <h4 className="text-sm font-semibold text-ink-900">租户总览</h4>
       {records.length === 0 ? (
-        <EmptyState body="后端 tenant 汇总当前没有返回 totals。" title="暂无 tenant totals" />
+        <EmptyState body="后端 tenant 汇总当前没有返回 totals。" title="暂无租户总览" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {records.map((record) => (

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminObservabilitySettingsPanel } from '../components/admin/AdminObservabilitySettingsPanel'
 import { ApiClientError } from '../api/client'
 import type { AdminApi } from '../api/admin'
-import type { ApiCallLog, UsageSummaryQuery } from '../types/admin'
+import type { ApiCallLog, UsageSummary, UsageSummaryQuery } from '../types/admin'
 import type { ApiPage } from '../types/api'
 
 const usageSummary = {
@@ -56,6 +56,16 @@ const usageRecord = {
     safe: 'ok',
   },
   createdAt: '2026-05-18T10:00:00Z',
+} as const
+
+const secondUsageRecord = {
+  ...usageRecord,
+  id: 'usage_2',
+  taskId: 'task_2',
+  projectId: 'project_2',
+  providerId: 'provider_2',
+  modelId: 'model_2',
+  estimatedCost: '0.24000000',
 } as const
 
 const operationLog = {
@@ -229,7 +239,7 @@ describe('AdminObservabilitySettingsPanel', () => {
     summary.resolve(page([]))
     records.resolve(page([]))
 
-    expect(await screen.findByText('暂无 tenant totals')).toBeInTheDocument()
+    expect(await screen.findByText('暂无租户总览')).toBeInTheDocument()
     expect(await screen.findByText('暂无用量汇总')).toBeInTheDocument()
     expect(screen.getByText('暂无用量记录')).toBeInTheDocument()
     expect(adminApi.getUsageSummary).toHaveBeenNthCalledWith(1, expect.objectContaining({ dimension: 'tenant', pageNum: 1, pageSize: 50 }))
@@ -313,13 +323,13 @@ describe('AdminObservabilitySettingsPanel', () => {
       />,
     )
 
-    expect(await screen.findByText('Tenant totals')).toBeInTheDocument()
+    expect(await screen.findByText('租户总览')).toBeInTheDocument()
     expect(screen.getByText('1.25000000 USD')).toBeInTheDocument()
     expect(screen.getByText('0.75000000 EUR')).toBeInTheDocument()
     expect(within(screen.getByLabelText('汇总维度')).getByRole('option', { name: '租户' })).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('开始时间'), '2026-05-18T00:00')
-    await user.type(screen.getByLabelText('结束时间'), '2026-05-19T23:59')
+    await user.type(screen.getByLabelText('开始时间'), '2026-05-18')
+    await user.type(screen.getByLabelText('结束时间'), '2026-05-19')
     await user.type(screen.getByLabelText('Task ID'), 'task_1')
     await user.type(screen.getByLabelText('User ID'), 'user_1')
     await user.type(screen.getByLabelText('Project ID'), 'project_1')
@@ -329,8 +339,8 @@ describe('AdminObservabilitySettingsPanel', () => {
 
     await waitFor(() => expect(listUsageRecords).toHaveBeenCalledTimes(2))
     const appliedUsageFilters = {
-      createdAtFrom: '2026-05-18T00:00',
-      createdAtTo: '2026-05-19T23:59',
+      createdAtFrom: '2026-05-18',
+      createdAtTo: '2026-05-19',
       taskId: 'task_1',
       userId: 'user_1',
       projectId: 'project_1',
@@ -382,6 +392,59 @@ describe('AdminObservabilitySettingsPanel', () => {
     await waitFor(() => expect(getUsageSummary).toHaveBeenCalledWith(expect.objectContaining({ dimension: 'tenant', pageNum: 1 })))
     await user.click(screen.getAllByRole('button', { name: /tenant_1/ })[0])
     expect(JSON.stringify(listUsageRecords.mock.calls)).not.toContain('tenantId')
+  })
+
+  it('keeps the latest usage response when an older usage request resolves later', async () => {
+    const user = userEvent.setup()
+    const firstTenantTotals = deferred<ApiPage<UsageSummary>>()
+    const firstSummary = deferred<ApiPage<UsageSummary>>()
+    const firstRecords = deferred<ApiPage<typeof usageRecord>>()
+    const secondTenantTotals = deferred<ApiPage<UsageSummary>>()
+    const secondSummary = deferred<ApiPage<UsageSummary>>()
+    const secondRecords = deferred<ApiPage<typeof secondUsageRecord>>()
+    const getUsageSummary = vi
+      .fn()
+      .mockReturnValueOnce(firstTenantTotals.promise)
+      .mockReturnValueOnce(firstSummary.promise)
+      .mockReturnValueOnce(secondTenantTotals.promise)
+      .mockReturnValueOnce(secondSummary.promise)
+    const listUsageRecords = vi.fn().mockReturnValueOnce(firstRecords.promise).mockReturnValueOnce(secondRecords.promise)
+    const adminApi = createMockAdminApi({
+      getUsageSummary,
+      listUsageRecords,
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit={false}
+        canReadUsage
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(await screen.findByText('正在加载用量数据...')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('汇总维度'), 'user')
+    expect(getUsageSummary).toHaveBeenCalledTimes(4)
+    expect(listUsageRecords).toHaveBeenCalledTimes(2)
+
+    secondTenantTotals.resolve(page([tenantUsageTotal]))
+    secondSummary.resolve(page([{ ...usageSummary, dimension: 'user', dimensionId: 'user_2' }]))
+    secondRecords.resolve(page([secondUsageRecord]))
+
+    expect(await screen.findByText('usage_2')).toBeInTheDocument()
+    expect(screen.getByText('user_2')).toBeInTheDocument()
+
+    firstTenantTotals.resolve(page([eurTenantUsageTotal]))
+    firstSummary.resolve(page([usageSummary]))
+    firstRecords.resolve(page([usageRecord]))
+
+    await waitFor(() => expect(screen.getByText('usage_2')).toBeInTheDocument())
+    expect(screen.queryByText('usage_1')).not.toBeInTheDocument()
+    expect(screen.queryByText('provider_1')).not.toBeInTheDocument()
   })
 
   it('surfaces usage API failures as error states', async () => {
