@@ -209,7 +209,7 @@ func (s *Service) createModel(ctx context.Context, principal auth.Principal, inp
 	var providerRecord database.AIProvider
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		providerRecord, err = ensureProviderInTenant(ctx, tx, scope, input.ProviderID)
+		providerRecord, err = ensureProviderUsableForModelWrite(ctx, tx, scope, input.ProviderID)
 		if err != nil {
 			return err
 		}
@@ -300,10 +300,14 @@ func (s *Service) updateModel(ctx context.Context, principal auth.Principal, mod
 
 		updates := map[string]any{"updated_at": s.now()}
 		if input.ProviderID != nil {
-			if _, err := ensureProviderInTenant(ctx, tx, scope, *input.ProviderID); err != nil {
+			if _, err := ensureProviderUsableForModelWrite(ctx, tx, scope, *input.ProviderID); err != nil {
 				return err
 			}
 			updates["provider_id"] = *input.ProviderID
+		}
+		targetProviderID := current.ProviderID
+		if input.ProviderID != nil {
+			targetProviderID = *input.ProviderID
 		}
 		if input.ModelName != nil {
 			updates["model_name"] = *input.ModelName
@@ -339,6 +343,11 @@ func (s *Service) updateModel(ctx context.Context, principal auth.Principal, mod
 			updates["pricing_json"] = *input.PricingJSON
 		}
 		if input.Status != nil {
+			if *input.Status == StatusEnabled {
+				if _, err := ensureProviderUsableForModelWrite(ctx, tx, scope, targetProviderID); err != nil {
+					return err
+				}
+			}
 			updates["status"] = *input.Status
 		}
 
@@ -421,6 +430,11 @@ func (s *Service) setStatus(ctx context.Context, principal auth.Principal, model
 		current, err := s.authorizeModelWithRepo(ctx, repo, principal, modelID, PermissionManage)
 		if err != nil {
 			return err
+		}
+		if status == StatusEnabled {
+			if _, err := ensureProviderUsableForModelWrite(ctx, tx, scope, current.ProviderID); err != nil {
+				return err
+			}
 		}
 		updated, err = repo.UpdateModel(ctx, scope, current.ID, map[string]any{
 			"status":     status,
@@ -505,12 +519,18 @@ func (s *Service) responseForRecord(ctx context.Context, scope tenant.Scope, rec
 	return responses[0], nil
 }
 
-func ensureProviderInTenant(ctx context.Context, db *gorm.DB, scope tenant.Scope, providerID string) (database.AIProvider, error) {
-	record, err := provider.NewRepository(db).FindProvider(ctx, scope, providerID)
+func ensureProviderUsableForModelWrite(ctx context.Context, db *gorm.DB, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	record, err := provider.NewRepository(db).LockProvider(ctx, scope, providerID)
 	if errors.Is(err, provider.ErrNotFound) || errors.Is(err, provider.ErrValidation) {
 		return database.AIProvider{}, ErrValidation
 	}
-	return record, err
+	if err != nil {
+		return database.AIProvider{}, err
+	}
+	if record.Status != provider.StatusEnabled {
+		return database.AIProvider{}, ErrValidation
+	}
+	return record, nil
 }
 
 func isTenantAdmin(principal auth.Principal) bool {

@@ -9,6 +9,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -70,6 +71,14 @@ func (r Repository) ListProviders(ctx context.Context, scope tenant.Scope, optio
 }
 
 func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, false)
+}
+
+func (r Repository) LockProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, true)
+}
+
+func (r Repository) findProvider(ctx context.Context, scope tenant.Scope, providerID string, lock bool) (database.AIProvider, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return database.AIProvider{}, err
@@ -80,9 +89,13 @@ func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, provid
 	}
 
 	var record database.AIProvider
-	err = db.Model(&database.AIProvider{}).
+	query := db.Model(&database.AIProvider{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		First(&record).Error
+		Limit(1)
+	if lock && db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err = query.First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.AIProvider{}, ErrNotFound
 	}
@@ -144,6 +157,18 @@ func (r Repository) SoftDeleteProvider(ctx context.Context, scope tenant.Scope, 
 }
 
 func (r Repository) CountLinkedModels(ctx context.Context, scope tenant.Scope, providerID string) (int64, error) {
+	return r.countLinkedModels(ctx, scope, providerID, "")
+}
+
+func (r Repository) CountLinkedModelsByStatus(ctx context.Context, scope tenant.Scope, providerID string, status string) (int64, error) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return 0, ErrValidation
+	}
+	return r.countLinkedModels(ctx, scope, providerID, status)
+}
+
+func (r Repository) countLinkedModels(ctx context.Context, scope tenant.Scope, providerID string, status string) (int64, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return 0, err
@@ -154,9 +179,12 @@ func (r Repository) CountLinkedModels(ctx context.Context, scope tenant.Scope, p
 	}
 
 	var count int64
-	if err := db.Model(&database.AIModel{}).
-		Where("tenant_id = ? AND provider_id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		Count(&count).Error; err != nil {
+	query := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND provider_id = ? AND deleted_at IS NULL", scope.ID(), providerID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return count, nil

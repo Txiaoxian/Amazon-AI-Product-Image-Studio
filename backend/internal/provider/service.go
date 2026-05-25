@@ -356,9 +356,15 @@ func (s *Service) updateProvider(ctx context.Context, principal auth.Principal, 
 
 	var updated database.AIProvider
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		current, err := s.authorizeProviderWithRepo(ctx, s.repo.withDB(tx), principal, providerID, PermissionManage)
+		repo := s.repo.withDB(tx)
+		current, err := s.authorizeProviderForUpdateWithRepo(ctx, repo, principal, providerID, PermissionManage)
 		if err != nil {
 			return err
+		}
+		if input.Status != nil && *input.Status == StatusDisabled {
+			if err := ensureNoEnabledLinkedModels(ctx, repo, scope, current.ID); err != nil {
+				return err
+			}
 		}
 
 		updates := map[string]any{"updated_at": s.now()}
@@ -388,7 +394,7 @@ func (s *Service) updateProvider(ctx context.Context, principal auth.Principal, 
 			updates["api_key_updated_at"] = keyUpdatedAt
 		}
 
-		updated, err = s.repo.withDB(tx).UpdateProvider(ctx, scope, current.ID, updates)
+		updated, err = repo.UpdateProvider(ctx, scope, current.ID, updates)
 		if err != nil {
 			return err
 		}
@@ -426,7 +432,7 @@ func (s *Service) deleteProvider(ctx context.Context, principal auth.Principal, 
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		record, err := s.authorizeProviderWithRepo(ctx, repo, principal, providerID, PermissionManage)
+		record, err := s.authorizeProviderForUpdateWithRepo(ctx, repo, principal, providerID, PermissionManage)
 		if err != nil {
 			return err
 		}
@@ -469,9 +475,14 @@ func (s *Service) setStatus(ctx context.Context, principal auth.Principal, provi
 	var updated database.AIProvider
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		current, err := s.authorizeProviderWithRepo(ctx, repo, principal, providerID, PermissionManage)
+		current, err := s.authorizeProviderForUpdateWithRepo(ctx, repo, principal, providerID, PermissionManage)
 		if err != nil {
 			return err
+		}
+		if status == StatusDisabled {
+			if err := ensureNoEnabledLinkedModels(ctx, repo, scope, current.ID); err != nil {
+				return err
+			}
 		}
 		updated, err = repo.UpdateProvider(ctx, scope, current.ID, map[string]any{
 			"status":     status,
@@ -500,6 +511,17 @@ func (s *Service) setStatus(ctx context.Context, principal auth.Principal, provi
 		return Response{}, err
 	}
 	return responseFromRecord(updated), nil
+}
+
+func ensureNoEnabledLinkedModels(ctx context.Context, repo Repository, scope tenant.Scope, providerID string) error {
+	linkedEnabledModelCount, err := repo.CountLinkedModelsByStatus(ctx, scope, providerID, StatusEnabled)
+	if err != nil {
+		return err
+	}
+	if linkedEnabledModelCount > 0 {
+		return ErrHasEnabledModels
+	}
+	return nil
 }
 
 func (s *Service) testProvider(ctx context.Context, principal auth.Principal, providerID string, ip string, userAgent string) (TestResponse, error) {
@@ -616,11 +638,19 @@ func (s *Service) authorizeProvider(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) authorizeProviderWithRepo(ctx context.Context, repo Repository, principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
+	return s.authorizeProviderWithLookup(ctx, repo.FindProvider, principal, providerID, permission)
+}
+
+func (s *Service) authorizeProviderForUpdateWithRepo(ctx context.Context, repo Repository, principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
+	return s.authorizeProviderWithLookup(ctx, repo.LockProvider, principal, providerID, permission)
+}
+
+func (s *Service) authorizeProviderWithLookup(ctx context.Context, lookup func(context.Context, tenant.Scope, string) (database.AIProvider, error), principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
 		return database.AIProvider{}, err
 	}
-	record, err := repo.FindProvider(ctx, scope, providerID)
+	record, err := lookup(ctx, scope, providerID)
 	if err != nil {
 		return database.AIProvider{}, err
 	}
@@ -859,6 +889,8 @@ func (s *Service) respondError(c *gin.Context, err error) {
 		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
 	case errors.Is(err, ErrHasLinkedModels):
 		httpx.AbortWithError(c, http.StatusConflict, "PROVIDER_HAS_LINKED_MODELS", "Provider has linked models.", nil)
+	case errors.Is(err, ErrHasEnabledModels):
+		httpx.AbortWithError(c, http.StatusConflict, "PROVIDER_HAS_ENABLED_MODELS", "Provider has enabled models.", nil)
 	case errors.Is(err, ErrEncryption), errors.Is(err, ErrProbeUnavailable):
 		s.log.Error("provider security setup failed", slog.String("request_id", httpx.RequestIDFromContext(c)))
 		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
