@@ -236,6 +236,8 @@ func applyTimeRange(query *gorm.DB, column string, timeRange TimeRange) *gorm.DB
 
 func usageSummaryDimensionColumn(dimension string) (string, bool) {
 	switch dimension {
+	case UsageSummaryDimensionTenant:
+		return "tenant_id", true
 	case UsageSummaryDimensionUser:
 		return "user_id", true
 	case UsageSummaryDimensionProject:

@@ -127,19 +127,36 @@ func TestAdminUsageSummaryAggregatesWithinTenant(t *testing.T) {
 	seedUsageRecord(t, db, usageSeed{ID: "usage-summary-a2", TenantID: adminSession.tenantID, TaskID: "task-a2", UserID: adminSession.userID, ProjectID: "project-a", ProviderID: "provider-a", ModelID: "model-b", InputTokens: 30, OutputTokens: 40, ImageCount: 2, EstimatedCost: "0.30000000", RawUsageJSON: `{}`, CreatedAt: now.Add(time.Minute)})
 	seedUsageRecord(t, db, usageSeed{ID: "usage-summary-b", TenantID: "tenant-b", TaskID: "task-b", UserID: "user-b", ProjectID: "project-b", ProviderID: "provider-a", ModelID: "model-b", InputTokens: 1000, OutputTokens: 1000, ImageCount: 10, EstimatedCost: "10.00000000", RawUsageJSON: `{}`, CreatedAt: now.Add(2 * time.Minute)})
 
-	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=provider&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
-	if response.Code != http.StatusOK {
-		t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	for _, dimension := range []string{"tenant", "user", "project", "provider", "model"} {
+		t.Run(dimension, func(t *testing.T) {
+			response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension="+dimension+"&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+			if response.Code != http.StatusOK {
+				t.Fatalf("usage summary status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+			assertResponseExcludes(t, response.Body.String(), "tenant-b", "task-b", "user-b", "project-b", "10.00000000")
+			data := decodeData(t, response)
+			records := recordsField(t, data)
+			if len(records) == 0 {
+				t.Fatalf("summary records empty for dimension %s", dimension)
+			}
+			for _, record := range records {
+				summary := record.(map[string]any)
+				if stringField(t, summary, "dimension") != dimension {
+					t.Fatalf("summary dimension = %#v, want %s", summary, dimension)
+				}
+				if dimension == "tenant" && stringField(t, summary, "dimensionId") != adminSession.tenantID {
+					t.Fatalf("tenant summary dimensionId = %q, want current tenant", stringField(t, summary, "dimensionId"))
+				}
+			}
+		})
 	}
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=provider&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
 	data := decodeData(t, response)
 	assertPageMeta(t, data, 1, 1, 10)
-	records := recordsField(t, data)
-	if len(records) != 1 {
-		t.Fatalf("summary len = %d, want 1", len(records))
-	}
-	summary := records[0].(map[string]any)
-	if stringField(t, summary, "dimension") != "provider" || stringField(t, summary, "dimensionId") != "provider-a" {
-		t.Fatalf("summary dimension = %#v", summary)
+	summary := recordsField(t, data)[0].(map[string]any)
+	if stringField(t, summary, "dimensionId") != "provider-a" {
+		t.Fatalf("summary dimensionId = %#v", summary)
 	}
 	assertFloatField(t, summary, "inputTokens", 40)
 	assertFloatField(t, summary, "outputTokens", 60)
@@ -148,7 +165,7 @@ func TestAdminUsageSummaryAggregatesWithinTenant(t *testing.T) {
 		t.Fatalf("summary estimatedCost = %q, want 0.40000000", stringField(t, summary, "estimatedCost"))
 	}
 
-	invalid := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant", nil, adminSession.cookies, nil)
+	invalid := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=account", nil, adminSession.cookies, nil)
 	if invalid.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid summary dimension status = %d, want %d", invalid.Code, http.StatusUnprocessableEntity)
 	}

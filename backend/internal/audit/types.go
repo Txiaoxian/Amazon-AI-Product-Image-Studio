@@ -16,6 +16,7 @@ const (
 	PermissionUsageRead = "usage:read"
 	PermissionAuditRead = "audit:read"
 
+	UsageSummaryDimensionTenant   = "tenant"
 	UsageSummaryDimensionUser     = "user"
 	UsageSummaryDimensionProject  = "project"
 	UsageSummaryDimensionProvider = "provider"
@@ -248,7 +249,7 @@ func APICallLogResponseFromRecord(record database.APICallLog, redactor *redactio
 
 func ValidUsageSummaryDimension(dimension string) bool {
 	switch dimension {
-	case UsageSummaryDimensionUser, UsageSummaryDimensionProject, UsageSummaryDimensionProvider, UsageSummaryDimensionModel:
+	case UsageSummaryDimensionTenant, UsageSummaryDimensionUser, UsageSummaryDimensionProject, UsageSummaryDimensionProvider, UsageSummaryDimensionModel:
 		return true
 	default:
 		return false
