@@ -178,7 +178,7 @@ Stores usage and estimated cost.
 
 Key fields: `id`, `tenant_id`, `task_id`, `user_id`, `project_id`, `provider_id`, `model_id`, `input_tokens`, `output_tokens`, `image_count`, `estimated_cost`, `currency`, `raw_usage_json`, `created_at`.
 
-P14 usage/cost reporting must keep `estimated_cost` deterministic, non-negative, and formatted to 8 decimal places. Missing or invalid model pricing should produce zero estimated cost rather than failing otherwise successful task completion. Usage records must remain queryable by tenant, user, project, Provider, model, and tenant-wide aggregate views.
+P14 usage/cost reporting keeps `estimated_cost` deterministic, non-negative, and formatted to 8 decimal places. Missing, invalid, negative, or incomplete model pricing produces zero estimated cost rather than failing otherwise successful task completion. Usage records remain queryable by tenant, user, project, Provider, model, and tenant-wide aggregate views. Summary cost output preserves exact decimal strings and groups by currency.
 
 ### operation_logs
 

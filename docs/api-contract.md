@@ -367,7 +367,7 @@ Current P9 backend contract:
 - All routes above require tenant admin access plus the matching RBAC permission: `usage:read` for usage endpoints, `audit:read` for operation/API call logs.
 - List endpoints return the standard envelope with `records`, `total`, `pageNum`, and `pageSize`.
 - Shared query parameters: `pageNum`, `pageSize`, `sortBy=createdAt`, `sortOrder=asc|desc`, `createdAtFrom`, `createdAtTo`.
-- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary accepts `dimension=user|project|provider|model`.
+- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary accepts `dimension=tenant|user|project|provider|model`.
 - Operation log filters: `actorUserId`, `action`, `resourceType`, `resourceId`.
 - API call log filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`, `status=SUCCESS|FAILURE`, `requestId`.
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
@@ -376,11 +376,12 @@ Current P9 backend contract:
 
 P14 usage/cost reporting contract:
 
-- Backend cost estimation must be deterministic and use model `pricing.unitPrices` plus Provider usage metadata without relying on frontend-calculated costs.
-- Persisted `usage_records.estimated_cost` must be formatted with 8 decimal places and never be negative. Missing or invalid pricing must produce a zero estimated cost rather than failing an otherwise successful Provider task.
-- Usage summary will add a tenant-scoped aggregate view with `dimension=tenant` in addition to user, project, Provider, and model. `dimensionId` for the tenant view is the current tenant ID.
-- Usage/cost queries must remain tenant-scoped, paginated, stable under equal timestamps, and redacted. Raw usage may be returned only after recursive redaction.
-- Frontend cost observability is deferred until this backend reporting behavior is merged and reviewed.
+- Backend cost estimation is deterministic and uses model `pricing.unitPrices` plus Provider usage metadata without relying on frontend-calculated costs.
+- Persisted `usage_records.estimated_cost` is formatted with 8 decimal places and never negative. Missing, invalid, negative, or incomplete pricing produces zero estimated cost rather than failing an otherwise successful Provider task.
+- Usage summary includes tenant-scoped aggregate view with `dimension=tenant` in addition to user, project, Provider, and model. `dimensionId` for the tenant view is the current tenant ID.
+- Usage/cost queries remain tenant-scoped, paginated, stable under equal timestamps, and redacted. Raw usage may be returned only after recursive redaction.
+- Summary cost strings preserve exact decimal values and do not round through float conversion. Multi-currency results are grouped by dimension and currency.
+- Current P14 backend implementation status: merged and reviewed. Frontend cost observability is the next slice and must consume this contract without client-side authoritative cost recalculation.
 
 Current settings contract:
 
