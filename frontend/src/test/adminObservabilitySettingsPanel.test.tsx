@@ -94,6 +94,23 @@ const systemSettings = {
     maxHeight: 8192,
     maxPixels: 40000000,
   },
+  taskDefaults: {
+    defaultProviderId: 'provider_1',
+    defaultModelId: 'model_1',
+  },
+  taskConcurrency: {
+    tenantLimit: 4,
+    userLimit: 3,
+    providerLimit: 2,
+    modelLimit: 1,
+  },
+  storageRetention: {
+    deletedAssetRetentionDays: 30,
+  },
+  storageQuota: {
+    maxBytes: 1073741824,
+    usedBytes: 1048576,
+  },
 }
 
 function page<TRecord>(records: TRecord[], options: Partial<Omit<ApiPage<TRecord>, 'records'>> = {}): ApiPage<TRecord> {
@@ -474,6 +491,7 @@ describe('AdminObservabilitySettingsPanel', () => {
       status: 422,
     })
     const updatedSettings = {
+      ...systemSettings,
       uploadPolicy: {
         ...systemSettings.uploadPolicy,
         maxWidth: 4096,
@@ -482,11 +500,15 @@ describe('AdminObservabilitySettingsPanel', () => {
     const adminApi = createMockAdminApi({
       getSystemSettings: vi.fn().mockResolvedValue({
         ...systemSettings,
-        defaultProviderId: 'provider_1',
-        defaultModelId: 'model_1',
+        defaultProviderId: 'legacy_root_provider',
+        defaultModelId: 'legacy_root_model',
         tenantConcurrency: 2,
         storageQuotaBytes: 1000,
+        logRetention: { days: 7 },
         logRetentionDays: 7,
+        orphanCleanup: { enabled: true },
+        manualCleanup: { enabled: true },
+        allowedMimeTypes: ['image/svg+xml'],
       } as unknown as typeof systemSettings),
       updateSystemSettings: vi.fn().mockRejectedValueOnce(validationError).mockResolvedValueOnce(updatedSettings),
     })
@@ -507,11 +529,24 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(screen.getByLabelText('最大宽度')).toHaveValue(8192)
     expect(screen.getByLabelText('最大高度')).toHaveValue(8192)
     expect(screen.getByLabelText('最大像素数')).toHaveValue(40000000)
+    expect(screen.getByLabelText('默认 Provider ID')).toHaveValue('provider_1')
+    expect(screen.getByLabelText('默认模型 ID')).toHaveValue('model_1')
+    expect(screen.getByLabelText('租户并发上限')).toHaveValue(4)
+    expect(screen.getByLabelText('用户并发上限')).toHaveValue(3)
+    expect(screen.getByLabelText('Provider 并发上限')).toHaveValue(2)
+    expect(screen.getByLabelText('模型并发上限')).toHaveValue(1)
+    expect(screen.getByLabelText('删除资产保留天数')).toHaveValue(30)
+    expect(screen.getByLabelText('最大存储字节数')).toHaveValue(1073741824)
+    expect(screen.getByLabelText('已用存储字节数')).toHaveValue('1,048,576')
+    expect(screen.getByLabelText('已用存储字节数')).toHaveAttribute('readonly')
     expect(screen.queryByText('defaultProviderId')).not.toBeInTheDocument()
     expect(screen.queryByText('defaultModelId')).not.toBeInTheDocument()
     expect(screen.queryByText('tenantConcurrency')).not.toBeInTheDocument()
     expect(screen.queryByText('storageQuotaBytes')).not.toBeInTheDocument()
     expect(screen.queryByText('logRetentionDays')).not.toBeInTheDocument()
+    expect(screen.queryByText('orphanCleanup')).not.toBeInTheDocument()
+    expect(screen.queryByText('manualCleanup')).not.toBeInTheDocument()
+    expect(screen.queryByText('allowedMimeTypes')).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('最大宽度'))
     await user.type(screen.getByLabelText('最大宽度'), '9000')
@@ -519,6 +554,8 @@ describe('AdminObservabilitySettingsPanel', () => {
 
     expect(await screen.findByText('表单内容未通过校验：Invalid request.')).toBeInTheDocument()
     expect(screen.getByLabelText('最大宽度')).toHaveValue(9000)
+    expect(screen.getByLabelText('默认 Provider ID')).toHaveValue('provider_1')
+    expect(screen.getByLabelText('删除资产保留天数')).toHaveValue(30)
     expect(screen.queryByText('上传策略已更新。')).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('最大宽度'))
@@ -542,7 +579,255 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('tenantConcurrency')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('storageQuotaBytes')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('logRetentionDays')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('orphanCleanup')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('manualCleanup')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('allowedMimeTypes')
     expect(getBrowserStorage('local').length).toBe(0)
     expect(getBrowserStorage('session').length).toBe(0)
+  })
+
+  it('PATCHes only taskDefaults and enforces paired defaults before submit', async () => {
+    const user = userEvent.setup()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          taskDefaults: {
+            defaultProviderId: 'provider_2',
+            defaultModelId: 'model_2',
+          },
+        })
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          taskDefaults: {
+            defaultProviderId: null,
+            defaultModelId: null,
+          },
+        }),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.clear(await screen.findByLabelText('默认模型 ID'))
+    await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
+
+    expect(await screen.findByText('默认 Provider ID 与默认模型 ID 必须成对填写或同时清空。')).toBeInTheDocument()
+    expect(adminApi.updateSystemSettings).not.toHaveBeenCalled()
+
+    await user.type(screen.getByLabelText('默认模型 ID'), 'model_2')
+    await user.clear(screen.getByLabelText('默认 Provider ID'))
+    await user.type(screen.getByLabelText('默认 Provider ID'), 'provider_2')
+    await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
+
+    expect(await screen.findByText('任务默认模型已更新。')).toBeInTheDocument()
+    expect(adminApi.updateSystemSettings).toHaveBeenCalledWith(
+      {
+        taskDefaults: {
+          defaultProviderId: 'provider_2',
+          defaultModelId: 'model_2',
+        },
+      },
+      'csrf_memory_only',
+    )
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('uploadPolicy')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('usedBytes')
+
+    await user.clear(screen.getByLabelText('默认 Provider ID'))
+    await user.clear(screen.getByLabelText('默认模型 ID'))
+    await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
+
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      2,
+      {
+        taskDefaults: {
+          defaultProviderId: null,
+          defaultModelId: null,
+        },
+      },
+      'csrf_memory_only',
+    )
+  })
+
+  it('PATCHes only taskConcurrency settings', async () => {
+    const user = userEvent.setup()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi.fn().mockResolvedValue({
+        ...systemSettings,
+        taskConcurrency: {
+          tenantLimit: 3,
+          userLimit: 2,
+          providerLimit: 2,
+          modelLimit: 1,
+        },
+      }),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.clear(await screen.findByLabelText('租户并发上限'))
+    await user.type(screen.getByLabelText('租户并发上限'), '3')
+    await user.clear(screen.getByLabelText('用户并发上限'))
+    await user.type(screen.getByLabelText('用户并发上限'), '2')
+    await user.click(screen.getByRole('button', { name: '保存并发限制' }))
+
+    expect(await screen.findByText('并发限制已更新。')).toBeInTheDocument()
+    expect(adminApi.updateSystemSettings).toHaveBeenCalledWith(
+      {
+        taskConcurrency: {
+          tenantLimit: 3,
+          userLimit: 2,
+          providerLimit: 2,
+          modelLimit: 1,
+        },
+      },
+      'csrf_memory_only',
+    )
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('globalLimit')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('uploadPolicy')
+  })
+
+  it('PATCHes storageRetention with a positive integer and null clear', async () => {
+    const user = userEvent.setup()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          storageRetention: {
+            deletedAssetRetentionDays: 45,
+          },
+        })
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          storageRetention: {
+            deletedAssetRetentionDays: null,
+          },
+        }),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.clear(await screen.findByLabelText('删除资产保留天数'))
+    await user.type(screen.getByLabelText('删除资产保留天数'), '45')
+    await user.click(screen.getByRole('button', { name: '保存删除资产保留期' }))
+    expect(await screen.findByText('删除资产保留期已更新。')).toBeInTheDocument()
+
+    await user.clear(screen.getByLabelText('删除资产保留天数'))
+    await user.click(screen.getByRole('button', { name: '保存删除资产保留期' }))
+
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      1,
+      {
+        storageRetention: {
+          deletedAssetRetentionDays: 45,
+        },
+      },
+      'csrf_memory_only',
+    )
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      2,
+      {
+        storageRetention: {
+          deletedAssetRetentionDays: null,
+        },
+      },
+      'csrf_memory_only',
+    )
+  })
+
+  it('PATCHes storageQuota maxBytes only and keeps usedBytes read-only', async () => {
+    const user = userEvent.setup()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          storageQuota: {
+            maxBytes: 2147483648,
+            usedBytes: 1048576,
+          },
+        })
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          storageQuota: {
+            maxBytes: null,
+            usedBytes: 1048576,
+          },
+        }),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(await screen.findByLabelText('已用存储字节数')).toHaveAttribute('readonly')
+    await user.clear(screen.getByLabelText('最大存储字节数'))
+    await user.type(screen.getByLabelText('最大存储字节数'), '2147483648')
+    await user.click(screen.getByRole('button', { name: '保存存储配额' }))
+
+    expect(await screen.findByText('存储配额已更新。')).toBeInTheDocument()
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      1,
+      {
+        storageQuota: {
+          maxBytes: 2147483648,
+        },
+      },
+      'csrf_memory_only',
+    )
+
+    await user.clear(screen.getByLabelText('最大存储字节数'))
+    await user.click(screen.getByRole('button', { name: '保存存储配额' }))
+
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      2,
+      {
+        storageQuota: {
+          maxBytes: null,
+        },
+      },
+      'csrf_memory_only',
+    )
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('usedBytes')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('storageQuotaBytes')
   })
 })

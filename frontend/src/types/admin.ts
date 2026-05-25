@@ -113,12 +113,41 @@ export interface UploadPolicySettings {
   maxPixels: number
 }
 
+export interface TaskDefaultsSettings {
+  defaultProviderId: ProviderId | null
+  defaultModelId: ModelId | null
+}
+
+export interface TaskConcurrencySettings {
+  tenantLimit: number
+  userLimit: number
+  providerLimit: number
+  modelLimit: number
+}
+
+export interface StorageRetentionSettings {
+  deletedAssetRetentionDays: number | null
+}
+
+export interface StorageQuotaSettings {
+  maxBytes: number | null
+  usedBytes: number
+}
+
 export interface SystemSettings {
   uploadPolicy: UploadPolicySettings
+  taskDefaults: TaskDefaultsSettings
+  taskConcurrency: TaskConcurrencySettings
+  storageRetention: StorageRetentionSettings
+  storageQuota: StorageQuotaSettings
 }
 
 export interface UpdateSystemSettingsRequest {
-  uploadPolicy: Partial<UploadPolicySettings>
+  uploadPolicy?: Partial<UploadPolicySettings>
+  taskDefaults?: TaskDefaultsSettings
+  taskConcurrency?: Partial<TaskConcurrencySettings>
+  storageRetention?: StorageRetentionSettings
+  storageQuota?: Pick<StorageQuotaSettings, 'maxBytes'>
 }
 
 export type UsageSummaryPage = ApiPage<UsageSummary>
