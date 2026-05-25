@@ -9,6 +9,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -70,6 +71,14 @@ func (r Repository) ListProviders(ctx context.Context, scope tenant.Scope, optio
 }
 
 func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, false)
+}
+
+func (r Repository) LockProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, true)
+}
+
+func (r Repository) findProvider(ctx context.Context, scope tenant.Scope, providerID string, lock bool) (database.AIProvider, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return database.AIProvider{}, err
@@ -80,9 +89,13 @@ func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, provid
 	}
 
 	var record database.AIProvider
-	err = db.Model(&database.AIProvider{}).
+	query := db.Model(&database.AIProvider{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		First(&record).Error
+		Limit(1)
+	if lock && db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err = query.First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.AIProvider{}, ErrNotFound
 	}

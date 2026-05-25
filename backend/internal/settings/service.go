@@ -219,6 +219,9 @@ func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) 
 		}
 		defaults.DefaultProviderID = &providerID
 		defaults.DefaultModelID = &modelID
+		if err := validateTaskDefaults(ctx, repo, scope, providerID, modelID); err != nil {
+			return TaskDefaults{}, ErrStoredTaskDefaultsInvalid
+		}
 	}
 	return defaults, nil
 }

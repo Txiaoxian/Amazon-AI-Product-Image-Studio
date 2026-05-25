@@ -172,6 +172,82 @@ func TestModelRoutesEnforceRBACProviderTenantAndModelTenant(t *testing.T) {
 	}
 }
 
+func TestModelRoutesRejectUnavailableProviderForCreateUpdateAndEnable(t *testing.T) {
+	router, db, adminSession := newModelRouteTestRouter(t)
+	enabledProviderID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-available", "Available Provider")
+	disabledProviderID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-disabled", "Disabled Provider")
+	if err := db.Model(&database.AIProvider{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, disabledProviderID).
+		Update("status", provider.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable seeded provider: %v", err)
+	}
+	deletedProviderID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-deleted", "Deleted Provider")
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, deletedProviderID).Delete(&database.AIProvider{}).Error; err != nil {
+		t.Fatalf("soft delete seeded provider: %v", err)
+	}
+
+	disabledCreate := performJSON(router, http.MethodPost, "/api/v1/models", validModelPayload(disabledProviderID), adminSession.cookies, adminSession.csrfHeader())
+	if disabledCreate.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create with disabled provider status = %d, want %d: %s", disabledCreate.Code, http.StatusUnprocessableEntity, disabledCreate.Body.String())
+	}
+	assertResponseExcludes(t, disabledCreate.Body.String(), disabledProviderID, "Disabled Provider")
+
+	deletedCreate := performJSON(router, http.MethodPost, "/api/v1/models", validModelPayload(deletedProviderID), adminSession.cookies, adminSession.csrfHeader())
+	if deletedCreate.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create with deleted provider status = %d, want %d: %s", deletedCreate.Code, http.StatusUnprocessableEntity, deletedCreate.Body.String())
+	}
+	assertResponseExcludes(t, deletedCreate.Body.String(), deletedProviderID, "Deleted Provider")
+
+	createResponse := performJSON(router, http.MethodPost, "/api/v1/models", validModelPayload(enabledProviderID), adminSession.cookies, adminSession.csrfHeader())
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create available model status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	modelID := stringField(t, decodeData(t, createResponse), "id")
+
+	migrateResponse := performJSON(router, http.MethodPatch, "/api/v1/models/"+modelID, map[string]any{
+		"providerId": disabledProviderID,
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if migrateResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("migrate to disabled provider status = %d, want %d: %s", migrateResponse.Code, http.StatusUnprocessableEntity, migrateResponse.Body.String())
+	}
+	assertResponseExcludes(t, migrateResponse.Body.String(), disabledProviderID, "Disabled Provider")
+
+	if err := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).
+		Update("status", modelcap.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable model directly: %v", err)
+	}
+	if err := db.Model(&database.AIProvider{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, enabledProviderID).
+		Update("status", provider.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable model provider directly: %v", err)
+	}
+
+	enableResponse := performJSON(router, http.MethodPost, "/api/v1/models/"+modelID+"/enable", nil, adminSession.cookies, adminSession.csrfHeader())
+	if enableResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("enable model with disabled provider status = %d, want %d: %s", enableResponse.Code, http.StatusUnprocessableEntity, enableResponse.Body.String())
+	}
+	assertResponseExcludes(t, enableResponse.Body.String(), enabledProviderID, "Available Provider")
+
+	patchEnableResponse := performJSON(router, http.MethodPatch, "/api/v1/models/"+modelID, map[string]any{
+		"status": modelcap.StatusEnabled,
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if patchEnableResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("patch enable model with disabled provider status = %d, want %d: %s", patchEnableResponse.Code, http.StatusUnprocessableEntity, patchEnableResponse.Body.String())
+	}
+	assertResponseExcludes(t, patchEnableResponse.Body.String(), enabledProviderID, "Available Provider")
+
+	var record database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).First(&record).Error; err != nil {
+		t.Fatalf("load model after rejected writes: %v", err)
+	}
+	if record.ProviderID != enabledProviderID || record.Status != modelcap.StatusDisabled {
+		t.Fatalf("model changed after rejected provider writes: %#v", record)
+	}
+	assertNoModelOperationLog(t, db, modelID, "model.update")
+	assertNoModelOperationLog(t, db, modelID, "model.enable")
+}
+
 func TestModelRoutesRejectInvalidCapabilityRequests(t *testing.T) {
 	router, db, adminSession := newModelRouteTestRouter(t)
 	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-validation", "Validation Provider")
@@ -514,5 +590,19 @@ func assertModelOperationLogs(t *testing.T, db *gorm.DB, expectedActions []strin
 		if !seen[action] {
 			t.Fatalf("missing operation log action %s; logs = %#v", action, logs)
 		}
+	}
+}
+
+func assertNoModelOperationLog(t *testing.T, db *gorm.DB, modelID string, action string) {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&database.OperationLog{}).
+		Where("resource_type = ? AND resource_id = ? AND action = ?", "model", modelID, action).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count %s operation logs: %v", action, err)
+	}
+	if count != 0 {
+		t.Fatalf("%s operation log count = %d, want 0", action, count)
 	}
 }

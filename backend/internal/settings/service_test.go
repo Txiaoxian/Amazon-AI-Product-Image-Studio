@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	modelpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/model"
+	providerpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/provider"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -127,6 +129,60 @@ func TestStorageQuotaRejectsMalformedStoredValuesAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestLoadTaskDefaultsRejectsUnavailableStoredProviderModel(t *testing.T) {
+	cases := []struct {
+		name           string
+		providerStatus string
+		modelStatus    string
+		deleteProvider bool
+		deleteModel    bool
+		crossTenant    bool
+	}{
+		{name: "disabled provider", providerStatus: providerpkg.StatusDisabled, modelStatus: modelpkg.StatusEnabled},
+		{name: "deleted provider", providerStatus: providerpkg.StatusEnabled, modelStatus: modelpkg.StatusEnabled, deleteProvider: true},
+		{name: "disabled model", providerStatus: providerpkg.StatusEnabled, modelStatus: modelpkg.StatusDisabled},
+		{name: "deleted model", providerStatus: providerpkg.StatusEnabled, modelStatus: modelpkg.StatusEnabled, deleteModel: true},
+		{name: "model belongs to another tenant", providerStatus: providerpkg.StatusEnabled, modelStatus: modelpkg.StatusEnabled, crossTenant: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newSettingsTestDB(t)
+			repo := NewRepository(db)
+			now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+			seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+			seedSettingsTenant(t, db, "tenant-b", "ACTIVE", now)
+			providerTenantID := "tenant-a"
+			modelTenantID := "tenant-a"
+			if tc.crossTenant {
+				modelTenantID = "tenant-b"
+			}
+			seedSettingsProvider(t, db, providerTenantID, "provider-default", tc.providerStatus, now)
+			seedSettingsModel(t, db, modelTenantID, "provider-default", "model-default", tc.modelStatus, now)
+			if tc.deleteProvider {
+				if err := db.Where("tenant_id = ? AND id = ?", "tenant-a", "provider-default").Delete(&database.AIProvider{}).Error; err != nil {
+					t.Fatalf("delete provider: %v", err)
+				}
+			}
+			if tc.deleteModel {
+				if err := db.Where("tenant_id = ? AND id = ?", "tenant-a", "model-default").Delete(&database.AIModel{}).Error; err != nil {
+					t.Fatalf("delete model: %v", err)
+				}
+			}
+			seedSettingsRow(t, db, "tenant-a", KeyTaskDefaults, `{"defaultProviderId":"provider-default","defaultModelId":"model-default"}`, now)
+			scope, err := tenant.NewScope("tenant-a")
+			if err != nil {
+				t.Fatalf("tenant scope: %v", err)
+			}
+
+			_, err = LoadTaskDefaults(context.Background(), repo, scope)
+			if !errors.Is(err, ErrStoredTaskDefaultsInvalid) {
+				t.Fatalf("LoadTaskDefaults error = %v, want ErrStoredTaskDefaultsInvalid", err)
+			}
+		})
+	}
+}
+
 func TestCheckStorageQuotaAllowsUnlimitedAndRejectsExceeded(t *testing.T) {
 	db := newSettingsTestDB(t)
 	repo := NewRepository(db)
@@ -221,7 +277,7 @@ func newSettingsTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("access settings sqlite database: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&database.Tenant{}, &database.SystemSetting{}, &database.ImageAsset{}); err != nil {
+	if err := db.AutoMigrate(&database.Tenant{}, &database.SystemSetting{}, &database.ImageAsset{}, &database.AIProvider{}, &database.AIModel{}); err != nil {
 		t.Fatalf("migrate settings test schema: %v", err)
 	}
 	return db
@@ -279,5 +335,52 @@ func seedSettingsRow(t *testing.T, db *gorm.DB, tenantID string, key string, val
 		UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("seed setting %s/%s: %v", tenantID, key, err)
+	}
+}
+
+func seedSettingsProvider(t *testing.T, db *gorm.DB, tenantID string, providerID string, status string, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.AIProvider{
+		ID:               providerID,
+		TenantID:         tenantID,
+		Type:             providerpkg.TypeOpenAICompatible,
+		Name:             "Provider " + providerID,
+		BaseURL:          "https://api.openai.com/v1",
+		EncryptedAPIKey:  "encrypted",
+		APIKeyHint:       "****test",
+		Status:           status,
+		TimeoutSeconds:   10,
+		ConcurrencyLimit: 1,
+		CreatedBy:        "seed",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}).Error; err != nil {
+		t.Fatalf("seed settings provider %s/%s: %v", tenantID, providerID, err)
+	}
+}
+
+func seedSettingsModel(t *testing.T, db *gorm.DB, tenantID string, providerID string, modelID string, status string, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.AIModel{
+		ID:                         modelID,
+		TenantID:                   tenantID,
+		ProviderID:                 providerID,
+		ModelName:                  "model-default",
+		DisplayName:                "Model Default",
+		SupportsGenerate:           true,
+		SupportsEdit:               true,
+		SupportsMultiReference:     false,
+		SupportsN:                  false,
+		MaxOutputCount:             1,
+		SupportedSizesJSON:         `["1024x1024"]`,
+		SupportedQualitiesJSON:     `["standard"]`,
+		SupportedOutputFormatsJSON: `["png"]`,
+		PricingJSON:                `{"currency":"USD","unitPrices":{}}`,
+		Status:                     status,
+		CreatedBy:                  "seed",
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+	}).Error; err != nil {
+		t.Fatalf("seed settings model %s/%s: %v", tenantID, modelID, err)
 	}
 }

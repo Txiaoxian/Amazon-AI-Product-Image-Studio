@@ -426,7 +426,7 @@ func (s *Service) deleteProvider(ctx context.Context, principal auth.Principal, 
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		record, err := s.authorizeProviderWithRepo(ctx, repo, principal, providerID, PermissionManage)
+		record, err := s.authorizeProviderForUpdateWithRepo(ctx, repo, principal, providerID, PermissionManage)
 		if err != nil {
 			return err
 		}
@@ -616,11 +616,19 @@ func (s *Service) authorizeProvider(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) authorizeProviderWithRepo(ctx context.Context, repo Repository, principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
+	return s.authorizeProviderWithLookup(ctx, repo.FindProvider, principal, providerID, permission)
+}
+
+func (s *Service) authorizeProviderForUpdateWithRepo(ctx context.Context, repo Repository, principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
+	return s.authorizeProviderWithLookup(ctx, repo.LockProvider, principal, providerID, permission)
+}
+
+func (s *Service) authorizeProviderWithLookup(ctx context.Context, lookup func(context.Context, tenant.Scope, string) (database.AIProvider, error), principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
 		return database.AIProvider{}, err
 	}
-	record, err := repo.FindProvider(ctx, scope, providerID)
+	record, err := lookup(ctx, scope, providerID)
 	if err != nil {
 		return database.AIProvider{}, err
 	}
