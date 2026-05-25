@@ -8,6 +8,7 @@ import (
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/usagecost"
 	"gorm.io/gorm"
 )
 
@@ -66,7 +67,7 @@ func (r Repository) UsageSummary(ctx context.Context, scope tenant.Scope, option
 	}
 
 	selectSQL := fmt.Sprintf(
-		"%s AS dimension_id, currency, COUNT(*) AS record_count, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(image_count), 0) AS image_count, COALESCE(SUM(estimated_cost), 0) AS estimated_cost, MAX(created_at) AS latest_created_at",
+		"%s AS dimension_id, currency, COUNT(*) AS record_count, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(image_count), 0) AS image_count, MAX(created_at) AS latest_created_at",
 		dimensionColumn,
 	)
 	groupBy := dimensionColumn + ", currency"
@@ -85,6 +86,13 @@ func (r Repository) UsageSummary(ctx context.Context, scope tenant.Scope, option
 		Offset(pageOffset(options.PageNum, options.PageSize)).
 		Find(&rows).Error; err != nil {
 		return nil, 0, err
+	}
+	for index := range rows {
+		estimatedCost, err := usageSummaryEstimatedCost(db, scope, options, dimensionColumn, rows[index].DimensionID, rows[index].Currency)
+		if err != nil {
+			return nil, 0, err
+		}
+		rows[index].EstimatedCost = estimatedCost
 	}
 	return rows, total, nil
 }
@@ -249,6 +257,17 @@ func usageSummaryDimensionColumn(dimension string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func usageSummaryEstimatedCost(db *gorm.DB, scope tenant.Scope, options UsageSummaryOptions, dimensionColumn string, dimensionID string, currency string) (string, error) {
+	var values []string
+	err := usageRecordsQuery(db, scope, options.UsageRecordListOptions).
+		Where(dimensionColumn+" = ? AND usage_records.currency = ?", dimensionID, currency).
+		Pluck("usage_records.estimated_cost", &values).Error
+	if err != nil {
+		return "", err
+	}
+	return usagecost.SumDecimal8(values), nil
 }
 
 func createdAtOrder(table string, sortOrder string) string {

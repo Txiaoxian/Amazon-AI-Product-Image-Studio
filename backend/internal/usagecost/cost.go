@@ -69,6 +69,29 @@ func Estimate(pricingJSON string, usage Usage) Result {
 	return Result{Currency: currency, EstimatedCost: total.FloatString(8)}
 }
 
+func FormatDecimal8(value string) string {
+	amount, ok := parseNonNegativeAmount(value)
+	if !ok {
+		return zeroCost
+	}
+	return amount.FloatString(8)
+}
+
+func SumDecimal8(values []string) string {
+	total := new(big.Rat)
+	for _, value := range values {
+		amount, ok := parseNonNegativeAmount(value)
+		if !ok {
+			continue
+		}
+		total.Add(total, amount)
+	}
+	if total.Sign() < 0 {
+		return zeroCost
+	}
+	return total.FloatString(8)
+}
+
 func decodePricing(raw string) (pricingConfig, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -131,6 +154,14 @@ func normalizeCurrency(value string) string {
 }
 
 func parseNonNegativeDecimal(raw string) (*big.Rat, bool) {
+	value, ok := parseNonNegativeAmount(raw)
+	if !ok || value.Cmp(maxUnitPrice) > 0 {
+		return nil, false
+	}
+	return value, true
+}
+
+func parseNonNegativeAmount(raw string) (*big.Rat, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, false
@@ -191,11 +222,7 @@ func parseNonNegativeDecimal(raw string) (*big.Rat, bool) {
 		scale = 0
 	}
 	denominator := pow10(scale)
-	value := new(big.Rat).SetFrac(numerator, denominator)
-	if value.Cmp(maxUnitPrice) > 0 {
-		return nil, false
-	}
-	return value, true
+	return new(big.Rat).SetFrac(numerator, denominator), true
 }
 
 func pow10(exponent int) *big.Int {

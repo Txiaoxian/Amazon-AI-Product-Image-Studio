@@ -106,3 +106,16 @@ func TestEstimateReturnsZeroForMissingInvalidNegativeOrIncompletePricing(t *test
 		})
 	}
 }
+
+func TestFormatDecimal8PreservesLargeDecimalWithoutFloat(t *testing.T) {
+	if got := FormatDecimal8("1234567890.12345678"); got != "1234567890.12345678" {
+		t.Fatalf("formatted decimal = %q, want 1234567890.12345678", got)
+	}
+}
+
+func TestSumDecimal8PreservesLargeDecimalWithoutFloat(t *testing.T) {
+	got := SumDecimal8([]string{"9999999999.99999999", "0.00000001"})
+	if got != "10000000000.00000000" {
+		t.Fatalf("sum decimal = %q, want 10000000000.00000000", got)
+	}
+}
