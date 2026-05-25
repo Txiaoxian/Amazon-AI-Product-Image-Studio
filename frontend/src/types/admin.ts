@@ -10,7 +10,7 @@ import type {
 } from './platform'
 
 export type AdminSortOrder = 'asc' | 'desc'
-export type UsageSummaryDimension = 'user' | 'project' | 'provider' | 'model'
+export type UsageSummaryDimension = 'tenant' | 'user' | 'project' | 'provider' | 'model'
 export type ApiCallLogStatus = 'SUCCESS' | 'FAILURE'
 export type RedactedMetadata = unknown
 

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { adminApi as defaultAdminApi, type AdminApi } from '../../api/admin'
 import { isApiClientError } from '../../api/client'
 import type {
+  AdminUsageQuery,
   ApiCallLog,
   OperationLog,
   SystemSettings,
@@ -80,11 +81,15 @@ interface SystemSettingsDraft {
 }
 
 type SystemSettingsGroup = keyof SystemSettingsDraft
+type UsageFilterField = 'createdAtFrom' | 'createdAtTo' | 'taskId' | 'userId' | 'projectId' | 'providerId' | 'modelId'
+type UsageFiltersDraft = Record<UsageFilterField, string>
 
 const PAGE_SIZE = 10
+const TENANT_TOTALS_PAGE_SIZE = 50
 const METADATA_PREVIEW_LIMIT = 1200
 
 const usageDimensions: Array<{ value: UsageSummaryDimension; label: string }> = [
+  { value: 'tenant', label: '租户' },
   { value: 'provider', label: 'Provider' },
   { value: 'model', label: '模型' },
   { value: 'project', label: '项目' },
@@ -107,11 +112,14 @@ export function AdminObservabilitySettingsPanel({
   )
   const [activeTab, setActiveTab] = useState<AdminObservabilityTab>(availableTabs[0] ?? 'usage')
   const [usageDimension, setUsageDimension] = useState<UsageSummaryDimension>('provider')
+  const [usageFiltersDraft, setUsageFiltersDraft] = useState<UsageFiltersDraft>(() => emptyUsageFiltersDraft())
+  const [usageFilters, setUsageFilters] = useState<UsageFiltersDraft>(() => emptyUsageFiltersDraft())
   const [summaryPageNum, setSummaryPageNum] = useState(1)
   const [usageRecordsPageNum, setUsageRecordsPageNum] = useState(1)
   const [operationLogsPageNum, setOperationLogsPageNum] = useState(1)
   const [apiCallLogsPageNum, setApiCallLogsPageNum] = useState(1)
   const [summaryPage, setSummaryPage] = useState<PageViewState<UsageSummary>>(emptyPage())
+  const [tenantTotalsPage, setTenantTotalsPage] = useState<PageViewState<UsageSummary>>(emptyPage())
   const [usageRecordsPage, setUsageRecordsPage] = useState<PageViewState<UsageRecord>>(emptyPage())
   const [operationLogsPage, setOperationLogsPage] = useState<PageViewState<OperationLog>>(emptyPage())
   const [apiCallLogsPage, setApiCallLogsPage] = useState<PageViewState<ApiCallLog>>(emptyPage())
@@ -160,8 +168,25 @@ export function AdminObservabilitySettingsPanel({
     setLoadingUsage(true)
     setUsageError(null)
     try {
-      const [summary, records] = await Promise.all([
+      const filters = usageFiltersToQuery(usageFilters)
+      const [tenantTotals, summary, records] = await Promise.all([
+        adminApi
+          .getUsageSummary({
+            ...filters,
+            dimension: 'tenant',
+            pageNum: 1,
+            pageSize: TENANT_TOTALS_PAGE_SIZE,
+            sortBy: 'createdAt',
+            sortOrder: 'desc',
+          })
+          .catch((error) => {
+            if (isApiClientError(error) && error.status === 404) {
+              return emptyApiPage<UsageSummary>(TENANT_TOTALS_PAGE_SIZE)
+            }
+            throw error
+          }),
         adminApi.getUsageSummary({
+          ...filters,
           dimension: usageDimension,
           pageNum: summaryPageNum,
           pageSize: PAGE_SIZE,
@@ -169,12 +194,14 @@ export function AdminObservabilitySettingsPanel({
           sortOrder: 'desc',
         }),
         adminApi.listUsageRecords({
+          ...filters,
           pageNum: usageRecordsPageNum,
           pageSize: PAGE_SIZE,
           sortBy: 'createdAt',
           sortOrder: 'desc',
         }),
       ])
+      setTenantTotalsPage(pageFromResponse(tenantTotals))
       setSummaryPage(pageFromResponse(summary))
       setUsageRecordsPage(pageFromResponse(records))
     } catch (error) {
@@ -182,7 +209,7 @@ export function AdminObservabilitySettingsPanel({
     } finally {
       setLoadingUsage(false)
     }
-  }, [adminApi, canReadUsage, summaryPageNum, usageDimension, usageRecordsPageNum])
+  }, [adminApi, canReadUsage, summaryPageNum, usageDimension, usageFilters, usageRecordsPageNum])
 
   const loadOperationLogs = useCallback(async () => {
     if (!canReadAudit) {
@@ -326,6 +353,37 @@ export function AdminObservabilitySettingsPanel({
     }
   }
 
+  const applyUsageFilters = () => {
+    setUsageFilters(normalizeUsageFilters(usageFiltersDraft))
+    setSummaryPageNum(1)
+    setUsageRecordsPageNum(1)
+  }
+
+  const clearUsageFilters = () => {
+    const emptyFilters = emptyUsageFiltersDraft()
+    setUsageFiltersDraft(emptyFilters)
+    setUsageFilters(emptyFilters)
+    setSummaryPageNum(1)
+    setUsageRecordsPageNum(1)
+  }
+
+  const drillDownUsageSummary = (summary: UsageSummary) => {
+    const filterField = usageSummaryFilterField(summary.dimension)
+    if (!filterField) {
+      setUsageRecordsPageNum(1)
+      return
+    }
+
+    const nextFilters = normalizeUsageFilters({
+      ...usageFilters,
+      [filterField]: summary.dimensionId,
+    })
+    setUsageFiltersDraft(nextFilters)
+    setUsageFilters(nextFilters)
+    setSummaryPageNum(1)
+    setUsageRecordsPageNum(1)
+  }
+
   if (availableTabs.length === 0) {
     return null
   }
@@ -370,15 +428,21 @@ export function AdminObservabilitySettingsPanel({
           <UsageView
             dimension={usageDimension}
             error={usageError}
+            filtersDraft={usageFiltersDraft}
             isLoading={isLoadingUsage}
+            onApplyFilters={applyUsageFilters}
+            onClearFilters={clearUsageFilters}
             onDimensionChange={(dimension) => {
               setUsageDimension(dimension)
               setSummaryPageNum(1)
             }}
+            onFiltersDraftChange={setUsageFiltersDraft}
             onRefresh={() => void loadUsage()}
+            onSummaryDrilldown={drillDownUsageSummary}
             onSummaryPageChange={setSummaryPageNum}
             onUsageRecordsPageChange={setUsageRecordsPageNum}
             summaryPage={summaryPage}
+            tenantTotalsPage={tenantTotalsPage}
             usageRecordsPage={usageRecordsPage}
           />
         ) : null}
@@ -428,11 +492,17 @@ export function AdminObservabilitySettingsPanel({
 
 interface UsageViewProps {
   dimension: UsageSummaryDimension
+  tenantTotalsPage: PageViewState<UsageSummary>
   summaryPage: PageViewState<UsageSummary>
   usageRecordsPage: PageViewState<UsageRecord>
+  filtersDraft: UsageFiltersDraft
   isLoading: boolean
   error: string | null
+  onApplyFilters: () => void
+  onClearFilters: () => void
   onDimensionChange: (dimension: UsageSummaryDimension) => void
+  onFiltersDraftChange: (draft: UsageFiltersDraft | ((current: UsageFiltersDraft) => UsageFiltersDraft)) => void
+  onSummaryDrilldown: (summary: UsageSummary) => void
   onSummaryPageChange: (pageNum: number) => void
   onUsageRecordsPageChange: (pageNum: number) => void
   onRefresh: () => void
@@ -440,11 +510,17 @@ interface UsageViewProps {
 
 function UsageView({
   dimension,
+  tenantTotalsPage,
   summaryPage,
   usageRecordsPage,
+  filtersDraft,
   isLoading,
   error,
+  onApplyFilters,
+  onClearFilters,
   onDimensionChange,
+  onFiltersDraftChange,
+  onSummaryDrilldown,
   onSummaryPageChange,
   onUsageRecordsPageChange,
   onRefresh,
@@ -472,11 +548,20 @@ function UsageView({
         </label>
       </div>
 
+      <UsageFilterForm
+        disabled={isLoading}
+        draft={filtersDraft}
+        onApply={onApplyFilters}
+        onClear={onClearFilters}
+        onDraftChange={onFiltersDraftChange}
+      />
+
       <StatusMessage message={error} tone="error" />
       {isLoading ? <LoadingState text="正在加载用量数据..." /> : null}
 
+      {!isLoading && !error ? <TenantTotalsGrid records={tenantTotalsPage.records} /> : null}
       {!isLoading && !error && summaryPage.records.length === 0 ? <EmptyState body="后端返回空分页，当前筛选下暂无汇总数据。" title="暂无用量汇总" /> : null}
-      {!isLoading && summaryPage.records.length > 0 ? <UsageSummaryGrid records={summaryPage.records} /> : null}
+      {!isLoading && summaryPage.records.length > 0 ? <UsageSummaryGrid onDrilldown={onSummaryDrilldown} records={summaryPage.records} /> : null}
       <PaginationControls isLoading={isLoading} label="用量汇总分页" onPageChange={onSummaryPageChange} page={summaryPage} />
 
       <div className="border-t border-ink-200 pt-4">
@@ -497,11 +582,123 @@ function UsageView({
   )
 }
 
-function UsageSummaryGrid({ records }: { records: UsageSummary[] }) {
+function UsageFilterForm({
+  disabled,
+  draft,
+  onApply,
+  onClear,
+  onDraftChange,
+}: {
+  disabled: boolean
+  draft: UsageFiltersDraft
+  onApply: () => void
+  onClear: () => void
+  onDraftChange: (draft: UsageFiltersDraft | ((current: UsageFiltersDraft) => UsageFiltersDraft)) => void
+}) {
+  return (
+    <form
+      className="grid gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3"
+      onSubmit={(event) => {
+        event.preventDefault()
+        onApply()
+      }}
+    >
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <UsageFilterFieldInput
+          label="开始时间"
+          name="createdAtFrom"
+          onChange={onDraftChange}
+          type="datetime-local"
+          value={draft.createdAtFrom}
+        />
+        <UsageFilterFieldInput label="结束时间" name="createdAtTo" onChange={onDraftChange} type="datetime-local" value={draft.createdAtTo} />
+        <UsageFilterFieldInput label="Task ID" name="taskId" onChange={onDraftChange} value={draft.taskId} />
+        <UsageFilterFieldInput label="User ID" name="userId" onChange={onDraftChange} value={draft.userId} />
+        <UsageFilterFieldInput label="Project ID" name="projectId" onChange={onDraftChange} value={draft.projectId} />
+        <UsageFilterFieldInput label="Provider ID" name="providerId" onChange={onDraftChange} value={draft.providerId} />
+        <UsageFilterFieldInput label="Model ID" name="modelId" onChange={onDraftChange} value={draft.modelId} />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={disabled} type="submit" variant="primary">
+          应用筛选
+        </Button>
+        <Button disabled={disabled} onClick={onClear} type="button" variant="secondary">
+          清空筛选
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function UsageFilterFieldInput({
+  label,
+  name,
+  type = 'text',
+  value,
+  onChange,
+}: {
+  label: string
+  name: UsageFilterField
+  type?: 'datetime-local' | 'text'
+  value: string
+  onChange: (draft: UsageFiltersDraft | ((current: UsageFiltersDraft) => UsageFiltersDraft)) => void
+}) {
+  const id = `admin-usage-filter-${name}`
+  return (
+    <label className="grid min-w-0 gap-1 text-sm text-ink-700" htmlFor={id}>
+      <span className="field-label">{label}</span>
+      <input
+        className="field-input min-w-0"
+        id={id}
+        onChange={(event) => onChange((current) => ({ ...current, [name]: event.target.value }))}
+        type={type}
+        value={value}
+      />
+    </label>
+  )
+}
+
+function TenantTotalsGrid({ records }: { records: UsageSummary[] }) {
+  return (
+    <section className="space-y-2">
+      <h4 className="text-sm font-semibold text-ink-900">Tenant totals</h4>
+      {records.length === 0 ? (
+        <EmptyState body="后端 tenant 汇总当前没有返回 totals。" title="暂无 tenant totals" />
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => (
+            <article className="rounded-lg border border-ink-200 bg-white p-3" key={`tenant-total-${record.currency}-${record.dimensionId}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink-900">{record.dimensionId || '当前租户'}</p>
+                  <p className="mt-1 text-xs text-ink-400">{record.recordCount} 条 usage records</p>
+                </div>
+                <span className="rounded-md bg-ink-100 px-2 py-1 text-xs font-semibold text-ink-600">{record.currency || 'N/A'}</span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-500">
+                <Metric label="输入 tokens" value={formatNumber(record.inputTokens)} />
+                <Metric label="输出 tokens" value={formatNumber(record.outputTokens)} />
+                <Metric label="图片" value={formatNumber(record.imageCount)} />
+                <Metric label="成本" value={`${record.estimatedCost} ${record.currency || 'N/A'}`} />
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function UsageSummaryGrid({ records, onDrilldown }: { records: UsageSummary[]; onDrilldown: (summary: UsageSummary) => void }) {
   return (
     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
       {records.map((record) => (
-        <article className="rounded-lg border border-ink-200 bg-white p-3" key={`${record.dimension}-${record.dimensionId}`}>
+        <button
+          className="rounded-lg border border-ink-200 bg-white p-3 text-left transition hover:border-ink-300 hover:bg-ink-50"
+          key={`${record.dimension}-${record.dimensionId}-${record.currency}`}
+          onClick={() => onDrilldown(record)}
+          type="button"
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-ink-900">{record.dimensionId || '未归类'}</p>
@@ -515,10 +712,10 @@ function UsageSummaryGrid({ records }: { records: UsageSummary[] }) {
             <Metric label="输入 tokens" value={formatNumber(record.inputTokens)} />
             <Metric label="输出 tokens" value={formatNumber(record.outputTokens)} />
             <Metric label="图片" value={formatNumber(record.imageCount)} />
-            <Metric label="成本" value={record.estimatedCost} />
+            <Metric label="成本" value={`${record.estimatedCost} ${record.currency || 'N/A'}`} />
           </dl>
           <p className="mt-2 text-xs text-ink-400">最近：{formatDateTime(record.latestCreatedAt)}</p>
-        </article>
+        </button>
       ))}
     </div>
   )
@@ -1017,6 +1214,68 @@ function pageFromResponse<TRecord>(page: ApiPage<TRecord>): PageViewState<TRecor
     pageNum: page.pageNum,
     pageSize: page.pageSize,
   }
+}
+
+function emptyApiPage<TRecord>(pageSize: number): ApiPage<TRecord> {
+  return {
+    records: [],
+    total: 0,
+    pageNum: 1,
+    pageSize,
+  }
+}
+
+function emptyUsageFiltersDraft(): UsageFiltersDraft {
+  return {
+    createdAtFrom: '',
+    createdAtTo: '',
+    taskId: '',
+    userId: '',
+    projectId: '',
+    providerId: '',
+    modelId: '',
+  }
+}
+
+function normalizeUsageFilters(filters: UsageFiltersDraft): UsageFiltersDraft {
+  return {
+    createdAtFrom: filters.createdAtFrom.trim(),
+    createdAtTo: filters.createdAtTo.trim(),
+    taskId: filters.taskId.trim(),
+    userId: filters.userId.trim(),
+    projectId: filters.projectId.trim(),
+    providerId: filters.providerId.trim(),
+    modelId: filters.modelId.trim(),
+  }
+}
+
+function usageFiltersToQuery(filters: UsageFiltersDraft): AdminUsageQuery {
+  const normalized = normalizeUsageFilters(filters)
+  return {
+    createdAtFrom: normalized.createdAtFrom || undefined,
+    createdAtTo: normalized.createdAtTo || undefined,
+    taskId: normalized.taskId || undefined,
+    userId: normalized.userId || undefined,
+    projectId: normalized.projectId || undefined,
+    providerId: normalized.providerId || undefined,
+    modelId: normalized.modelId || undefined,
+  }
+}
+
+function usageSummaryFilterField(dimension: UsageSummaryDimension): UsageFilterField | null {
+  if (dimension === 'user') {
+    return 'userId'
+  }
+  if (dimension === 'project') {
+    return 'projectId'
+  }
+  if (dimension === 'provider') {
+    return 'providerId'
+  }
+  if (dimension === 'model') {
+    return 'modelId'
+  }
+  return null
 }
 
 function emptySystemSettingsDraft(): SystemSettingsDraft {

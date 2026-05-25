@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminObservabilitySettingsPanel } from '../components/admin/AdminObservabilitySettingsPanel'
 import { ApiClientError } from '../api/client'
 import type { AdminApi } from '../api/admin'
-import type { ApiCallLog } from '../types/admin'
+import type { ApiCallLog, UsageSummaryQuery } from '../types/admin'
 import type { ApiPage } from '../types/api'
 
 const usageSummary = {
@@ -17,6 +17,25 @@ const usageSummary = {
   imageCount: 3,
   estimatedCost: '0.12000000',
   latestCreatedAt: '2026-05-18T10:00:00Z',
+} as const
+
+const tenantUsageTotal = {
+  dimension: 'tenant',
+  dimensionId: 'tenant_1',
+  currency: 'USD',
+  recordCount: 4,
+  inputTokens: 120,
+  outputTokens: 340,
+  imageCount: 5,
+  estimatedCost: '1.25000000',
+  latestCreatedAt: '2026-05-18T10:00:00Z',
+} as const
+
+const eurTenantUsageTotal = {
+  ...tenantUsageTotal,
+  currency: 'EUR',
+  recordCount: 1,
+  estimatedCost: '0.75000000',
 } as const
 
 const usageRecord = {
@@ -183,10 +202,11 @@ describe('AdminObservabilitySettingsPanel', () => {
   })
 
   it('shows usage loading and empty states without unbounded list fetching', async () => {
+    const tenantTotals = deferred<ApiPage<never>>()
     const summary = deferred<ApiPage<never>>()
     const records = deferred<ApiPage<never>>()
     const adminApi = createMockAdminApi({
-      getUsageSummary: vi.fn().mockReturnValue(summary.promise),
+      getUsageSummary: vi.fn().mockReturnValueOnce(tenantTotals.promise).mockReturnValueOnce(summary.promise),
       listUsageRecords: vi.fn().mockReturnValue(records.promise),
     })
 
@@ -205,12 +225,15 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(screen.queryByRole('button', { name: '操作日志' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'API 调用日志' })).not.toBeInTheDocument()
     expect(await screen.findByText('正在加载用量数据...')).toBeInTheDocument()
+    tenantTotals.resolve(page([]))
     summary.resolve(page([]))
     records.resolve(page([]))
 
+    expect(await screen.findByText('暂无 tenant totals')).toBeInTheDocument()
     expect(await screen.findByText('暂无用量汇总')).toBeInTheDocument()
     expect(screen.getByText('暂无用量记录')).toBeInTheDocument()
-    expect(adminApi.getUsageSummary).toHaveBeenCalledWith(expect.objectContaining({ pageNum: 1, pageSize: 10 }))
+    expect(adminApi.getUsageSummary).toHaveBeenNthCalledWith(1, expect.objectContaining({ dimension: 'tenant', pageNum: 1, pageSize: 50 }))
+    expect(adminApi.getUsageSummary).toHaveBeenNthCalledWith(2, expect.objectContaining({ dimension: 'provider', pageNum: 1, pageSize: 10 }))
     expect(adminApi.listUsageRecords).toHaveBeenCalledWith(expect.objectContaining({ pageNum: 1, pageSize: 10 }))
     expect(adminApi.listOperationLogs).not.toHaveBeenCalled()
     expect(adminApi.listApiCallLogs).not.toHaveBeenCalled()
@@ -222,7 +245,11 @@ describe('AdminObservabilitySettingsPanel', () => {
     const adminApi = createMockAdminApi({
       getUsageSummary: vi
         .fn()
+        .mockResolvedValue(page([tenantUsageTotal], { total: 1, pageNum: 1 }))
         .mockResolvedValue(page([usageSummary], { total: 1, pageNum: 1 }))
+        .mockResolvedValue(page([tenantUsageTotal], { total: 1, pageNum: 1 }))
+        .mockResolvedValue(page([usageSummary], { total: 1, pageNum: 1 }))
+        .mockResolvedValue(page([tenantUsageTotal], { total: 1, pageNum: 1 }))
         .mockResolvedValue(page([usageSummary], { total: 1, pageNum: 1 })),
       listUsageRecords: vi
         .fn()
@@ -243,9 +270,118 @@ describe('AdminObservabilitySettingsPanel', () => {
     )
 
     expect(await screen.findByText('usage_1')).toBeInTheDocument()
+    expect(screen.getByText(/REDACTED/)).toBeInTheDocument()
     await user.click(within(screen.getByLabelText('用量记录分页')).getByRole('button', { name: '下一页' }))
     expect(await screen.findByText('usage_2')).toBeInTheDocument()
     expect(adminApi.listUsageRecords).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 2, pageSize: 10 }))
+  })
+
+  it('renders tenant totals, serializes usage filters, clears filters, and drills summary rows into records', async () => {
+    const user = userEvent.setup()
+    const getUsageSummary = vi.fn((params: UsageSummaryQuery = {}) => {
+      if (params.dimension === 'tenant') {
+        return Promise.resolve(page([tenantUsageTotal, eurTenantUsageTotal], { total: 2, pageNum: params.pageNum ?? 1 }))
+      }
+      return Promise.resolve(
+        page(
+          [
+            {
+              ...usageSummary,
+              dimension: params.dimension ?? 'provider',
+              dimensionId: `${params.dimension ?? 'provider'}_1`,
+            },
+          ],
+          { total: 1, pageNum: params.pageNum ?? 1 },
+        ),
+      )
+    })
+    const listUsageRecords = vi.fn().mockResolvedValue(page([usageRecord]))
+    const adminApi = createMockAdminApi({
+      getUsageSummary,
+      listUsageRecords,
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit={false}
+        canReadUsage
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(await screen.findByText('Tenant totals')).toBeInTheDocument()
+    expect(screen.getByText('1.25000000 USD')).toBeInTheDocument()
+    expect(screen.getByText('0.75000000 EUR')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('汇总维度')).getByRole('option', { name: '租户' })).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('开始时间'), '2026-05-18T00:00')
+    await user.type(screen.getByLabelText('结束时间'), '2026-05-19T23:59')
+    await user.type(screen.getByLabelText('Task ID'), 'task_1')
+    await user.type(screen.getByLabelText('User ID'), 'user_1')
+    await user.type(screen.getByLabelText('Project ID'), 'project_1')
+    await user.type(screen.getByLabelText('Provider ID'), 'provider_1')
+    await user.type(screen.getByLabelText('Model ID'), 'model_1')
+    await user.click(screen.getByRole('button', { name: '应用筛选' }))
+
+    await waitFor(() => expect(listUsageRecords).toHaveBeenCalledTimes(2))
+    const appliedUsageFilters = {
+      createdAtFrom: '2026-05-18T00:00',
+      createdAtTo: '2026-05-19T23:59',
+      taskId: 'task_1',
+      userId: 'user_1',
+      projectId: 'project_1',
+      providerId: 'provider_1',
+      modelId: 'model_1',
+    }
+    expect(getUsageSummary).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        ...appliedUsageFilters,
+        dimension: 'tenant',
+      }),
+    )
+    expect(getUsageSummary).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        ...appliedUsageFilters,
+        dimension: 'provider',
+      }),
+    )
+    expect(listUsageRecords).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        ...appliedUsageFilters,
+        pageNum: 1,
+      }),
+    )
+
+    await user.click(screen.getByRole('button', { name: '清空筛选' }))
+    await waitFor(() => expect(listUsageRecords).toHaveBeenCalledTimes(3))
+    expect(screen.getByLabelText('Task ID')).toHaveValue('')
+    expect(listUsageRecords).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        taskId: undefined,
+        userId: undefined,
+        projectId: undefined,
+        providerId: undefined,
+        modelId: undefined,
+      }),
+    )
+
+    await user.selectOptions(screen.getByLabelText('汇总维度'), 'user')
+    await waitFor(() => expect(getUsageSummary).toHaveBeenCalledWith(expect.objectContaining({ dimension: 'user', pageNum: 1 })))
+    await user.click(screen.getByRole('button', { name: /user_1/ }))
+    await waitFor(() => expect(listUsageRecords).toHaveBeenCalledTimes(5))
+    expect(screen.getByLabelText('User ID')).toHaveValue('user_1')
+    expect(listUsageRecords).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 'user_1', pageNum: 1 }))
+
+    await user.selectOptions(screen.getByLabelText('汇总维度'), 'tenant')
+    await waitFor(() => expect(getUsageSummary).toHaveBeenCalledWith(expect.objectContaining({ dimension: 'tenant', pageNum: 1 })))
+    await user.click(screen.getAllByRole('button', { name: /tenant_1/ })[0])
+    expect(JSON.stringify(listUsageRecords.mock.calls)).not.toContain('tenantId')
   })
 
   it('surfaces usage API failures as error states', async () => {
