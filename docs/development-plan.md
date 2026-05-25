@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State During P14 Frontend Cost Observability
+## Current State After R14 Provider, Model, And Cost Review
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -38,7 +38,7 @@ Phase status:
 | P11 | Complete | Backend and frontend tenant user/role administration are merged: user list/create/update/disable/enable, role assignment, role/permission reads, RBAC UI gating, and password/secret safety checks. |
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
-| P14 | In progress | Provider/model lifecycle integrity and backend usage/cost reporting are merged. Frontend cost observability and R14 remain. |
+| P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -84,6 +84,10 @@ R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging fron
 
 `P14-BE-USAGE-COST-REPORTING` was reviewed, fixed, and merged. Worker usage persistence now uses deterministic decimal cost estimation with stable 8-decimal formatting, invalid or incomplete pricing produces zero cost without failing successful Provider tasks, and admin usage summary supports tenant/user/project/Provider/model dimensions with tenant isolation, multi-currency grouping, stable pagination, and exact large-decimal cost preservation. Validation passed focused audit/API/task/database tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-up: usage summary currently performs per-page exact cost aggregation in Go; later high-volume tuning may add a more efficient query/index strategy.
 
+`P14-FE-COST-OBSERVABILITY` was reviewed, fixed, and merged. The admin usage tab now consumes backend usage/cost summaries for tenant/user/project/Provider/model dimensions, shows tenant totals, applies date/task/user/project/Provider/model filters consistently to totals, summaries, and records, supports summary drilldown into record filters, protects against stale usage responses, and displays backend cost strings without client-side authoritative recalculation. Validation passed frontend lint, type-check, tests, build, Compose config, whitespace checks, and focused forbidden-pattern scans.
+
+R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend cost observability. No blocking issues were found. Validation passed frontend lint/type-check/test/build, backend full tests/race/vet/build, P14 focused backend tests with `-count=1`, Docker Compose config, whitespace checks, and focused frontend scans for direct AI Provider calls, browser Provider-key storage, task polling, AI relay paths, image base64 persistence, and object storage leakage. Non-blocking follow-ups remain: same-Provider `model_name` uniqueness is still deferred, usage summary cost aggregation is exact but currently per-page in Go, and the frontend tenant-totals compatibility fallback for `404` can be removed once older backend contracts no longer matter.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -107,6 +111,7 @@ The current `main` branch supports:
 - Frontend admin system settings UI for active runtime-backed settings only: upload policy, task defaults, task concurrency, storage retention, and storage quota.
 - Backend Provider/model lifecycle integrity: Provider delete and disable are guarded against linked model states that would leave active models pointing at unavailable Providers, and model write paths reject disabled, deleted, or cross-tenant Providers.
 - Backend deterministic usage/cost reporting: Worker usage records use stable decimal cost estimation, pricing failures are zero-cost non-fatal cases, and admin usage summary supports tenant/user/project/Provider/model aggregation with exact cost strings.
+- Frontend admin cost observability: the usage tab displays tenant totals, dimension summaries, filtered usage records, drilldown filters, multi-currency cost strings from the backend, and stale-response protection without Provider direct calls, browser Provider-key storage, or polling.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -210,11 +215,11 @@ Suggested order:
 2. `P14-BE-USAGE-COST-REPORTING`
    - Completed and merged. Worker cost estimation is deterministic and backend usage summary supports tenant/user/project/Provider/model dimensions with exact decimal costs.
 3. `P14-FE-COST-OBSERVABILITY`
-   - Next. Improve the existing admin observability usage tab with tenant totals, cost-aware filters, and drilldowns backed by the merged usage/cost APIs.
+   - Completed and merged. The existing admin observability usage tab now exposes tenant totals, cost-aware filters, drilldowns, multi-currency display, and stale-response protection backed by the merged usage/cost APIs.
 4. `R14`
-   - Review Provider lifecycle, data integrity, and cost reporting.
+   - Completed. Provider lifecycle, data integrity, usage/cost reporting, and frontend cost observability were reviewed and regressed with no blocking issues.
 
-Parallelism: run `P14-FE-COST-OBSERVABILITY` serially from latest `main`; it depends on the merged backend usage/cost contract and should not run in parallel with R14.
+Parallelism: P14 is complete. Move to P15 from latest `main`.
 
 ### P15: Release Hardening And End-To-End QA
 
@@ -287,4 +292,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P14-FE-COST-OBSERVABILITY` from latest `main`. The next slice is frontend-only and should make the existing admin usage tab consume the merged tenant/user/project/Provider/model cost summary contract, add practical filters and drilldowns, and preserve permission gating, pagination, redaction display boundaries, and no-polling/no-Provider-direct-call rules. After that task is reviewed and merged, run R14.
+Start P15 from latest `main`. The next slice is `P15-E2E-CORE-FLOWS`: add an operator-run end-to-end validation harness or scripts that prove the core admin and seller flow across backend API, Worker, Redis, MySQL, MinIO, SSE, frontend build contracts, logs, and usage/cost observability. P15 tasks may use the shared local MySQL/Redis/MinIO environment documented in `docs/local-development.md`, but must namespace and clean up task-owned test data.

@@ -381,7 +381,7 @@ P14 usage/cost reporting contract:
 - Usage summary includes tenant-scoped aggregate view with `dimension=tenant` in addition to user, project, Provider, and model. `dimensionId` for the tenant view is the current tenant ID.
 - Usage/cost queries remain tenant-scoped, paginated, stable under equal timestamps, and redacted. Raw usage may be returned only after recursive redaction.
 - Summary cost strings preserve exact decimal values and do not round through float conversion. Multi-currency results are grouped by dimension and currency.
-- Current P14 backend implementation status: merged and reviewed. Frontend cost observability is the next slice and must consume this contract without client-side authoritative cost recalculation.
+- Current P14 implementation status: backend usage/cost reporting, frontend cost observability, and R14 are merged and reviewed. The frontend admin usage tab consumes this contract for tenant totals, tenant/user/project/Provider/model summaries, filters, drilldown, multi-currency display, and usage records without client-side authoritative cost recalculation.
 
 Current settings contract:
 

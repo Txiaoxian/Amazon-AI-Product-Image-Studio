@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 与 `P14-BE-USAGE-COST-REPORTING` 已 review、修复阻塞项并合并，P14 进入前端成本可观测性切片。
+R14 已完成，未发现阻塞问题。P14 的 Provider/model 生命周期完整性、后端 usage/cost reporting、前端成本可观测性和整批回归均已合并并验证。
 
 已完成的平台基础：
 
@@ -96,7 +96,7 @@ R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 与 `P
 - P9-P10：审计/用量读取、运行时生效的上传策略、生产密钥保护、安全/部署验证、Worker 并发池、SSE bridge 生命周期、Provider/模型生命周期、admin 硬化、后端统一历史查询。
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
 - P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
-- P14 已合并切片：Provider/model 生命周期完整性，以及后端确定性 usage/cost reporting。Worker 成本估算使用稳定 decimal，非法 pricing 归零且不失败成功任务；admin usage summary 支持 tenant/user/project/Provider/model 维度、tenant isolation、多币种分组和 exact decimal cost。
+- P14 已合并切片：Provider/model 生命周期完整性、后端确定性 usage/cost reporting、前端 admin 成本可观测性和 R14。Worker 成本估算使用稳定 decimal，非法 pricing 归零且不失败成功任务；admin usage summary 支持 tenant/user/project/Provider/model 维度、tenant isolation、多币种分组和 exact decimal cost；前端 usage tab 支持 tenant totals、过滤、drilldown、多币种展示和 stale response 防护。
 
 当前已知后续项：
 
@@ -106,7 +106,7 @@ R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 与 `P
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `P14-FE-COST-OBSERVABILITY`，串行强化前端 admin 用量/成本看板和明细钻取。
+- 下一任务是 `P15-E2E-CORE-FLOWS`，串行补齐可由 operator 执行的核心端到端验证。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -182,9 +182,9 @@ R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 与 `P
 2. `P14-BE-USAGE-COST-REPORTING`
    - 已完成并合并。后端成本估算确定、非负、8 位小数稳定；usage summary 支持 tenant/user/project/Provider/model 聚合、过滤、分页、多币种和 exact decimal cost。
 3. `P14-FE-COST-OBSERVABILITY`
-   - 下一个任务。前端成本/用量看板和明细钻取。
+   - 已完成并合并。前端成本/用量看板现在消费后端 tenant/user/project/Provider/model summary，支持 tenant totals、filters、drilldown、多币种展示和 stale response 防护。
 4. `R14`
-   - Provider 生命周期和成本统计 review。
+   - 已完成。完整 P14 范围通过 frontend/backend/Compose/whitespace/禁止模式回归，未发现阻塞问题。
 
 ### P15：发布硬化与端到端 QA
 
@@ -201,67 +201,76 @@ R13 已完成，未发现阻塞问题。`P14-BE-PROVIDER-MODEL-INTEGRITY` 与 `P
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P14-FE-COST-OBSERVABILITY
+## 下一个任务包：P15-E2E-CORE-FLOWS
 
 ### 调度决策
 
-- 本任务串行执行，不与 R14 review 或其他前端 admin 重构并行。
-- 理由：它消费刚合并的后端 usage/cost 合同，是 R14 前最后一个 P14 功能切片。
-- 本任务只改前端 admin observability usage/cost 相关类型、API wrapper、UI 和测试，不改后端、部署、公共合同文档或 Agent 规则。
+- 本任务串行执行，不与最终安全回归或部署 runbook 并行。
+- 理由：P15 的第一步应先把核心平台流转固化为可重复验证的 E2E/集成回归，后续安全和发布验证才能复用同一套检查入口。
+- 本任务以测试和验证脚本为主，不开发新业务能力，不调用真实 AI Provider，不改公共合同文档或 Agent 规则。
 
 ### 任务信息
 
-- 任务名称：`P14-FE-COST-OBSERVABILITY`
-- 目标：在现有 `AdminObservabilitySettingsPanel` 的 usage tab 中接入 P14 后端成本统计能力，展示 tenant totals、维度汇总、过滤后的 usage records 和明细钻取，同时保持权限、分页、错误、空态、脱敏显示边界和 no-polling/no-Provider-direct-call 规则。
-- 推荐线程名：`P14-FE-COST-OBSERVABILITY`
-- 推荐分支名：`codex/p14-frontend-cost-observability`
-- 起始分支：已合并 `P14-BE-USAGE-COST-REPORTING` 与本任务公共合同文档的最新 `main`
-- 前置依赖：P14 backend usage/cost reporting 已完成；现有前端 admin observability/settings panel、admin API wrapper 和 tests 已存在。
+- 任务名称：`P15-E2E-CORE-FLOWS`
+- 目标：新增可重复执行的核心平台端到端验证，覆盖 init admin/login、Provider/model 配置、项目、参考图上传、任务创建、Worker fake 执行或测试替身、SSE 事件/回放、输出资产、下载、再次编辑入口所需数据、history、usage/cost、operation/API logs 的关键合同。
+- 推荐线程名：`P15-E2E-CORE-FLOWS`
+- 推荐分支名：`codex/p15-e2e-core-flows`
+- 起始分支：已完成 R14 的最新 `main`
+- 前置依赖：P14 全部代码和 R14 文档已合并；共享本地 MySQL/Redis/MinIO 使用规则见 `docs/local-development.md`。
 
 ### 子 agent 完整启动 prompt
 
 ```text
-你是本项目的子 agent，负责 `P14-FE-COST-OBSERVABILITY`。
+你是本项目的子 agent，负责 `P15-E2E-CORE-FLOWS`。
 
-你必须在分支 `codex/p14-frontend-cost-observability` 上工作；如果当前不在该分支，先执行 `git switch codex/p14-frontend-cost-observability`，确认 `git branch --show-current` 后再继续。起始点必须包含最新 `main`；如果 `git merge-base --is-ancestor main codex/p14-frontend-cost-observability` 不通过，先停止并报告，不要自行修改公共合同。
+你必须在分支 `codex/p15-e2e-core-flows` 上工作；如果当前不在该分支，先执行 `git switch codex/p15-e2e-core-flows`，确认 `git branch --show-current` 后再继续。起始点必须包含完成 R14 后的最新 `main`；如果 `git merge-base --is-ancestor main codex/p15-e2e-core-flows` 不通过，先停止并报告，不要自行修改公共合同。
 
 任务目标：
-在现有前端 admin observability usage tab 中接入后端 P14 usage/cost reporting：
-- 支持 `dimension=tenant|user|project|provider|model`，默认展示 tenant totals 或清晰的 tenant-level 总览。
-- 增加成本/用量过滤控件：时间范围、taskId、userId、projectId、providerId、modelId。过滤必须同时作用于 summary 和 usage records。
-- 增加从汇总卡片到用量记录的 drilldown：点击 user/project/provider/model 汇总时填入对应过滤条件并刷新 records；tenant 维度不应制造无效过滤。
-- 成本展示必须使用后端返回的 `estimatedCost` 和 `currency` 字符串，不做前端权威成本重算。
-- 保持 usage records 原有分页、rawUsage 脱敏预览、错误、loading、empty 和权限隐藏行为。
+为完整平台补齐第一批 P15 核心 E2E/集成验证。验证必须证明平台关键合同可以串起来，而不是只测孤立函数：
+- 管理员初始化或登录链路可取得 HttpOnly Cookie 会话和内存 CSRF。
+- Provider/model 管理合同可创建启用的 Provider/model，并且 Provider API Key 不会完整返回。
+- 项目创建、参考图上传、资产 metadata、授权下载合同可用，上传仍走真实文件校验。
+- 任务创建进入后端任务合同，Worker 路径使用测试替身或 fake Provider Adapter 完成成功任务，不允许调用真实 OpenAI/Gemini/中转站。
+- SSE 事件、Last-Event-ID 回放或任务事件历史读取能看到排队、开始、输出、usage、完成等关键事件。
+- 输出图片进入项目资产库，项目 history 能看到生成/编辑结果，下载必须经后端鉴权。
+- usage/cost summary、usage records、operation logs、API call logs 可按租户读取并保持脱敏。
 
 必须遵守：
-1. 不修改 backend、deploy、docs、AGENTS.md、agent-instructions。
-2. 不新增任何 OpenAI/Gemini/AI relay 直连，不新增 Provider API Key 输入、存储、读取、localStorage/sessionStorage/IndexedDB 持久化。
-3. 不使用轮询、`setInterval` 或循环 fetch。Usage/cost 数据只在打开 tab、切换维度/过滤/分页、点击刷新或 drilldown 时读取。
-4. 不把 raw usage 展开成不受控的大段敏感文本；继续通过现有 `MetadataPreview` 或同等安全预览展示后端已脱敏数据。
-5. 不在前端重新计算权威成本，不把不同 currency 强行合并成一个总数；如果展示汇总，只能按 currency 分组或明确标注当前页/当前筛选。
-6. 只按 `usage:read` 权限展示 usage/cost UI；无权限时不得发起 usage API 请求。
-7. 可以使用 `docs/local-development.md` 中的共享本地服务做手工验证，但本任务默认应以 mock API 的前端自动化测试为主。
+1. 不修改 `docs/**`、`AGENTS.md`、`agent-instructions/**`。
+2. 不开发新业务能力，不改变公开 API/SSE 合同；如发现必须改合同，停止并报告主 agent。
+3. 不调用真实 AI Provider，不访问 OpenAI、Gemini 或任何外部中转站；Provider 调用必须用测试替身、fake adapter、httptest 或已有测试 helper。
+4. 不把真实本地 MySQL/Redis/MinIO 凭据、Provider Key、Authorization、Cookie、JWT、图片 base64、bucket 或 object_key 写入仓库、快照、日志或最终交付。
+5. 不使用前端轮询、`setInterval` 或循环 fetch 来模拟任务状态；任务状态验证必须走 SSE、任务事件历史或 Worker 测试事件。
+6. 如使用共享本地 MySQL/Redis/MinIO，只能创建任务命名空间测试数据，例如 `codex_p15_e2e_*`，不得 drop 数据库、删除共享 bucket、flush Redis 或删除无关数据。
+7. 测试必须可重复执行；失败时要清楚指出失败阶段和关键对象 ID，但不得泄露敏感字段。
 
 建议实现：
 1. 先阅读：
-   - `frontend/src/types/admin.ts`
-   - `frontend/src/api/admin.ts`
-   - `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`
-   - `frontend/src/test/adminApi.test.ts`
+   - `backend/internal/api/*_test.go`
+   - `backend/internal/task/worker_test.go`
+   - `backend/internal/sse/*_test.go`
+   - `frontend/src/test/taskWorkbench.test.tsx`
+   - `frontend/src/test/historyAssetSource.test.tsx`
    - `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
-2. 先补测试，再实现：
-   - 将 `UsageSummaryDimension` 扩展为 `tenant | user | project | provider | model`。
-   - 更新 admin API wrapper 测试，证明 `dimension=tenant` 和 usage filters 会正确序列化。
-   - 在 usage tab 中增加 tenant totals 区域。建议单独请求 `getUsageSummary({ dimension: 'tenant', filters... })`，并按 currency 展示后端返回的 totals。
-   - 保留现有 summary 维度选择，并加入 `tenant` 选项；切换维度时重置 summary 页码。
-   - 增加过滤表单，字段至少包括：`createdAtFrom`、`createdAtTo`、`taskId`、`userId`、`projectId`、`providerId`、`modelId`。应用过滤时重置 summary 和 records 页码；清空过滤时恢复空过滤。
-   - 点击 summary card 时执行 drilldown：根据当前 row 的 dimension 写入对应 filter（user/project/provider/model），重置 records 页码并刷新；不要为 tenant row 写入 `tenantId` 或任何后端不支持的过滤参数。
-   - Usage records 表格继续显示 `estimatedCost currency`、tokens、imageCount、rawUsage 预览、时间和对象 ID。
-   - 避免 UI 文字溢出，表格/卡片在桌面与窄屏下保持可扫描。
-3. 不要把本任务做成新的 admin 页面。沿用现有 observability/settings 面板和 tab 结构。
+   - `docs/api-contract.md`
+   - `docs/sse-contract.md`
+   - `docs/security.md`
+   - `docs/local-development.md`
+2. 优先新增后端集成测试文件，例如 `backend/internal/api/e2e_core_flow_test.go`，复用现有 test router/helper。测试应串联真实路由、真实 DB metadata、真实 MinIO/storage 测试替身或现有 upload helper、真实 task/event/history/usage/audit 查询；Provider/AI 调用必须 fake。
+3. 如单个后端测试难以跨包驱动 Worker，可在 `backend/internal/task/e2e_core_flow_test.go` 补 Worker fake execution 测试，并在 API 层测试验证创建、history、SSE replay、资产、usage/log reads 合同。不要为测试方便改生产代码。
+4. 可新增一个轻量脚本 `scripts/e2e-core-flow.sh`，作为 operator 本地验证入口。脚本只能编排已有测试命令或可选检查共享本地服务连通性；不得写死本机真实密码，不得启动新 MySQL/Redis/MinIO，不得清空共享服务。
+5. 如需要前端合同覆盖，可新增 `frontend/src/test/e2eCoreFlowContracts.test.tsx` 或扩展现有测试，验证 workbench/history/admin observability 对后端核心合同的串联假设，但不要重写 UI。
 
 验收命令：
 ```bash
+cd backend
+go test ./internal/api ./internal/task ./internal/sse ./internal/audit -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
 cd frontend
 npm run lint
 npm run type-check
@@ -269,111 +278,123 @@ npm run test
 npm run build
 
 cd ..
-git diff --check main...HEAD
 docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+
+# 如新增脚本：
+bash scripts/e2e-core-flow.sh --help
 ```
 
 最终交付必须包含：
 - 修改文件清单。
 - 执行的测试命令和结果。
 - 每个 failure mode 对应的测试文件/测试名映射。
-- 安全自查结果，明确没有新增 Provider 直连、Provider Key 存储、task polling、localStorage/sessionStorage/IndexedDB 敏感数据、Authorization/Cookie/JWT/base64/object key 暴露。
+- 安全自查结果，明确没有真实 AI Provider 调用、Provider Key 存储、task polling、localStorage/sessionStorage/IndexedDB 敏感数据、Authorization/Cookie/JWT/base64/object key 暴露。
 - 刻意未修改范围。
-- 成本展示规则说明，包括 currency 分组、tenant totals 来源、drilldown 行为和不做前端权威成本重算。
+- 如使用共享本地服务，说明创建/修改/清理了哪些 `codex_p15_e2e_*` 测试数据。
 - 如发现公共合同缺口，只报告给主 agent，不修改 docs。
 ```
 
 ### 允许修改文件
 
-- `frontend/src/types/admin.ts`
-- `frontend/src/api/admin.ts`
-- `frontend/src/components/admin/AdminObservabilitySettingsPanel.tsx`
-- `frontend/src/test/adminApi.test.ts`
-- `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
-- 可新增 `frontend/src/components/admin/*Usage*` 小组件文件，但优先保持现有面板内局部拆分，避免大规模重构
+- `backend/internal/api/*core_flow*_test.go`
+- `backend/internal/task/*core_flow*_test.go`
+- `backend/internal/sse/*core_flow*_test.go`
+- `backend/internal/audit/*core_flow*_test.go`
+- `frontend/src/test/*coreFlow*.test.tsx`
+- `scripts/e2e-core-flow.sh`
+- 为复用现有测试 helper，可小范围修改现有 `*_test.go`；不得改生产代码。
 
 ### 禁止修改文件
 
-- `backend/**`
-- `deploy/**`
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `frontend/src/lib/taskSseClient.ts`，除非类型编译需要且不改变 SSE 行为；默认不改
-- `frontend/src/api/providerModel.ts`、`frontend/src/api/task.ts`、`frontend/src/api/projectAsset.ts`
-- 任何旧 Provider 直连、AI relay、Provider Key 存储、task polling 或 IndexedDB 敏感数据路径
+- `backend/internal/**` 非测试生产文件，除非发现测试无法表达真实合同且先停止报告；默认不改
+- `frontend/src/**` 非测试生产文件
+- `deploy/**`
+- `frontend/src/lib/taskSseClient.ts`
+- 任何 Provider 直连、AI relay、Provider Key 存储、task polling、IndexedDB 敏感数据或真实外部网络调用路径
 
 ### 具体开发内容
 
-1. 扩展 usage summary 类型和 query serialization。
-2. 在 usage tab 顶部增加成本/用量 totals，清楚展示当前筛选下 tenant totals，支持多 currency 分组。
-3. 增加过滤控件和应用/清空行为，所有过滤参数同时作用于 tenant totals、summary 和 records。
-4. 增加 summary card drilldown 到 records 的行为。
-5. 更新 loading/error/empty/pagination 状态，避免 stale response 覆盖最新筛选结果；如新增请求序号保护，应只用于本 tab。
-6. 更新测试覆盖 API serialization、权限 gating、filters、tenant dimension、drilldown、multi-currency display、error/empty/loading 和 no unauthorized request。
+1. 建立 P15 核心流转测试入口，优先为后端 API/Worker/SSE/audit 增加端到端或准端到端测试。
+2. 测试中创建命名空间化租户、管理员、Provider、模型、项目、参考图资产、任务和输出资产。
+3. 使用 fake Provider/Worker 执行路径产生输出图片、usage record、API call log 和 task events；不得访问外部网络。
+4. 验证 SSE 或 task event replay 的 Last-Event-ID/历史补发关键行为能覆盖该任务。
+5. 验证项目 history、资产 detail/download、usage summary/records、operation logs、API call logs 均只返回当前 tenant 数据并保持脱敏。
+6. 若新增脚本，只做验证编排，不写业务逻辑，不保存 secrets，不创建额外服务。
 
 ### 必须保持的现有行为
 
-- `AdminObservabilitySettingsPanel` 仍按权限显示 usage、operation logs、API call logs、settings tabs。
-- 无 `usage:read` 时不调用 usage summary 或 usage records API。
-- operation logs、API call logs、system settings UI 不因本任务回归。
-- 现有 usage records 分页、刷新、错误、空态和 raw usage preview 保持可用。
-- API wrapper 使用 same-origin `/api/v1/admin/...`，不新增外部请求。
+- 现有单元、集成和前端测试不回归。
+- 生产代码行为不因测试任务改变。
+- 任务状态仍通过 SSE/事件历史验证，不引入 polling。
+- Provider key、auth cookie、CSRF、JWT、object_key、bucket、image bytes 仍不进入日志、快照或前端可见状态。
+- Docker Compose 配置不被本任务改动。
 
 ### 允许的中间态
 
-- 本任务只提供 admin usage/cost observability，不新增 billing、invoice、预算告警或导出功能。
-- 前端可以显示对象 ID 而不是对象名称；名称映射/搜索选择器可留给后续体验任务。
-- 图表不是硬要求；如果使用简单 cards/tables 更符合现有 UI，可以不引入 chart 依赖。
+- 本任务可以先以自动化测试和验证脚本覆盖核心合同，不要求启动完整真实外部 AI。
+- 如某些真实浏览器交互无法稳定自动化，可先用前端组件合同测试加后端 API/Worker 集成测试组合覆盖，但必须说明缺口。
+- 允许使用共享本地服务做额外手工验证，但自动化测试不得依赖本机私密凭据。
 
 ### 禁止的半迁移状态
 
-- UI 显示 tenant/cost 过滤控件，但实际 API 请求没有带对应 query。
-- 点击 drilldown 后视觉筛选状态和 records 请求不一致。
-- 将不同 currency 合并为一个未标注总成本。
-- 使用 `setInterval`、循环 fetch 或后台自动刷新 usage/cost。
-- 为了展示成本而在前端读取或保存 Provider secret、raw Authorization/Cookie/JWT/base64/object key。
+- 只新增脚本但没有任何自动化断言。
+- 测试绕过权限、租户过滤、上传校验或 Worker/任务状态机，导致无法证明真实合同。
+- 用真实 Provider Key 或外部 AI 调用“验证成功”。
+- 通过改生产代码来适配测试，但没有产品需求或合同依据。
+- 留下不可清理的本地服务数据、Redis 队列消息或 MinIO 对象。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
-| 无 `usage:read` | 不显示 usage tab，不发 usage 请求 | 是 |
-| 打开 usage tab | 加载 tenant totals、当前维度 summary、usage records | 是 |
-| `dimension=tenant` | UI 可选择并显示 tenant rows，不写无效 tenant filter | 是 |
-| 多 currency summary | 按 currency 分开展示，不合并成单一金额 | 是 |
-| 应用 filters | summary、tenant totals、records 请求都带相同过滤条件并重置页码 | 是 |
-| 清空 filters | 请求恢复无过滤状态并重置页码 | 是 |
-| 点击 provider/model/project/user summary row | 写入对应 filter，刷新 records，视觉状态与请求一致 | 是 |
-| 点击 tenant summary row | 不写后端不支持的 tenantId filter，不产生错误请求 | 是 |
-| usage API 失败 | 显示错误，不清空其他 tabs，不泄露内部对象 | 是 |
-| stale response | 后发请求结果不被先发慢请求覆盖，或实现保持现有无 stale 风险 | 是 |
+| 未登录访问核心接口 | 返回 401，不创建业务数据 | 是 |
+| 无权限或跨租户读取项目/资产/任务/history/usage/log | 返回 403/404，不泄露存在性 | 是 |
+| Provider API Key 创建后读取 | 只返回 hint/metadata，不返回完整 key | 是 |
+| 参考图上传 | 校验真实图片类型、大小和 metadata，禁止 SVG/base64 直存 | 是 |
+| 任务执行成功 | 产生 task events、output asset、usage record、API call log、operation log | 是 |
+| SSE replay / Last-Event-ID | 能补发历史事件或从事件历史验证等价合同 | 是 |
+| 输出资产下载 | 必须经后端鉴权，跨租户不可下载 | 是 |
+| usage/cost summary | 按 tenant 隔离，成本使用后端字符串，不重新计算 | 是 |
+| 敏感日志/响应 | 不包含 Provider Key、Authorization、Cookie、JWT、base64、bucket、object_key | 是 |
+| 测试失败清理 | 不留下无归属 Redis/MinIO/MySQL 测试数据 | 是 |
 
 ### 安全要求
 
-- 前端只调用后端 `/api/v1/admin/usage/*`，不调用 AI Provider 或 MinIO。
-- 不持久化 usage filters 到 localStorage/sessionStorage/IndexedDB，除非后续有明确产品要求和安全设计。
-- Raw usage 只显示后端返回的 redacted payload 预览，不增加复制完整 payload、下载 raw payload 或扩大预览上限。
-- 错误信息使用现有 `formatAdminError` 风格，不显示 stack trace、Authorization、Cookie、JWT、Provider Key、image base64、bucket 或 object key。
+- 所有测试数据必须包含 tenant/project/task/asset 级别隔离，跨租户断言必须覆盖至少一个核心资源。
+- Provider/AI 调用必须 fake；测试替身返回的错误和 metadata 也要覆盖脱敏。
+- 任何脚本不得读取或打印真实 `.env` secrets；如需环境变量，只打印变量名是否存在，不打印值。
+- 不得新增 browser storage、polling、Provider direct call、MinIO direct download 或 object key 暴露。
 
 ### 必须新增或更新的回归测试
 
-- `adminApi.test.ts`：`dimension=tenant` 和全部 usage filters/query serialization。
-- `adminObservabilitySettingsPanel.test.tsx`：tenant totals、dimension selector 包含 tenant、filters apply/clear、summary drilldown、multi-currency display、usage permission gating、API failure state。
-- 如拆出小组件，增加对应组件行为测试或保持通过面板集成测试覆盖。
+- 后端核心流转测试：覆盖 auth、Provider/model、project、asset upload/download、task create、fake Worker success、events/SSE replay/history、usage/log reads。
+- 跨租户/无权限负向测试：至少覆盖 project/history/asset download/usage 或 log 中的两个资源类型。
+- 敏感信息负向测试：响应与日志 payload 不含 Provider Key、Authorization、Cookie、JWT、image base64、bucket、object_key。
+- 如新增前端合同测试：覆盖 workbench/history/admin observability 对核心后端合同的调用顺序和 forbidden patterns。
 
 ### 验收标准
 
-- 前端 usage/cost UI 明确消费 `dimension=tenant|user|project|provider|model` 后端合同。
-- 过滤和 drilldown 请求参数与 UI 状态一致。
-- 多 currency 不被错误合并，成本值使用后端字符串展示。
-- 无 `usage:read` 时不会发 usage 请求。
-- operation logs、API call logs、system settings 原有测试不回归。
-- 未修改后端、部署、公共合同文档或 Agent 规则。
+- 至少有一个可重复执行的核心流转自动化测试入口，且失败信息能定位阶段。
+- 测试证明核心 seller/admin flow 可以从认证走到资产、任务、事件、history、usage/cost 和 logs。
+- 无真实 AI Provider 调用，无敏感数据泄漏，无轮询，无浏览器 Provider Key 存储。
+- 现有前端、后端、Compose 配置验证全部通过。
+- 未修改公共合同文档、Agent 规则、部署配置或无关生产代码。
 
 ### 测试命令
 
 ```bash
+cd backend
+go test ./internal/api ./internal/task ./internal/sse ./internal/audit -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
 cd frontend
 npm run lint
 npm run type-check
@@ -381,11 +402,15 @@ npm run test
 npm run build
 
 cd ..
-git diff --check main...HEAD
 docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+
+if [ -f scripts/e2e-core-flow.sh ]; then
+  bash scripts/e2e-core-flow.sh --help
+fi
 ```
 
-如使用共享本地服务做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录；本任务默认可以只用前端自动化测试完成。
+如使用共享本地服务做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录。
 
 ## 标准验证命令
 
