@@ -157,6 +157,18 @@ func (r Repository) SoftDeleteProvider(ctx context.Context, scope tenant.Scope, 
 }
 
 func (r Repository) CountLinkedModels(ctx context.Context, scope tenant.Scope, providerID string) (int64, error) {
+	return r.countLinkedModels(ctx, scope, providerID, "")
+}
+
+func (r Repository) CountLinkedModelsByStatus(ctx context.Context, scope tenant.Scope, providerID string, status string) (int64, error) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return 0, ErrValidation
+	}
+	return r.countLinkedModels(ctx, scope, providerID, status)
+}
+
+func (r Repository) countLinkedModels(ctx context.Context, scope tenant.Scope, providerID string, status string) (int64, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return 0, err
@@ -167,9 +179,12 @@ func (r Repository) CountLinkedModels(ctx context.Context, scope tenant.Scope, p
 	}
 
 	var count int64
-	if err := db.Model(&database.AIModel{}).
-		Where("tenant_id = ? AND provider_id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		Count(&count).Error; err != nil {
+	query := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND provider_id = ? AND deleted_at IS NULL", scope.ID(), providerID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return count, nil

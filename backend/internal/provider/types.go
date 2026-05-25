@@ -41,6 +41,7 @@ var (
 	ErrProviderTest     = errors.New("provider test failed")
 	ErrProbeUnavailable = errors.New("provider probe unavailable")
 	ErrHasLinkedModels  = errors.New("provider has linked models")
+	ErrHasEnabledModels = errors.New("provider has enabled linked models")
 )
 
 type ListQuery struct {

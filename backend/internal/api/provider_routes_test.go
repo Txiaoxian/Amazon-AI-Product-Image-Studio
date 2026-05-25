@@ -276,14 +276,58 @@ func TestProviderDeleteIgnoresCrossTenantLinkedModels(t *testing.T) {
 	}
 }
 
-func TestProviderDisableWithLinkedModelsSucceedsAndDoesNotMutateModels(t *testing.T) {
+func TestProviderDisableRejectsLinkedEnabledModelsAndLeavesRowsUnchanged(t *testing.T) {
 	router, db, _, adminSession := newProviderRouteTestRouter(t)
 	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-disable-linked", "Disable Linked Provider")
 	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-disable-linked", modelcap.StatusEnabled, "disable-linked-model", "Disable Linked Model")
 
 	disableResponse := performJSON(router, http.MethodPost, "/api/v1/providers/"+providerID+"/disable", nil, adminSession.cookies, adminSession.csrfHeader())
+	if disableResponse.Code != http.StatusConflict {
+		t.Fatalf("disable linked provider status = %d, want %d: %s", disableResponse.Code, http.StatusConflict, disableResponse.Body.String())
+	}
+	if code := errorCode(t, disableResponse); code != "PROVIDER_HAS_ENABLED_MODELS" {
+		t.Fatalf("disable linked provider error code = %q, want PROVIDER_HAS_ENABLED_MODELS: %s", code, disableResponse.Body.String())
+	}
+	assertResponseExcludes(t, disableResponse.Body.String(), "disable-linked-model", "Disable Linked Model", providerID)
+
+	patchDisableResponse := performJSON(router, http.MethodPatch, "/api/v1/providers/"+providerID, map[string]any{
+		"status": provider.StatusDisabled,
+		"name":   "Should Not Persist",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if patchDisableResponse.Code != http.StatusConflict {
+		t.Fatalf("patch disable linked provider status = %d, want %d: %s", patchDisableResponse.Code, http.StatusConflict, patchDisableResponse.Body.String())
+	}
+	if code := errorCode(t, patchDisableResponse); code != "PROVIDER_HAS_ENABLED_MODELS" {
+		t.Fatalf("patch disable linked provider error code = %q, want PROVIDER_HAS_ENABLED_MODELS: %s", code, patchDisableResponse.Body.String())
+	}
+
+	var providerRecord database.AIProvider
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, providerID).First(&providerRecord).Error; err != nil {
+		t.Fatalf("load provider after rejected disable: %v", err)
+	}
+	if providerRecord.Status != provider.StatusEnabled || providerRecord.Name != "Disable Linked Provider" {
+		t.Fatalf("provider changed after rejected disable: %#v", providerRecord)
+	}
+
+	var linkedModel database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).First(&linkedModel).Error; err != nil {
+		t.Fatalf("load linked model after rejected disable: %v", err)
+	}
+	if linkedModel.DeletedAt.Valid || linkedModel.Status != modelcap.StatusEnabled {
+		t.Fatalf("linked model changed after rejected disable: %#v", linkedModel)
+	}
+	assertNoProviderOperationLog(t, db, providerID, "provider.disable")
+	assertNoProviderOperationLog(t, db, providerID, "provider.update")
+}
+
+func TestProviderDisableAllowsOnlyDisabledLinkedModels(t *testing.T) {
+	router, db, _, adminSession := newProviderRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-disable-disabled-model", "Disable Disabled Model Provider")
+	modelID := seedProviderRouteModel(t, db, adminSession.tenantID, adminSession.userID, providerID, "model-disable-disabled-model", modelcap.StatusDisabled, "disable-disabled-model", "Disable Disabled Model")
+
+	disableResponse := performJSON(router, http.MethodPost, "/api/v1/providers/"+providerID+"/disable", nil, adminSession.cookies, adminSession.csrfHeader())
 	if disableResponse.Code != http.StatusOK {
-		t.Fatalf("disable linked provider status = %d, want %d: %s", disableResponse.Code, http.StatusOK, disableResponse.Body.String())
+		t.Fatalf("disable provider with disabled linked model status = %d, want %d: %s", disableResponse.Code, http.StatusOK, disableResponse.Body.String())
 	}
 	if stringField(t, decodeData(t, disableResponse), "status") != provider.StatusDisabled {
 		t.Fatalf("disable provider status response = %s", disableResponse.Body.String())
@@ -291,10 +335,10 @@ func TestProviderDisableWithLinkedModelsSucceedsAndDoesNotMutateModels(t *testin
 
 	var linkedModel database.AIModel
 	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, modelID).First(&linkedModel).Error; err != nil {
-		t.Fatalf("load linked model after provider disable: %v", err)
+		t.Fatalf("load linked disabled model after provider disable: %v", err)
 	}
-	if linkedModel.DeletedAt.Valid || linkedModel.Status != modelcap.StatusEnabled {
-		t.Fatalf("linked model was mutated by provider disable: %#v", linkedModel)
+	if linkedModel.DeletedAt.Valid || linkedModel.Status != modelcap.StatusDisabled {
+		t.Fatalf("linked disabled model was mutated by provider disable: %#v", linkedModel)
 	}
 }
 
@@ -660,14 +704,20 @@ func assertProviderAndModelUnchanged(t *testing.T, db *gorm.DB, tenantID string,
 func assertNoProviderDeleteOperationLog(t *testing.T, db *gorm.DB, providerID string) {
 	t.Helper()
 
+	assertNoProviderOperationLog(t, db, providerID, "provider.delete")
+}
+
+func assertNoProviderOperationLog(t *testing.T, db *gorm.DB, providerID string, action string) {
+	t.Helper()
+
 	var count int64
 	if err := db.Model(&database.OperationLog{}).
-		Where("resource_type = ? AND resource_id = ? AND action = ?", "provider", providerID, "provider.delete").
+		Where("resource_type = ? AND resource_id = ? AND action = ?", "provider", providerID, action).
 		Count(&count).Error; err != nil {
-		t.Fatalf("count provider delete logs: %v", err)
+		t.Fatalf("count provider %s logs: %v", action, err)
 	}
 	if count != 0 {
-		t.Fatalf("provider.delete operation log count = %d, want 0", count)
+		t.Fatalf("%s operation log count = %d, want 0", action, count)
 	}
 }
 
