@@ -338,6 +338,40 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 		t.Fatalf("API call log detail status = %d, want %d: %s", apiCallDetail.Code, http.StatusOK, apiCallDetail.Body.String())
 	}
 	assertResponseExcludes(t, apiCallDetail.Body.String(), fakeProviderKey, redactionSentinel, b64JSONMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
+
+	seedActiveUser(t, db, adminSession.tenantID, "p15-limited-reader", "p15-limited-reader@example.com", "P15 Limited Reader", "limited-reader-password-123")
+	assignRole(t, db, adminSession.tenantID, "p15-limited-reader", "limited")
+	addMember(t, router, adminSession, projectID, "p15-limited-reader", "OWNER")
+	limitedSession := loginProjectRouteUser(t, router, adminSession.tenantID, "p15-limited-reader@example.com", "limited-reader-password-123")
+
+	limitedOutputDownload := performJSON(router, http.MethodGet, "/api/v1/assets/"+outputAssetID+"/download", nil, limitedSession.cookies, nil)
+	if limitedOutputDownload.Code != http.StatusForbidden {
+		t.Fatalf("limited output download status = %d, want %d: %s", limitedOutputDownload.Code, http.StatusForbidden, limitedOutputDownload.Body.String())
+	}
+	assertResponseExcludes(t, limitedOutputDownload.Body.String(), outputAssetID, fakeProviderKey, redactionSentinel, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
+
+	limitedHistory := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history", nil, limitedSession.cookies, nil)
+	if limitedHistory.Code != http.StatusForbidden {
+		t.Fatalf("limited history status = %d, want %d: %s", limitedHistory.Code, http.StatusForbidden, limitedHistory.Body.String())
+	}
+	assertResponseExcludes(t, limitedHistory.Body.String(), outputAssetID, taskID, fakeProviderKey, redactionSentinel, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "usage summary", path: "/api/v1/admin/usage/summary?dimension=tenant&pageNum=1&pageSize=10"},
+		{name: "usage records", path: "/api/v1/admin/usage/records?taskId=" + taskID},
+		{name: "operation logs", path: "/api/v1/admin/operation-logs?resourceId=" + taskID},
+		{name: "API call logs", path: "/api/v1/admin/api-call-logs?taskId=" + taskID},
+		{name: "API call log detail", path: "/api/v1/admin/api-call-logs/" + apiCallID},
+	} {
+		response := performJSON(router, http.MethodGet, tc.path, nil, limitedSession.cookies, nil)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("limited %s status = %d, want %d: %s", tc.name, response.Code, http.StatusForbidden, response.Body.String())
+		}
+		assertResponseExcludes(t, response.Body.String(), outputAssetID, taskID, apiCallID, fakeProviderKey, redactionSentinel, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
+	}
 }
 
 type e2eCoreFlowExecutor func(context.Context, task.ExecutionContext) task.ExecutionResult
