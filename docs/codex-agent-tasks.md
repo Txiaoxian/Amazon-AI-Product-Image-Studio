@@ -499,16 +499,234 @@ git diff --check
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
 - 非阻塞遗留：`scripts/deploy-release-validation.sh --up --down` 可后续增加失败 cleanup trap；缩略图策略、完整 orphan cleanup、log retention、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog。
 
-## Post-R15 Backlog 候选
+## 稳定生产上线路线图
 
-这些不是当前自动创建分支的任务，需用户确认优先级后再由主 agent 生成下一批任务包：
+P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三个阶段，重点从“功能可用”转向“长期运行可靠、运维可控、真实 Provider 可验证”。
 
-- `P16-BE-THUMBNAIL-POLICY`：明确缩略图生成或无缩略图策略，并让前端/后端展示一致。
-- `P16-BE-ORPHAN-CLEANUP`：补齐对象存储 orphan discovery、dry-run、执行和审计。
-- `P16-BE-LOG-RETENTION`：实现 operation/api/task/error 日志保留周期真实 consumer 后再暴露设置。
-- `P16-BE-PROVIDER-MODEL-SERIALIZATION`：强化 Provider/model 并发管理操作事务序列化。
-- `P16-BE-STORAGE-QUOTA-RESERVATION`：为高并发上传/Worker 输出增加严格 quota reservation 或 counter。
-- `P16-DEPLOY-SCRIPT-HARDENING`：给 deploy validation `--up --down` 增加失败 cleanup trap，并补充脚本级回归。
+### P16：生产上线前硬化
+
+建议串行开始，第一任务为部署脚本硬化：
+
+1. `P16-DEPLOY-SCRIPT-HARDENING`
+   - 给 `scripts/deploy-release-validation.sh --up --down` 增加失败 cleanup trap。
+   - 补充脚本级回归，证明失败时不会遗留项目 Compose 容器或卷。
+   - 不修改业务前后端代码。
+2. `P16-BE-LOG-RETENTION`
+   - 实现 operation logs、api call logs、task events/error logs 的 retention runtime consumer。
+   - 未接入真实 consumer 前不得暴露新的 active writable settings。
+3. `P16-BE-THUMBNAIL-POLICY`
+   - 明确并落地缩略图策略，推荐生成 MinIO thumbnail object 并经后端鉴权访问。
+4. `R16`
+   - 主 agent review P16 全部代码和回归。
+
+### P17：存储治理与生产观测
+
+1. `P17-BE-ORPHAN-CLEANUP`
+   - MinIO orphan discovery、dry-run、执行、审计、批量限制和失败重试。
+2. `P17-BE-STORAGE-QUOTA-RESERVATION`
+   - 为并发上传和 Worker 输出增加严格 quota reservation/counter 与 reconciliation。
+3. `P17-BE-OBSERVABILITY-METRICS`
+   - 增加 admin-only JSON diagnostics：queue depth、running/failed tasks、Provider failure rate、storage usage、maintenance job result 等。
+4. `R17`
+   - 主 agent review P17 全部代码和回归。
+
+### P18：真实上线信心与 Go/No-Go
+
+1. `P18-BE-PROVIDER-MODEL-SERIALIZATION`
+   - 强化 Provider/model enable/disable/delete/update 与默认设置交互的事务序列化。
+2. `P18-E2E-REAL-PROVIDER-SMOKE`
+   - 新增可选真实 Provider smoke 脚本；不进默认 CI，不提交真实 key，必须有费用控制。
+3. `P18-PROD-DRY-RUN`
+   - 按 runbook 在目标或准生产环境执行完整上线 dry-run。
+4. `R18-STABLE-PRODUCTION-READINESS`
+   - 主 agent 执行最终 Go/No-Go review。
+
+## 下一个任务包：P16-DEPLOY-SCRIPT-HARDENING
+
+### 调度决策
+
+- 本任务串行执行，不与 P16 后端任务并行。
+- 理由：部署验证失败后不残留容器/卷是稳定生产上线的基础运维保障，且写入范围独立。
+- 本任务只处理部署验证脚本和脚本级回归；公共 docs 由主 agent 在 review/merge 后同步。
+
+### 任务信息
+
+- 任务名称：`P16-DEPLOY-SCRIPT-HARDENING`
+- 目标：让 `scripts/deploy-release-validation.sh --up --down` 在 live Compose 验证失败、被中断或提前退出时仍尽力执行 cleanup，避免遗留项目 Compose 容器、网络或卷。
+- 推荐线程名：`P16-DEPLOY-SCRIPT-HARDENING`
+- 推荐分支名：`codex/p16-deploy-script-hardening`
+- 起始分支：已完成 R15 的最新 `main`
+- 前置依赖：P15/R15 已完成；`scripts/deploy-release-validation.sh` 和 `deploy/RUNBOOK.md` 已存在。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P16-DEPLOY-SCRIPT-HARDENING`。
+
+你必须在分支 `codex/p16-deploy-script-hardening` 上工作；如果当前不在该分支，先执行 `git switch codex/p16-deploy-script-hardening`，确认 `git branch --show-current` 后再继续。起始点必须包含 R15 文档提交后的最新 `main`；如果 `git merge-base --is-ancestor main codex/p16-deploy-script-hardening` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+强化部署验证脚本的失败清理能力：
+- `scripts/deploy-release-validation.sh --up --down` 在 live Compose 验证失败、脚本错误、SIGINT 或 SIGTERM 时，必须尽力执行 `docker compose down -v --remove-orphans`。
+- `--up` 不带 `--down` 时仍保留当前行为：验证后让 stack 留给 operator inspection。
+- `--down` 不带 `--up` 时仍保持 cleanup-only 行为。
+- 默认模式不应启动 Compose stack，不应删除容器/卷。
+- 增加脚本级回归，证明 cleanup trap 的关键路径。
+
+允许修改文件：
+- `scripts/deploy-release-validation.sh`
+- `scripts/deploy-release-validation-test.sh` 或同类脚本级测试文件
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/**`
+- `frontend/**`
+- `deploy/**`
+- `.env.example`
+- `scripts/security-regression.sh`，除非发现必须联动的脚本 bug，且先在交付中说明理由
+
+前置依赖：
+- 先阅读 `scripts/deploy-release-validation.sh`、`scripts/security-regression.sh`、`deploy/RUNBOOK.md`、`docs/development-plan.md`、`docs/codex-agent-tasks.md`、`docs/deployment.md`。
+- `docs/**` 只读，不允许修改。
+
+具体开发内容：
+1. 为 `scripts/deploy-release-validation.sh` 增加 cleanup trap：
+   - 仅在 `--down` 被指定且 live stack 已经或即将启动时自动 cleanup。
+   - 正常成功路径不能重复执行危险 cleanup，或重复执行也必须是幂等且输出清晰。
+   - SIGINT/SIGTERM 触发时返回非 0，并尝试 cleanup。
+   - cleanup 输出不得打印 secret。
+2. 保持现有 CLI 行为：
+   - `--help` 只输出帮助。
+   - 默认模式：config、proxy scan、build、security regression，不启动 stack，不 cleanup。
+   - `--down`：cleanup-only。
+   - `--up`：启动并验证，保留 stack。
+   - `--up --down`：启动并验证，成功或失败都 cleanup。
+3. 增加脚本级回归：
+   - 推荐新增 `scripts/deploy-release-validation-test.sh`，使用临时目录和 fake `docker`/`rg`/`curl` 等命令验证参数行为和 cleanup trap，不启动真实 Docker。
+   - 至少覆盖：默认模式不 cleanup、`--down` cleanup-only、`--up` 不带 down 不自动 cleanup、`--up --down` 失败时 cleanup、SIGTERM/SIGINT 路径如可稳定模拟。
+   - 测试不得依赖真实 MySQL/Redis/MinIO，不得调用真实 AI Provider。
+4. 如发现现有脚本 redaction 不足，可在允许范围内收紧，但不要扩大到业务代码。
+
+安全要求：
+- 不打印 `.env`、JWT、Cookie、Provider Key、MinIO secret、MySQL/Redis 密码。
+- 不新增 AI Provider proxy、AI relay、真实 Provider 调用、task polling 或 MinIO direct download。
+- 不删除共享本地 `dev-mysql8`、`dev-redis`、`dev-minio` 数据。
+- 真实 Compose cleanup 只能作用于 `deploy/docker-compose.yml` 对应项目栈；不要写 broad Docker prune、volume prune、system prune。
+- 测试里的 fake secret 只能是明显测试值，不得使用真实本地凭据。
+
+验收标准：
+- `bash scripts/deploy-release-validation.sh --help` 通过。
+- `bash scripts/deploy-release-validation.sh` 通过，且不启动 Compose stack。
+- `bash scripts/deploy-release-validation.sh --up --down` 通过，并在结束后无项目容器/卷残留。
+- 新增脚本级回归通过，并能证明失败 cleanup trap。
+- `scripts/security-regression.sh` 仍通过。
+- 未修改禁止范围文件。
+
+必须保持的现有行为：
+- 默认部署验证仍执行 Compose config、frontend nginx `/api/` 和 SSE proxy checks、image build、安全回归。
+- `--up` 仍保留 stack 给 operator inspection。
+- `--down` 仍可单独用于 cleanup-only。
+- 所有输出继续避免 secret。
+
+允许的中间态：
+- 可以先添加内部 helper 函数和 fake-command 测试，再调整 trap 行为。
+- 可以让 cleanup 重入，但必须幂等且不会扩大删除范围。
+- 可以跳过真实 `--up --down` 的失败注入，只要 fake-command 测试覆盖失败 trap，真实 `--up --down` 成功路径仍要跑。
+
+禁止的半迁移状态：
+- 失败时仍可能遗留项目 Compose 容器/卷却没有测试覆盖。
+- 默认模式或 `--up` 不带 `--down` 意外删除 stack。
+- 使用 `docker system prune`、`docker volume prune` 或不限定项目的清理命令。
+- 为了测试 trap 而启动真实服务后不清理。
+- 修改业务后端、前端或公共 docs。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| 默认模式成功 | 不启动 stack，不 cleanup，验证现有 gates | 是 |
+| `--down` without `--up` | 只执行 `compose down -v --remove-orphans` | 是 |
+| `--up` without `--down` 成功 | 验证后保留 stack 给 operator | 是 |
+| `--up --down` 成功 | 验证后 cleanup | 是 |
+| `--up --down` live check 失败 | 返回非 0，仍 cleanup | 是 |
+| SIGINT/SIGTERM during live validation | 返回非 0，尽力 cleanup | 尽量覆盖；若模拟不稳定，交付中说明 |
+| cleanup 命令自身失败 | 返回非 0，输出 sanitized failure | 是 |
+| 缺少 docker/rg/curl | 清晰失败，不触发无关 cleanup | 是 |
+
+必须新增或更新的回归测试：
+- 新增或更新脚本级测试，建议 `scripts/deploy-release-validation-test.sh`。
+- 测试必须用 fake Docker path 覆盖 cleanup trap，不依赖真实 Docker 失败。
+- 保留真实成功路径验证命令。
+
+测试命令：
+```bash
+bash -n scripts/deploy-release-validation.sh
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation-test.sh
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh
+bash scripts/deploy-release-validation.sh --up --down
+docker compose -f deploy/docker-compose.yml ps -a
+docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+```
+
+如果你修改了会影响 frontend/backend build 的内容，额外运行：
+```bash
+cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker
+cd ../frontend && npm run lint && npm run type-check && npm run test && npm run build
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- cleanup trap failure modes 到测试名/脚本断言的映射。
+- 是否执行真实 Compose `--up --down`，以及是否确认无项目容器/卷残留。
+- 安全自查结果，明确没有真实 secret、AI Provider 调用、AI relay、Provider proxy、task polling、broad Docker cleanup。
+- 刻意未修改范围。
+- 如果发现公共合同或业务代码缺口，只报告主 agent，不修改 docs 或业务代码。
+```
+
+### 允许修改文件
+
+- `scripts/deploy-release-validation.sh`
+- `scripts/deploy-release-validation-test.sh` 或同类脚本级测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/**`
+- `frontend/**`
+- `deploy/**`
+- `.env.example`
+- `scripts/security-regression.sh`，除非先说明必须联动的脚本 bug
+
+### 验收标准
+
+- cleanup trap 覆盖 `--up --down` 失败或中断路径。
+- 默认模式、`--down`、`--up`、`--up --down` 的原有语义保持不变。
+- 脚本级测试与真实部署验证成功路径均通过。
+- 真实 `--up --down` 验证后无项目 Compose 容器或卷残留。
+
+### 测试命令
+
+```bash
+bash -n scripts/deploy-release-validation.sh
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation-test.sh
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh
+bash scripts/deploy-release-validation.sh --up --down
+docker compose -f deploy/docker-compose.yml ps -a
+docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+```
 
 ## 最近已完成任务包原始内容：P15-DEPLOY-RUNBOOK-FINAL
 

@@ -291,3 +291,16 @@ Non-blocking note:
 Validation date: 2026-05-26.
 
 R15 re-ran the deployment readiness gates on latest `main` after all P15 slices were merged. `scripts/deploy-release-validation.sh`, live `scripts/deploy-release-validation.sh --up --down`, full frontend and backend regression, Docker Compose config, and whitespace checks all passed. Follow-up checks confirmed no `amazon-ai-product-image-studio` Compose containers or volumes remained after cleanup.
+
+## P16 deployment script hardening plan
+
+`P16-DEPLOY-SCRIPT-HARDENING` is the first stable-production task after R15.
+
+Required behavior:
+
+- `scripts/deploy-release-validation.sh --up --down` must attempt cleanup when live validation fails, the script errors, or the process receives SIGINT/SIGTERM.
+- `--up` without `--down` must keep the current operator-inspection behavior and leave the stack running.
+- `--down` without `--up` must remain cleanup-only.
+- Default validation must not start or delete the Compose stack.
+- Cleanup must stay scoped to `deploy/docker-compose.yml` and must not use broad Docker prune commands.
+- Script-level tests should use fake Docker commands where possible so cleanup-trap failure paths are covered without relying on real infrastructure failures.

@@ -40,6 +40,9 @@ Phase status:
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
+| P16 | Planned | Production launch hardening: deployment script failure cleanup, runtime log retention, and thumbnail policy. |
+| P17 | Planned | Long-running storage and observability operations: orphan cleanup, strict storage quota reservation, and production diagnostics. |
+| P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -250,6 +253,65 @@ Suggested order:
 
 Parallelism: P15 is complete. Future post-R15 work should start from latest `main` after the next scope is selected.
 
+### P16: Production Launch Hardening
+
+Goal: remove the remaining launch-blocking operational risks before a stable production rollout.
+
+Suggested order:
+
+1. `P16-DEPLOY-SCRIPT-HARDENING`
+   - First task. Harden `scripts/deploy-release-validation.sh --up --down` so failed live validation still attempts cleanup and does not leave project Compose containers or volumes behind.
+   - Add script-level regression coverage for cleanup trap behavior without using real secrets or external AI Providers.
+2. `P16-BE-LOG-RETENTION`
+   - Implement a real backend/Worker consumer for operation/API/task/error log retention before exposing retention as writable runtime state.
+   - Cleanup must be tenant-safe where applicable, batch-limited, auditable, and sensitive-log safe.
+3. `P16-BE-THUMBNAIL-POLICY`
+   - Decide and implement the production thumbnail policy.
+   - Preferred target: generate MinIO thumbnail objects for uploaded references and Worker outputs, store only metadata/object keys in MySQL, and make frontend asset/history views use authorized thumbnail access.
+4. `R16`
+   - Review production launch hardening as a batch before moving into long-running storage operations.
+
+Parallelism: start P16 serially with `P16-DEPLOY-SCRIPT-HARDENING`. `P16-BE-LOG-RETENTION` and `P16-BE-THUMBNAIL-POLICY` should not run in parallel until their database/storage contract impacts are clear.
+
+### P17: Storage Governance And Observability
+
+Goal: make long-running production operation safer under storage growth, cleanup drift, and queue/runtime visibility needs.
+
+Suggested order:
+
+1. `P17-BE-ORPHAN-CLEANUP`
+   - Add MinIO orphan discovery, dry-run, execution, retry, and audit support.
+   - Must be tenant-scoped by metadata, batch-limited, conservative by default, and never delete objects just because a bucket listing looks unfamiliar.
+2. `P17-BE-STORAGE-QUOTA-RESERVATION`
+   - Add strict quota reservation/counter behavior for concurrent uploads and Worker output writes.
+   - Include reconciliation for counters versus metadata and clear behavior for failed reservations.
+3. `P17-BE-OBSERVABILITY-METRICS`
+   - Add admin-only production diagnostics for API/Worker health detail, queue depth, running/failed task counts, Provider failure rates, storage usage, and maintenance job results.
+   - This can start as JSON diagnostics before Prometheus or external monitoring integration.
+4. `R17`
+   - Review storage governance and observability behavior before final Provider/admin consistency work.
+
+Parallelism: `P17-BE-ORPHAN-CLEANUP` and `P17-BE-OBSERVABILITY-METRICS` can be considered for limited parallel work only after `P16-BE-LOG-RETENTION` contracts are merged. Quota reservation should be serial because it touches write paths.
+
+### P18: Production Confidence And Go/No-Go
+
+Goal: prove the system can be operated with real Provider configuration and stable admin consistency.
+
+Suggested order:
+
+1. `P18-BE-PROVIDER-MODEL-SERIALIZATION`
+   - Strengthen transaction serialization for Provider/model enable/disable/delete/update and default-setting interactions.
+   - Revisit same-Provider `model_name` uniqueness as an explicit product/data-integrity decision.
+2. `P18-E2E-REAL-PROVIDER-SMOKE`
+   - Add an optional, manual real Provider smoke script.
+   - It must not run in default CI, must not commit real keys, and must have explicit cost controls.
+3. `P18-PROD-DRY-RUN`
+   - Execute the runbook against the target or staging server: init admin, tenant/user setup, Provider/model config, fake or real task, backup/restore, rollback, and security/deploy gates.
+4. `R18-STABLE-PRODUCTION-READINESS`
+   - Main-agent Go/No-Go review for stable production launch.
+
+Parallelism: keep P18 mostly serial because real Provider smoke and production dry-run rely on all earlier hardening being merged.
+
 ## Worktree Scheduling Policy
 
 - Public contracts and phase plans are updated by the main agent only.
@@ -304,4 +366,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-P15 release hardening is complete. The next branch should not be created until the next post-R15 scope is selected. Known non-blocking backlog candidates remain thumbnail policy, full orphan cleanup, log retention, stronger Provider/model transaction serialization, strict concurrent storage-quota reservation/counters, and optional deploy-script failure cleanup trap.
+Start `P16-DEPLOY-SCRIPT-HARDENING` from latest `main`. This is the first stable-production task because failed deployment validation must not leave project Compose containers or volumes behind. It should only touch deployment validation scripts and script-level tests; public docs are updated by the main agent after review.
