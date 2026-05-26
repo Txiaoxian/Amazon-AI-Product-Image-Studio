@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS` 和 `P15-SECURITY-FINAL-REGRESSION` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径已有自动化覆盖，最终安全回归入口 `scripts/security-regression.sh` 已落地，下一步进入部署 runbook 与 Compose 发布验证切片。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION` 和 `P15-DEPLOY-RUNBOOK-FINAL` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本和 operator runbook 均已落地，下一步由主 agent 直接执行 `R15`。
 
 已完成的平台基础：
 
@@ -97,7 +97,7 @@
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
 - P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
 - P14 已合并切片：Provider/model 生命周期完整性、后端确定性 usage/cost reporting、前端 admin 成本可观测性和 R14。Worker 成本估算使用稳定 decimal，非法 pricing 归零且不失败成功任务；admin usage summary 支持 tenant/user/project/Provider/model 维度、tenant isolation、多币种分组和 exact decimal cost；前端 usage tab 支持 tenant totals、过滤、drilldown、多币种展示和 stale response 防护。
-- P15 已合并切片：`P15-E2E-CORE-FLOWS` 和 `P15-SECURITY-FINAL-REGRESSION`。后端集成测试已串联 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs，且不调用真实 AI Provider；安全回归脚本已覆盖 focused tests、forbidden-pattern scans、敏感日志扫描、Compose config 和 `/api/` 代理安全检查。
+- P15 已合并切片：`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION` 和 `P15-DEPLOY-RUNBOOK-FINAL`。后端集成测试已串联 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs，且不调用真实 AI Provider；安全回归脚本已覆盖 focused tests、forbidden-pattern scans、敏感日志扫描、Compose config 和 `/api/` 代理安全检查；部署脚本和 runbook 已覆盖 Compose config/build/up/health/proxy/down cleanup、init-admin、MinIO bootstrap、SSE proxy、backup/restore、upgrade/rollback、日志排查和清理。
 
 当前已知后续项：
 
@@ -107,10 +107,10 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `P15-DEPLOY-RUNBOOK-FINAL`，串行完成 Compose 发布验证、部署 runbook、备份/恢复说明和健康检查最终化。
+- 下一任务是 `R15`，由主 agent 直接执行最终 release-readiness review。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
-- 最终发布验证仍需完整 Compose build/up/health、运维手册和 R15 release-readiness review。
+- 最终发布验证只剩 R15 release-readiness review 和文档落档。
 
 ## 建议剩余阶段
 
@@ -198,13 +198,13 @@
 2. `P15-SECURITY-FINAL-REGRESSION`
    - 已完成并合并。最终禁止模式扫描、安全回归入口和安全失败模式到测试的映射已落地。
 3. `P15-DEPLOY-RUNBOOK-FINAL`
-   - 下一个任务。Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化。
+   - 已完成并合并。Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化已落地。
 4. `R15`
-   - 最终发布就绪 review。
+   - 下一个任务。由主 agent 直接执行最终发布就绪 review。
 
 ## 最近已完成任务包：P15-SECURITY-FINAL-REGRESSION
 
-本任务已合并到 `main`，保留在本文档中仅作为安全回归任务包审计记录。新的下一个任务包见下方 `P15-DEPLOY-RUNBOOK-FINAL`。
+本任务已合并到 `main`，保留在本文档中仅作为安全回归任务包审计记录。
 
 ### 调度决策
 
@@ -436,7 +436,53 @@ fi
 
 如使用共享本地服务做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录。
 
-## 下一个任务包：P15-DEPLOY-RUNBOOK-FINAL
+## 最近已完成任务包：P15-DEPLOY-RUNBOOK-FINAL
+
+本任务已合并到 `main`，保留在本文档中仅作为部署 runbook 任务包审计记录。新的下一个任务是 `R15`，由主 agent 直接执行，不创建子 agent worktree。
+
+## R15：最终发布就绪 Review
+
+### 调度决策
+
+- 本任务为主 agent 串行 review，不创建新分支，不交给子 agent。
+- Review 范围是完整 P15 代码范围：`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL` 及其配套 docs。
+- Review 后由主 agent 更新公共文档中的实际结果和遗留风险。
+
+### 必须检查
+
+- P15 core-flow E2E 是否仍覆盖 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs。
+- `scripts/security-regression.sh` 是否可运行，且没有真实 AI Provider 调用、Provider Key 存储、task polling、敏感浏览器存储或敏感日志输出。
+- `scripts/deploy-release-validation.sh` 和 `deploy/RUNBOOK.md` 是否覆盖 Compose config/build/up/health/proxy/down cleanup、init-admin、MinIO bootstrap、SSE proxy、backup/restore、upgrade/rollback、日志排查和清理。
+- Docker Compose 验证后是否没有遗留项目容器和项目卷。
+- 前端、后端、安全回归、部署验证和 whitespace 检查是否通过。
+
+### R15 验证命令
+
+```bash
+bash scripts/security-regression.sh
+bash scripts/deploy-release-validation.sh
+bash scripts/deploy-release-validation.sh --up --down
+docker compose -f deploy/docker-compose.yml ps -a
+docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true
+
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+git diff --check
+```
+
+## 最近已完成任务包原始内容：P15-DEPLOY-RUNBOOK-FINAL
 
 ### 调度决策
 

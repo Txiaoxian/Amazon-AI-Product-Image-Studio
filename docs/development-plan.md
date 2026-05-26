@@ -39,7 +39,7 @@ Phase status:
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
-| P15 | In progress | Core API/Worker/SSE/history/usage/log E2E coverage and final security regression are merged. Deployment runbook validation and R15 remain. |
+| P15 | In progress | Core API/Worker/SSE/history/usage/log E2E coverage, final security regression, and deployment runbook validation are merged. R15 remains. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -93,6 +93,8 @@ R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend 
 
 `P15-SECURITY-FINAL-REGRESSION` was reviewed and merged. The repository now has `scripts/security-regression.sh` as a focused final security regression entry point. It runs focused backend and frontend security tests, production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Docker Compose config validation, and whitespace checks. The P15 core-flow test was extended with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. Validation passed the security regression script, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: cross-tenant negative coverage remains mapped primarily to existing focused tests.
 
+`P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. The repository now includes `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh`. The deploy validation script supports `--help`, safe default validation, explicit `--up`, and cleanup through `--down`; it verifies Compose config, frontend `/api/` and SSE proxy safety, image builds, security regression, live health checks, frontend proxy health, and cleanup. Validation passed default deploy release validation, live `--up --down` Compose health/proxy checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: the deploy script can later add a cleanup trap for failed `--up --down` runs.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -119,6 +121,7 @@ The current `main` branch supports:
 - Frontend admin cost observability: the usage tab displays tenant totals, dimension summaries, filtered usage records, drilldown filters, multi-currency cost strings from the backend, and stale-response protection without Provider direct calls, browser Provider-key storage, or polling.
 - Backend core-flow E2E coverage: init admin, Provider/model setup, project/reference asset upload, task creation, fake Worker execution, SSE replay, output asset download, project history, usage, and logs are now verified in one integration path without external AI calls.
 - Final security regression entry point: `scripts/security-regression.sh` consolidates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, Compose config validation, `/api/` proxy safety checks, and whitespace checks.
+- Deployment release runbook and validation entry point: `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh` document and verify Compose release operations, health checks, init-admin, MinIO bootstrap, SSE proxy behavior, backup/restore, upgrade/rollback, log troubleshooting, and cleanup.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -239,11 +242,11 @@ Suggested order:
 2. `P15-SECURITY-FINAL-REGRESSION`
    - Completed and merged. Added a reusable final security regression entry point, low-permission negative assertions in the core-flow test, frontend/backend/deploy safety scans, and explicit mapping for auth, tenant isolation, RBAC, object authorization, upload validation, Provider SSRF, sensitive redaction, task state/SSE replay, frontend forbidden patterns, and deployment config checks.
 3. `P15-DEPLOY-RUNBOOK-FINAL`
-   - Next. Final Docker Compose release validation, backup/restore notes, healthcheck/runbook updates, and environment checks.
+   - Completed and merged. Added the deployment release validation script and operator runbook, and verified Compose config/build/up/health/proxy/down cleanup.
 4. `R15`
-   - Final release-readiness review.
+   - Next. Final release-readiness review.
 
-Parallelism: keep `P15-DEPLOY-RUNBOOK-FINAL` serial from latest `main`; it depends on the merged P15 core-flow and security-regression coverage. R15 starts only after deployment runbook validation is reviewed and merged.
+Parallelism: run `R15` directly on latest `main`; it depends on all P15 implementation slices being merged.
 
 ## Worktree Scheduling Policy
 
@@ -299,4 +302,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P15-DEPLOY-RUNBOOK-FINAL` from latest `main`. The task should finalize repeatable Compose release validation and operator runbook artifacts without changing business runtime behavior. It may validate full Compose build/up/health and must clean up project Compose resources after verification unless explicitly told to keep them.
+Run `R15` from latest `main`. The task should review the complete P15 range, verify release-readiness gates, confirm no project Compose containers or volumes remain after deployment checks, and update public docs with the actual result.

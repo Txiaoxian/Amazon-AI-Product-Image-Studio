@@ -249,15 +249,39 @@ Operational notes:
 - The Compose stack now includes a repeatable one-shot `minio-bootstrap` service using `mc mb --ignore-existing` for required buckets.
 - Current Redis 7.4 logs can include a go-redis `maintnotifications` fallback warning. It did not affect health checks or Worker/API operation during validation.
 
-## P15 deployment runbook expectations
+## P15 deployment runbook result
 
-`P15-DEPLOY-RUNBOOK-FINAL` must keep public deployment contracts stable and focus on repeatable operator validation.
+Validation date: 2026-05-26.
 
-Required outputs:
+`P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. It kept public deployment contracts stable and added repeatable operator validation.
 
-- A deploy validation script, expected at `scripts/deploy-release-validation.sh`, with `--help`, safe default checks, and explicit build/up modes.
-- A `deploy/` operator runbook covering prerequisites, `.env` setup with placeholders only, production secret replacement, startup, health checks, init-admin, MinIO bucket/bootstrap, SSE proxy behavior, backup/restore, upgrade/rollback, log inspection, and cleanup.
-- Verification that frontend proxy config routes `/api/` and `/api/v1/events/` only to `backend-api:8080` and never to AI Providers or relay endpoints.
-- Verification that Compose config and image builds pass, and that full Compose up/down validation cleans project containers and volumes afterwards unless the user explicitly asks to keep them.
+Added outputs:
 
-The task must not write real local credentials to the repository and must not use `.env.example` unchanged as a production-ready environment file.
+- `scripts/deploy-release-validation.sh` with `--help`, safe default checks, explicit `--up`, and cleanup through `--down`.
+- `deploy/RUNBOOK.md` covering prerequisites, `.env` setup with placeholders only, production secret replacement, startup, health checks, init-admin, MinIO bucket/bootstrap, SSE proxy behavior, backup/restore, upgrade/rollback, log inspection, and cleanup.
+
+Actual checks passed:
+
+- `bash scripts/deploy-release-validation.sh --help`
+- `bash scripts/deploy-release-validation.sh`
+- `bash scripts/deploy-release-validation.sh --up --down`
+- `bash scripts/security-regression.sh --help`
+- `docker compose -f deploy/docker-compose.yml config`
+- `docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend`
+- Full frontend lint, type-check, tests, and build
+- Full backend tests, race tests, vet, and API/Worker builds
+- `git diff --check main...HEAD`
+
+Live Compose validation confirmed:
+
+- `mysql`, `redis`, `minio`, `backend-api`, `backend-worker`, and `frontend` reached healthy/running states.
+- `minio-bootstrap` completed successfully.
+- Backend `/healthz` and `/api/v1/healthz` returned HTTP 200.
+- Frontend root returned HTTP 200.
+- Frontend `/api/v1/healthz` proxied to backend and returned HTTP 200.
+- Frontend `/api/v1/events/tasks` reached the backend auth boundary and returned HTTP 401.
+- Cleanup with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` removed project containers and volumes.
+
+Non-blocking note:
+
+- The deploy validation script can later add a cleanup trap so a failed `--up --down` run still attempts automatic Compose cleanup.
