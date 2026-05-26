@@ -6,6 +6,9 @@ COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/deploy/docker-compose.yml}"
 HEALTH_TIMEOUT_SECONDS="${DEPLOY_HEALTH_TIMEOUT_SECONDS:-240}"
 RUN_UP=0
 RUN_DOWN=0
+LIVE_STACK_MANAGED=0
+CLEANUP_ON_EXIT=0
+CLEANUP_RAN=0
 
 usage() {
   cat <<'EOF'
@@ -92,6 +95,54 @@ run_quiet() {
 compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
 }
+
+cleanup_compose_stack() {
+  if [[ "$CLEANUP_RAN" -eq 1 ]]; then
+    return 0
+  fi
+  CLEANUP_RAN=1
+
+  echo
+  echo "==> docker compose cleanup"
+  local output
+  output="$(mktemp)"
+  set +e
+  compose down -v --remove-orphans >"$output" 2>&1
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    rm -f "$output"
+    echo "[ok] deployment cleanup completed"
+    return 0
+  fi
+  echo "[fail] deployment cleanup failed" >&2
+  redact_file "$output" >&2
+  rm -f "$output"
+  return "$status"
+}
+
+cleanup_on_exit() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ "$CLEANUP_ON_EXIT" -eq 1 && "$LIVE_STACK_MANAGED" -eq 1 ]]; then
+    set +e
+    cleanup_compose_stack
+    local cleanup_status=$?
+    set -e
+    if [[ "$cleanup_status" -ne 0 ]]; then
+      if [[ "$status" -ne 0 ]]; then
+        echo "[fail] cleanup failed after validation exit status $status" >&2
+        exit "$status"
+      fi
+      exit "$cleanup_status"
+    fi
+  fi
+  exit "$status"
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -236,9 +287,7 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
 fi
 
 if [[ "$RUN_DOWN" -eq 1 && "$RUN_UP" -ne 1 ]]; then
-  run compose down -v --remove-orphans
-  echo
-  echo "[ok] deployment cleanup completed"
+  cleanup_compose_stack
   exit 0
 fi
 
@@ -248,11 +297,16 @@ run compose build backend-api backend-worker frontend
 run bash "$ROOT_DIR/scripts/security-regression.sh"
 
 if [[ "$RUN_UP" -eq 1 ]]; then
+  if [[ "$RUN_DOWN" -eq 1 ]]; then
+    CLEANUP_ON_EXIT=1
+  fi
+  LIVE_STACK_MANAGED=1
   live_checks
 fi
 
 if [[ "$RUN_DOWN" -eq 1 ]]; then
-  run compose down -v --remove-orphans
+  cleanup_compose_stack
+  CLEANUP_ON_EXIT=0
 fi
 
 echo
