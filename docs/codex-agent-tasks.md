@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径已有自动化覆盖，下一步进入最终安全回归切片。
+`P15-E2E-CORE-FLOWS` 和 `P15-SECURITY-FINAL-REGRESSION` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径已有自动化覆盖，最终安全回归入口 `scripts/security-regression.sh` 已落地，下一步进入部署 runbook 与 Compose 发布验证切片。
 
 已完成的平台基础：
 
@@ -97,7 +97,7 @@
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
 - P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
 - P14 已合并切片：Provider/model 生命周期完整性、后端确定性 usage/cost reporting、前端 admin 成本可观测性和 R14。Worker 成本估算使用稳定 decimal，非法 pricing 归零且不失败成功任务；admin usage summary 支持 tenant/user/project/Provider/model 维度、tenant isolation、多币种分组和 exact decimal cost；前端 usage tab 支持 tenant totals、过滤、drilldown、多币种展示和 stale response 防护。
-- P15 已合并切片：`P15-E2E-CORE-FLOWS`。后端集成测试已串联 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs，且不调用真实 AI Provider。
+- P15 已合并切片：`P15-E2E-CORE-FLOWS` 和 `P15-SECURITY-FINAL-REGRESSION`。后端集成测试已串联 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs，且不调用真实 AI Provider；安全回归脚本已覆盖 focused tests、forbidden-pattern scans、敏感日志扫描、Compose config 和 `/api/` 代理安全检查。
 
 当前已知后续项：
 
@@ -107,10 +107,10 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `P15-SECURITY-FINAL-REGRESSION`，串行补齐最终安全回归入口、缺口测试和失败模式映射。
+- 下一任务是 `P15-DEPLOY-RUNBOOK-FINAL`，串行完成 Compose 发布验证、部署 runbook、备份/恢复说明和健康检查最终化。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
-- 最终 E2E 和发布验证仍需完整 seller flow 回归。
+- 最终发布验证仍需完整 Compose build/up/health、运维手册和 R15 release-readiness review。
 
 ## 建议剩余阶段
 
@@ -196,13 +196,15 @@
 1. `P15-E2E-CORE-FLOWS`
    - 已完成并合并。核心 API/Worker/SSE/history/usage/log 自动化集成路径已落地，且使用 fake Worker/Provider，不调用真实 AI Provider。
 2. `P15-SECURITY-FINAL-REGRESSION`
-   - 下一个任务。补齐最终禁止模式扫描、安全回归入口和安全失败模式到测试的映射。
+   - 已完成并合并。最终禁止模式扫描、安全回归入口和安全失败模式到测试的映射已落地。
 3. `P15-DEPLOY-RUNBOOK-FINAL`
-   - Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化。
+   - 下一个任务。Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化。
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P15-SECURITY-FINAL-REGRESSION
+## 最近已完成任务包：P15-SECURITY-FINAL-REGRESSION
+
+本任务已合并到 `main`，保留在本文档中仅作为安全回归任务包审计记录。新的下一个任务包见下方 `P15-DEPLOY-RUNBOOK-FINAL`。
 
 ### 调度决策
 
@@ -433,6 +435,230 @@ fi
 ```
 
 如使用共享本地服务做额外功能验证，必须按 `docs/local-development.md` 使用任务命名空间数据并在交付中记录。
+
+## 下一个任务包：P15-DEPLOY-RUNBOOK-FINAL
+
+### 调度决策
+
+- 本任务串行执行，不与 R15 并行。
+- 理由：部署 runbook 和 Compose 发布验证必须基于已合并的 P15 core-flow 与最终安全回归；R15 只能 review 已落地的部署验证结果。
+- 本任务以部署脚本、部署目录内 runbook、Compose 验证和运维说明为主，不开发业务功能。
+
+### 任务信息
+
+- 任务名称：`P15-DEPLOY-RUNBOOK-FINAL`
+- 目标：最终化 Docker Compose 发布验证入口和 operator runbook，覆盖环境变量、启动、健康检查、初始化管理员、MinIO bucket/bootstrap、SSE 代理、备份/恢复、升级/回滚、日志排查和清理步骤。
+- 推荐线程名：`P15-DEPLOY-RUNBOOK-FINAL`
+- 推荐分支名：`codex/p15-deploy-runbook-final`
+- 起始分支：已合并 `P15-SECURITY-FINAL-REGRESSION` 的最新 `main`
+- 前置依赖：`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION` 已合并；`scripts/security-regression.sh` 可作为发布前安全门禁。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P15-DEPLOY-RUNBOOK-FINAL`。
+
+你必须在分支 `codex/p15-deploy-runbook-final` 上工作；如果当前不在该分支，先执行 `git switch codex/p15-deploy-runbook-final`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P15-SECURITY-FINAL-REGRESSION` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p15-deploy-runbook-final` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+最终化部署发布验证和 operator runbook：
+- 提供一个可重复执行的部署发布验证入口，覆盖 Compose config、镜像 build、可选 up/down、健康检查、frontend `/api/` 代理、安全回归脚本和清理。
+- 在 `deploy/` 内补齐面向运维人员的 runbook，说明环境变量、生产 secret、启动顺序、init-admin、MinIO bucket/bootstrap、SSE 代理、备份/恢复、升级/回滚、日志排查、验证命令和清理命令。
+- 不改变业务运行时行为；如发现 Compose 或健康检查真实缺陷，优先做部署范围内最小修复，超出允许范围时停止并报告主 agent。
+
+允许修改文件：
+- `deploy/**`
+- `scripts/*.sh`
+- `.env.example`
+- 根级部署辅助文件，例如 `Makefile`，仅当仓库已有或确有必要时
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/internal/**`
+- `backend/cmd/**`
+- `frontend/src/**`
+- `frontend/package.json`、`frontend/package-lock.json`
+- `backend/go.mod`、`backend/go.sum`
+- 数据库 migration/schema、API/SSE/RBAC/Provider/task/storage 公共合同
+
+前置依赖：
+- 分支必须从最新 `main` 创建，且包含 P15 安全回归合并结果。
+- 先阅读 `deploy/docker-compose.yml`、`deploy/minio/README.md`、`deploy/nginx/README.md`、`.env.example`、`scripts/security-regression.sh`、`docs/deployment.md`、`docs/security.md`、`docs/local-development.md`。其中 `docs/**` 只读，不可修改。
+
+具体开发内容：
+1. 新增或完善部署发布验证脚本，推荐 `scripts/deploy-release-validation.sh`：
+   - 支持 `--help`。
+   - 默认执行非破坏性检查：Compose config、必要文件存在、`.env.example` placeholder 检查、frontend Nginx `/api/` 代理安全检查、AI relay/Provider proxy 禁止检查、`scripts/security-regression.sh --help`。
+   - 提供显式运行模式，例如 `--build` 和 `--up`，用于执行 Compose build/up/health/ps/log-tail/check/down；默认不要意外启动或删除服务。
+   - 如果执行 `up`，必须在正常结束或失败时给出清理命令；除非用户明确要求保留，不得让项目 Compose 容器和卷长期遗留。
+   - 不打印 `.env` 全量内容、JWT、Cookie、Provider Key、MinIO secret、MySQL/Redis 密码。
+2. 新增或完善 `deploy/` 内 runbook，例如 `deploy/RUNBOOK.md`：
+   - 环境准备和变量说明，只使用 placeholder，不写真实本地凭据。
+   - 首次启动、健康检查、init-admin、MinIO bucket/bootstrap。
+   - 前端 `/api/` 与 SSE 代理要求，明确禁止 AI Provider relay。
+   - 发布前门禁命令：backend/frontend/Compose/security/deploy validation。
+   - MySQL 备份/恢复、MinIO 备份/恢复、Redis 说明（Redis 非任务最终状态源）。
+   - 升级、回滚、日志排查、常见故障和清理命令。
+3. 如 `.env.example` 或 `deploy/docker-compose.yml` 存在明显部署验证缺口，可做最小部署配置修复；不得引入真实 secret 或业务行为改动。
+4. 如果脚本需要调用 `docker compose up -d`，必须验证：
+   - `mysql`、`redis`、`minio`、`backend-api`、`backend-worker`、`frontend` 健康或运行状态。
+   - API `/healthz` 可达。
+   - frontend `/api/v1/healthz` 代理到 backend。
+   - SSE proxy 路径不 buffering。
+   - frontend Nginx 没有 OpenAI/Gemini/custom Provider/relay proxy。
+5. 最终交付必须说明有没有启动 Compose、有没有清理、有没有使用共享本地服务。默认本任务优先使用 Compose 验证，不使用共享本地 MySQL/Redis/MinIO。
+
+安全要求：
+- 不调用真实 AI Provider，不配置真实 Provider Key。
+- 不把真实本地服务凭据写入仓库、脚本输出、runbook 或交付说明。
+- 不新增 AI Provider 代理、Nginx relay、Provider direct browser path、task polling 或 MinIO 直链下载。
+- Runbook 必须强调生产 secret 不可使用 placeholder，Compose 示例不得鼓励 `.env.example` 原样用于生产。
+- 备份/恢复命令不得包含真实密码；使用环境变量或 placeholder。
+
+验收标准：
+- 存在可重复执行的部署发布验证入口，且 `--help` 可用。
+- `deploy/` 内存在 operator runbook，覆盖启动、健康检查、init-admin、bucket/bootstrap、SSE 代理、备份/恢复、升级/回滚、日志排查和清理。
+- Compose config/build/up/health 验证路径明确；如实际执行过 up，交付中必须注明最终已清理或用户要求保留。
+- frontend 只代理 `/api/` 到 backend，不代理 AI Provider。
+- 没有修改业务生产代码、公共合同文档或 Agent 规则。
+
+必须保持的现有行为：
+- `scripts/security-regression.sh` 继续可运行。
+- 现有 frontend/backend 构建测试不因部署脚本或 runbook 变化而回归。
+- 生产 placeholder secret guard 仍由后端启动逻辑负责，本任务不得放松。
+- `deploy/docker-compose.yml` 仍是部署拓扑，不替代 routine shared local development environment。
+
+允许的中间态：
+- 默认脚本可以只做非破坏性检查，完整 build/up 通过显式参数触发。
+- Runbook 可以放在 `deploy/RUNBOOK.md`，公共 `docs/deployment.md` 由主 agent 在 review/merge 后同步更新。
+- 允许增加部署专用脚本 helper，但必须保持可读、可审计、失败即退出。
+
+禁止的半迁移状态：
+- 写了 runbook 但没有任何可执行验证入口。
+- 写了验证脚本但默认会删除共享本地服务或清空数据。
+- Compose up 后不提供清理路径，或脚本失败时泄露 secret。
+- 通过修改业务代码绕过健康检查、认证、SSE、Provider、任务或存储问题。
+- 把 frontend 重新变成 AI relay 或 Provider proxy。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| `.env.example` 含真实 secret | 脚本或 review 能发现，仓库不得保留 | 是 |
+| frontend Nginx 出现 OpenAI/Gemini/relay proxy | 验证失败 | 是 |
+| `/api/` 不代理到 backend-api | 验证失败 | 是 |
+| SSE 代理 buffering 未关闭 | 验证失败或 runbook 明确标红 | 是 |
+| Compose config 无效 | 验证失败 | 是 |
+| Compose build 失败 | 显式 build 模式失败并报告 | 是 |
+| Compose up 后服务不健康 | 显式 up 模式失败并给出排查日志/清理命令 | 是 |
+| minio bucket/bootstrap 缺失 | runbook 或脚本覆盖验证/说明 | 是 |
+| 备份/恢复命令暴露真实密码 | 禁止提交 | 是 |
+| 脚本失败 | `set -euo pipefail`，不吞错，不打印 secret | 是 |
+
+必须新增或更新的回归测试：
+- 本任务以 shell/deploy 验证为主，不要求新增 Go/TS 测试。
+- 必须新增或更新脚本自检：`bash scripts/deploy-release-validation.sh --help` 和默认模式。
+- 如修改 Compose/Nginx 配置，必须用命令验证对应代理和 config。
+
+测试命令：
+```bash
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh --help
+bash scripts/security-regression.sh
+
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+
+# 如果实现了显式 up 模式，执行：
+bash scripts/deploy-release-validation.sh --up
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+git diff --check main...HEAD
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- 是否执行 Compose build/up，服务健康结果，以及最终是否清理。
+- 部署验证 failure mode 到脚本检查、runbook 小节或命令的映射。
+- 安全自查结果，明确没有真实 secret、AI Provider 调用、AI relay、Provider proxy、task polling、MinIO 直链或敏感日志输出。
+- 刻意未修改范围。
+- 如发现公共合同或业务代码缺口，只报告主 agent，不修改 docs 或业务代码。
+```
+
+### 允许修改文件
+
+- `deploy/**`
+- `scripts/*.sh`
+- `.env.example`
+- 根级部署辅助文件，例如 `Makefile`，仅当仓库已有或确有必要时
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `backend/internal/**`
+- `backend/cmd/**`
+- `frontend/src/**`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `backend/go.mod`
+- `backend/go.sum`
+- API/SSE/RBAC/Provider/task/storage/database 公共合同
+
+### 验收标准
+
+- `scripts/deploy-release-validation.sh --help` 和默认模式可运行。
+- `deploy/` 内 runbook 覆盖发布前门禁、启动、健康、init-admin、bucket/bootstrap、SSE 代理、备份/恢复、升级/回滚、日志排查和清理。
+- Compose config/build/up/health 验证路径清晰，且执行过的 Compose 资源已清理。
+- 未修改业务代码、公共 docs、Agent 规则或前端/后端依赖文件。
+
+### 测试命令
+
+```bash
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh --help
+bash scripts/security-regression.sh
+docker compose -f deploy/docker-compose.yml config
+docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+bash scripts/deploy-release-validation.sh --up
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+
+cd backend
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ../frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+
+cd ..
+git diff --check main...HEAD
+```
 
 ## 标准验证命令
 

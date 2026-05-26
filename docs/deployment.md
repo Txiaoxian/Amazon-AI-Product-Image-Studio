@@ -17,9 +17,11 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after R12
+## Current state after P15 security regression
 
-The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. Platform feature work should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
+The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. P15 security regression added `scripts/security-regression.sh`, which now validates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety, Compose config, and whitespace checks.
+
+Platform feature work should still use the shared local development services for routine development unless the task explicitly requires Compose deployment validation.
 
 Current verified state:
 
@@ -39,6 +41,7 @@ Known runtime notes:
 - Frontend Nginx must not proxy AI Provider traffic.
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
+- `P15-DEPLOY-RUNBOOK-FINAL` is the next deployment-specific slice. It should add a repeatable deploy release validation entry point and a `deploy/` runbook without changing business runtime behavior.
 
 ## Services
 
@@ -245,3 +248,16 @@ Operational notes:
 - `.env.example` contains placeholders only. Do not use it unchanged for staging or production.
 - The Compose stack now includes a repeatable one-shot `minio-bootstrap` service using `mc mb --ignore-existing` for required buckets.
 - Current Redis 7.4 logs can include a go-redis `maintnotifications` fallback warning. It did not affect health checks or Worker/API operation during validation.
+
+## P15 deployment runbook expectations
+
+`P15-DEPLOY-RUNBOOK-FINAL` must keep public deployment contracts stable and focus on repeatable operator validation.
+
+Required outputs:
+
+- A deploy validation script, expected at `scripts/deploy-release-validation.sh`, with `--help`, safe default checks, and explicit build/up modes.
+- A `deploy/` operator runbook covering prerequisites, `.env` setup with placeholders only, production secret replacement, startup, health checks, init-admin, MinIO bucket/bootstrap, SSE proxy behavior, backup/restore, upgrade/rollback, log inspection, and cleanup.
+- Verification that frontend proxy config routes `/api/` and `/api/v1/events/` only to `backend-api:8080` and never to AI Providers or relay endpoints.
+- Verification that Compose config and image builds pass, and that full Compose up/down validation cleans project containers and volumes afterwards unless the user explicitly asks to keep them.
+
+The task must not write real local credentials to the repository and must not use `.env.example` unchanged as a production-ready environment file.

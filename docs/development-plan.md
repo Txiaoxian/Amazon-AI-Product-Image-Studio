@@ -39,7 +39,7 @@ Phase status:
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
-| P15 | In progress | Core API/Worker/SSE/history/usage/log E2E coverage is merged. Final security regression, deployment runbook validation, and R15 remain. |
+| P15 | In progress | Core API/Worker/SSE/history/usage/log E2E coverage and final security regression are merged. Deployment runbook validation and R15 remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -89,7 +89,9 @@ R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging fron
 
 R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend cost observability. No blocking issues were found. Validation passed frontend lint/type-check/test/build, backend full tests/race/vet/build, P14 focused backend tests with `-count=1`, Docker Compose config, whitespace checks, and focused frontend scans for direct AI Provider calls, browser Provider-key storage, task polling, AI relay paths, image base64 persistence, and object storage leakage. Non-blocking follow-ups remain: same-Provider `model_name` uniqueness is still deferred, usage summary cost aggregation is exact but currently per-page in Go, and the frontend tenant-totals compatibility fallback for `404` can be removed once older backend contracts no longer matter.
 
-`P15-E2E-CORE-FLOWS` was reviewed and merged. The backend now has an API-level core-flow integration test that starts from init-admin, validates HttpOnly session and CSRF behavior, creates Provider/model/project/reference asset/task data through real routes, rejects an SVG masquerading as PNG, runs a fake Worker execution without external AI calls, verifies task events and SSE Last-Event-ID replay, confirms generated asset download and project history, and reads usage summary/records plus operation/API call logs with sensitive markers excluded. Validation passed focused backend API/task/SSE/audit tests, full backend tests, race tests, vet, API/Worker builds, full frontend lint/type-check/test/build, Docker Compose config, whitespace checks, and changed-file forbidden-pattern scan. Non-blocking follow-up: cross-tenant and low-permission negative cases are still covered mostly by existing focused tests; `P15-SECURITY-FINAL-REGRESSION` must consolidate those cases into a final security regression entry point and mapping.
+`P15-E2E-CORE-FLOWS` was reviewed and merged. The backend now has an API-level core-flow integration test that starts from init-admin, validates HttpOnly session and CSRF behavior, creates Provider/model/project/reference asset/task data through real routes, rejects an SVG masquerading as PNG, runs a fake Worker execution without external AI calls, verifies task events and SSE Last-Event-ID replay, confirms generated asset download and project history, and reads usage summary/records plus operation/API call logs with sensitive markers excluded. Validation passed focused backend API/task/SSE/audit tests, full backend tests, race tests, vet, API/Worker builds, full frontend lint/type-check/test/build, Docker Compose config, whitespace checks, and changed-file forbidden-pattern scan.
+
+`P15-SECURITY-FINAL-REGRESSION` was reviewed and merged. The repository now has `scripts/security-regression.sh` as a focused final security regression entry point. It runs focused backend and frontend security tests, production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Docker Compose config validation, and whitespace checks. The P15 core-flow test was extended with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. Validation passed the security regression script, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: cross-tenant negative coverage remains mapped primarily to existing focused tests.
 
 ## Completed Platform Capabilities
 
@@ -116,6 +118,7 @@ The current `main` branch supports:
 - Backend deterministic usage/cost reporting: Worker usage records use stable decimal cost estimation, pricing failures are zero-cost non-fatal cases, and admin usage summary supports tenant/user/project/Provider/model aggregation with exact cost strings.
 - Frontend admin cost observability: the usage tab displays tenant totals, dimension summaries, filtered usage records, drilldown filters, multi-currency cost strings from the backend, and stale-response protection without Provider direct calls, browser Provider-key storage, or polling.
 - Backend core-flow E2E coverage: init admin, Provider/model setup, project/reference asset upload, task creation, fake Worker execution, SSE replay, output asset download, project history, usage, and logs are now verified in one integration path without external AI calls.
+- Final security regression entry point: `scripts/security-regression.sh` consolidates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, Compose config validation, `/api/` proxy safety checks, and whitespace checks.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -234,13 +237,13 @@ Suggested order:
 1. `P15-E2E-CORE-FLOWS`
    - Completed and merged. Automated backend integration coverage now verifies init-admin, Provider/model setup, project, reference upload, task creation, fake Worker success, SSE replay, output asset download, history, usage, and logs without external AI calls.
 2. `P15-SECURITY-FINAL-REGRESSION`
-   - Next. Add a final security regression entry point and mapping for auth, tenant isolation, RBAC, object authorization, upload validation, Provider SSRF, sensitive redaction, task state/SSE replay, frontend forbidden patterns, and deployment config checks.
+   - Completed and merged. Added a reusable final security regression entry point, low-permission negative assertions in the core-flow test, frontend/backend/deploy safety scans, and explicit mapping for auth, tenant isolation, RBAC, object authorization, upload validation, Provider SSRF, sensitive redaction, task state/SSE replay, frontend forbidden patterns, and deployment config checks.
 3. `P15-DEPLOY-RUNBOOK-FINAL`
-   - Final Docker Compose release validation, backup/restore notes, healthcheck/runbook updates, and environment checks.
+   - Next. Final Docker Compose release validation, backup/restore notes, healthcheck/runbook updates, and environment checks.
 4. `R15`
    - Final release-readiness review.
 
-Parallelism: keep `P15-SECURITY-FINAL-REGRESSION` serial from latest `main`; it depends on the merged P15 core-flow coverage. Deployment runbook finalization may proceed only after security regression is reviewed or if write scopes are explicitly separated by the main agent.
+Parallelism: keep `P15-DEPLOY-RUNBOOK-FINAL` serial from latest `main`; it depends on the merged P15 core-flow and security-regression coverage. R15 starts only after deployment runbook validation is reviewed and merged.
 
 ## Worktree Scheduling Policy
 
@@ -296,4 +299,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `P15-SECURITY-FINAL-REGRESSION` from latest `main`. The task should add a reusable final security regression entry point, consolidate existing focused tests into a clear failure-mode mapping, add missing high-value regression checks where needed, and keep production code unchanged unless a real security defect is found and reported back to the main agent first.
+Run `P15-DEPLOY-RUNBOOK-FINAL` from latest `main`. The task should finalize repeatable Compose release validation and operator runbook artifacts without changing business runtime behavior. It may validate full Compose build/up/health and must clean up project Compose resources after verification unless explicitly told to keep them.
