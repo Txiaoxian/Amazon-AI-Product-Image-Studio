@@ -282,9 +282,9 @@ Live Compose validation confirmed:
 - Frontend `/api/v1/events/tasks` reached the backend auth boundary and returned HTTP 401.
 - Cleanup with `docker compose -f deploy/docker-compose.yml down -v --remove-orphans` removed project containers and volumes.
 
-Non-blocking note:
+Follow-up status:
 
-- The deploy validation script can later add a cleanup trap so a failed `--up --down` run still attempts automatic Compose cleanup.
+- P16 has added the cleanup trap so a failed or interrupted `--up --down` run still attempts automatic Compose cleanup.
 
 ## R15 deployment readiness result
 
@@ -304,3 +304,29 @@ Required behavior:
 - Default validation must not start or delete the Compose stack.
 - Cleanup must stay scoped to `deploy/docker-compose.yml` and must not use broad Docker prune commands.
 - Script-level tests should use fake Docker commands where possible so cleanup-trap failure paths are covered without relying on real infrastructure failures.
+
+## P16 deployment script hardening result
+
+Validation date: 2026-05-26.
+
+`P16-DEPLOY-SCRIPT-HARDENING` was reviewed and merged. The deployment validation script now has scoped cleanup traps for `--up --down` so live validation failure, script error, SIGINT, or SIGTERM still attempts project Compose cleanup. `--up` without `--down` keeps the operator-inspection behavior, `--down` alone remains cleanup-only, and default validation still does not start or delete the Compose stack.
+
+Added output:
+
+- `scripts/deploy-release-validation-test.sh`, a fake-command shell regression suite for deploy script cleanup behavior.
+
+Actual checks passed:
+
+- `bash -n scripts/deploy-release-validation.sh`
+- `bash -n scripts/deploy-release-validation-test.sh`
+- `bash scripts/deploy-release-validation.sh --help`
+- `bash scripts/deploy-release-validation-test.sh`
+- `bash scripts/security-regression.sh`
+- `bash scripts/deploy-release-validation.sh`
+- `bash scripts/deploy-release-validation.sh --up --down`
+- `docker compose -f deploy/docker-compose.yml ps -a`
+- `docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true`
+- `docker compose -f deploy/docker-compose.yml config`
+- `git diff --check main...HEAD`
+
+Live Compose validation confirmed the stack reached healthy/running state, frontend `/api/` and SSE auth-boundary proxy checks passed, cleanup completed, and follow-up checks showed no project containers or project volumes left behind.

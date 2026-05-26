@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL` 和 `R15` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15` 和 `P16-DEPLOY-SCRIPT-HARDENING` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap 已合并并通过真实 Compose `--up --down` 验证。
 
 已完成的平台基础：
 
@@ -107,8 +107,9 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- P15 已完成。下一任务需先由主 agent 根据用户确认的 post-R15 范围重新制定。
-- 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
+- P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap，脚本级 fake-command 回归和真实 Compose `--up --down` 均已通过。
+- P16 下一切片：`P16-BE-LOG-RETENTION`。只允许在有 Worker runtime consumer 的前提下暴露 `logRetention`，且范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、`task_events`。
+- 缩略图策略和完整 orphan cleanup 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -497,7 +498,7 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
-- 非阻塞遗留：`scripts/deploy-release-validation.sh --up --down` 可后续增加失败 cleanup trap；缩略图策略、完整 orphan cleanup、log retention、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog。
+- 非阻塞遗留：缩略图策略、完整 orphan cleanup、log retention、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 log retention 是当前 P16 下一任务。
 
 ## 稳定生产上线路线图
 
@@ -511,6 +512,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 给 `scripts/deploy-release-validation.sh --up --down` 增加失败 cleanup trap。
    - 补充脚本级回归，证明失败时不会遗留项目 Compose 容器或卷。
    - 不修改业务前后端代码。
+   - 已完成并合并。
 2. `P16-BE-LOG-RETENTION`
    - 实现 operation logs、api call logs、task events/error logs 的 retention runtime consumer。
    - 未接入真实 consumer 前不得暴露新的 active writable settings。
@@ -541,7 +543,218 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P16-DEPLOY-SCRIPT-HARDENING
+## 下一个任务包：P16-BE-LOG-RETENTION
+
+### 调度决策
+
+- 本任务串行执行，不与缩略图或 orphan cleanup 并行。
+- 理由：它会把 `logRetention` 从 deferred setting 变成 active runtime-backed setting，必须先稳定系统设置合同、Worker runtime consumer 和数据删除边界。
+- 本任务只处理现有数据库日志：`operation_logs`、`api_call_logs`、`task_events`。容器 stdout/stderr、宿主机日志、外部日志平台保留策略不在本任务范围内。
+
+### 任务信息
+
+- 任务名称：`P16-BE-LOG-RETENTION`
+- 目标：为数据库日志增加租户级 retention 设置和 Worker maintenance consumer，确保日志清理由真实运行时消费、tenant-safe、batch-limited、auditable、sensitive-log safe。
+- 推荐线程名：`P16-BE-LOG-RETENTION`
+- 推荐分支名：`codex/p16-backend-log-retention`
+- 起始分支：已合并 `P16-DEPLOY-SCRIPT-HARDENING` 的最新 `main`
+- 前置依赖：P16 deployment script hardening 已合并；现有 `system_settings`、Worker storage-retention maintenance、audit recorder、API call logs、task events 均可复用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P16-BE-LOG-RETENTION`。
+
+你必须在分支 `codex/p16-backend-log-retention` 上工作；如果当前不在该分支，先执行 `git switch codex/p16-backend-log-retention`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P16-DEPLOY-SCRIPT-HARDENING` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p16-backend-log-retention` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+为现有数据库日志增加真实 runtime-backed retention：
+- 新增系统设置 `logRetention`，字段为 nullable：
+  - `operationLogRetentionDays`
+  - `apiCallLogRetentionDays`
+  - `taskEventRetentionDays`
+- `null` 表示该日志类型自动清理关闭；正整数表示 Worker 按 `cutoff = now - days` 清理旧数据。
+- 有效范围为 `1..3650` 天。
+- Worker maintenance 必须实际消费该设置，按 active tenant、按日志类型、按 batch limit 清理。
+- 清理必须 tenant-safe、batch-limited、可重复执行、可审计，并且不能输出敏感字段。
+
+允许修改文件：
+- `backend/internal/settings/**`
+- `backend/internal/api/system_settings_routes_test.go`
+- `backend/internal/database/models.go`
+- `backend/internal/database/migrations_test.go`
+- `backend/cmd/worker/main.go`
+- `backend/cmd/worker/*retention*.go`
+- `backend/cmd/worker/*retention*_test.go`
+- 如确有必要，可新增 `backend/internal/audit` 或 `backend/internal/task` 下的测试文件；生产代码默认不要改这些包，除非实现清理服务时必须复用类型/常量，并在最终交付说明原因
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、任务执行主流程、SSE handler、资产上传/下载、MinIO storage 实现
+- 任何 AI Provider 直连、Provider key 处理、前端轮询或浏览器存储路径
+
+前置阅读：
+- `docs/api-contract.md` 中 system settings 的 `logRetention` 合同
+- `docs/database-schema.md` 中 `system_settings`、`operation_logs`、`api_call_logs`、`task_events`
+- `docs/security.md` 关于敏感日志和 runtime-backed settings 的规则
+- `backend/internal/settings/service.go`
+- `backend/internal/settings/types.go`
+- `backend/internal/settings/repository.go`
+- `backend/cmd/worker/retention_maintenance.go`
+- `backend/cmd/worker/retention_maintenance_test.go`
+- `backend/internal/database/models.go`
+- `backend/internal/database/migrations.go`
+
+具体开发内容：
+1. 设置合同实现：
+   - 在 settings 类型中加入 `LogRetention` / patch / enabled config / invalid config。
+   - `GET /api/v1/admin/system-settings` 返回 `logRetention`。
+   - `PATCH /api/v1/admin/system-settings` 支持设置或清空三个 nullable day 字段。
+   - 任一字段可单独 patch；未知字段、非整数、0、负数、超过 3650、空对象等必须返回现有 settings validation error。
+   - 权限继续沿用 tenant admin + `system:settings:manage`。
+   - settings update operation log 只能记录 key、changedFields、数值/null，不得记录请求原文或敏感上下文。
+2. Worker runtime consumer：
+   - 新增或扩展 Worker maintenance runner，读取 active tenants 的 `log_retention` 设置。
+   - 对 malformed stored `log_retention` fail closed：跳过该 tenant，记录 sanitized `error_kind`，不清理任何日志。
+   - 对每个 enabled tenant/category 计算 cutoff 并删除旧 rows。
+   - `operation_logs`：只删除同 tenant 且 `created_at < cutoff` 的 rows；清理完成后写入一条新的 sanitized `operation_logs` audit event，记录每类 processed/deleted/failed 计数。
+   - `api_call_logs`：只删除同 tenant 且 `created_at < cutoff` 的 rows。
+   - `task_events`：只删除同 tenant、`created_at < cutoff`、且对应 `generation_tasks.status` 为 terminal 的 events。不要删除 queued/running/cancelling/retrying 等非终态任务事件。
+   - 每类清理必须 batch-limited。单次 run 不需要清空所有历史，只要按 batch 逐步推进。
+   - 清理必须幂等；重复执行不会报错或越租户删除。
+3. Worker lifecycle：
+   - 将 log-retention runner 接入 `backend/cmd/worker/main.go`。
+   - 可以复用现有 `WORKER_RETENTION_MAINTENANCE_INTERVAL` 与 `WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT`，除非有充分理由新增环境变量。
+   - shutdown 必须尊重 context，不能阻塞 Worker 停止。
+4. 测试：
+   - settings/API 测试覆盖 GET/PATCH、权限、tenant isolation、validation、malformed stored row fail closed、operation log metadata sanitized。
+   - Worker 测试覆盖 active/inactive tenant、valid/null/malformed config、per-category cutoff、batch limit、task_events 终态保护、跨租户不删除、重复执行幂等、cleanup audit log、context cancel。
+   - 如新增 SQL cleanup helper，优先用 sqlite 单元测试证明 SQL 条件；如 MySQL 特性不可避免，说明原因。
+
+必须保持的现有行为：
+- 现有 `uploadPolicy`、`taskDefaults`、`taskConcurrency`、`storageRetention`、`storageQuota` 行为不回归。
+- Frontend system settings 在本任务中不修改；前端是否展示 `logRetention` 由后续任务决定。
+- SSE replay 对活跃任务不被破坏：非终态任务的 `task_events` 不得被删除。
+- API call log read endpoints、operation log read endpoints、usage summary 不得泄漏敏感信息。
+- Worker storage retention cleanup 继续工作，不因新增 log retention loop 停止。
+
+允许的中间态：
+- 可以先实现 backend GET/PATCH 和 settings tests，再接入 Worker consumer。
+- 可以让 log retention 使用同一个 Worker maintenance interval/batch 配置。
+- 可以把 container stdout/stderr retention 明确留给部署层，不在 backend settings 中出现。
+
+禁止的半迁移状态：
+- `GET/PATCH /admin/system-settings` 返回或接受 `logRetention`，但 Worker 不消费。
+- 只删除全局日志、不带 `tenant_id` 过滤。
+- 删除非终态 task events，导致运行中任务 SSE replay 断裂。
+- 删除日志时记录完整 metadata、Authorization、Cookie、JWT、Provider Key、base64、bucket 或 object_key。
+- 暴露容器日志、MinIO object listing、manual cleanup trigger 或 orphan cleanup 为 active settings。
+- 修改前端来展示尚未验收的设置。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| GET 无 log_retention row | 返回三个字段均为 null | 是 |
+| PATCH 单字段为有效天数 | 保存并返回该字段，其他字段保持当前值 | 是 |
+| PATCH 字段为 null | 清空该字段并关闭该类 cleanup | 是 |
+| PATCH 非整数/0/负数/超过上限/未知字段 | 400/422 validation error，不写成功 operation log | 是 |
+| 非 admin 或无 `system:settings:manage` | 拒绝读写 | 是 |
+| tenant A 设置 | tenant B 不可读取或消费 | 是 |
+| stored malformed log_retention | API 读失败为 sanitized error；Worker 跳过该 tenant | 是 |
+| operation_logs cleanup | 只删 tenant 内 cutoff 前 rows，插入 sanitized cleanup audit | 是 |
+| api_call_logs cleanup | 只删 tenant 内 cutoff 前 rows | 是 |
+| task_events cleanup | 只删终态任务旧 events，保留非终态任务 events | 是 |
+| batch limit 小于候选数 | 单次只删 batch 内数量，可重复执行 | 是 |
+| context canceled | 停止后续 tenant/category，不扩大删除 | 是 |
+| cleanup SQL/storage error | sanitized warn，继续下一 tenant/category 或安全停止 | 是 |
+
+必须新增或更新的回归测试：
+- `backend/internal/api/system_settings_routes_test.go`：增加 `logRetention` API/权限/validation/tenant isolation/operation log 测试。
+- `backend/internal/settings/service_test.go`：增加 decode/validate/apply/LoadEnabledLogRetentions 或等价单元测试。
+- `backend/cmd/worker/*log_retention*_test.go`：增加 Worker cleanup runner 测试，映射上述 failure matrix。
+- 如更新模型或 migration 断言，补 `backend/internal/database/migrations_test.go`。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/settings ./internal/api ./cmd/worker -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+如果你实际修改了 frontend 或 deploy，立即停止并报告；本任务默认禁止。
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- failure matrix 到具体测试文件/测试名的映射。
+- 安全自查结果，明确 tenant filter、敏感日志脱敏、无 Provider 直连、无前端轮询、无 browser storage 变更。
+- 刻意未修改范围，特别说明容器 stdout/stderr retention、frontend settings UI、orphan cleanup、manual cleanup trigger 不在本任务内。
+- 如使用共享本地 MySQL/Redis/MinIO，说明创建/修改/清理了哪些 `codex_p16_log_retention_*` 测试数据；默认优先使用自动化测试和 sqlite。
+- 如发现公共合同缺口，只报告主 agent，不修改 docs。
+```
+
+### 允许修改文件
+
+- `backend/internal/settings/**`
+- `backend/internal/api/system_settings_routes_test.go`
+- `backend/internal/database/models.go`
+- `backend/internal/database/migrations_test.go`
+- `backend/cmd/worker/main.go`
+- `backend/cmd/worker/*retention*.go`
+- `backend/cmd/worker/*retention*_test.go`
+- 必要时新增 backend-only 测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、任务执行主流程、SSE handler、资产上传/下载、MinIO storage 实现
+
+### 验收标准
+
+- `logRetention` 只在 backend settings/API 和 Worker runtime consumer 同时落地后变为 active。
+- Worker cleanup tenant-safe、batch-limited、idempotent、context-aware、sanitized。
+- `task_events` cleanup 不破坏非终态任务的 SSE replay。
+- settings 更新有 sanitized operation log，cleanup run 有 aggregate audit trace。
+- 所有现有 settings 行为不回归。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/settings ./internal/api ./cmd/worker -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+## 最近已完成任务包：P16-DEPLOY-SCRIPT-HARDENING
+
+本任务已合并到 `main`，保留在本文档中作为部署脚本硬化任务包审计记录。
 
 ### 调度决策
 

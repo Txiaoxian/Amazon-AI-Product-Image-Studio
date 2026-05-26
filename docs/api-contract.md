@@ -414,6 +414,11 @@ The active runtime-backed settings slices are intentionally narrow:
   "storageQuota": {
     "maxBytes": null,
     "usedBytes": 0
+  },
+  "logRetention": {
+    "operationLogRetentionDays": null,
+    "apiCallLogRetentionDays": null,
+    "taskEventRetentionDays": null
   }
 }
 ```
@@ -457,6 +462,15 @@ The active runtime-backed settings slices are intentionally narrow:
   - `PATCH /admin/system-settings` may set a positive integer `maxBytes` or clear it with `null`; `usedBytes` is never writable.
   - Reference uploads and Worker output asset persistence must reject writes that would exceed the quota and must not leave successful asset metadata, successful task output events, or sensitive object identifiers in responses/logs.
   - Malformed persisted `storage_quota` must fail closed for new asset writes. Existing assets must not be deleted or hidden because of quota settings.
-- Log retention, orphan object listing, and manual cleanup triggers remain deferred. They must not be returned as active writable settings until their runtime consumers exist.
+- P16 contracts `logRetention` only together with a Worker runtime consumer:
+  - `GET /admin/system-settings` returns nullable `operationLogRetentionDays`, `apiCallLogRetentionDays`, and `taskEventRetentionDays`.
+  - `PATCH /admin/system-settings` may set each field to a positive integer day count or clear it with `null`; omitted fields retain their current value.
+  - `null` means automatic retention cleanup for that log category is disabled.
+  - Valid range is `1..3650` days unless a later public contract deliberately changes it.
+  - Worker maintenance resolves active tenant settings, computes per-category cutoffs, deletes only rows older than the cutoff, limits each batch, and writes sanitized aggregate audit metadata after cleanup.
+  - `taskEventRetentionDays` may delete events only for terminal tasks older than the cutoff. It must preserve events for queued/running/cancelling/retrying tasks so live SSE and recovery semantics are not broken.
+  - The setting covers existing database-backed logs only: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities.
+  - Malformed persisted `log_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
+- Orphan object listing and manual cleanup triggers remain deferred. They must not be returned as active writable settings until their runtime consumers exist.
 - Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`.
-- Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`. It sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps deferred settings absent from UI and requests.
+- Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`. It sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps deferred settings absent from UI and requests. Frontend `logRetention` controls are deferred until after the backend runtime consumer is merged and reviewed.

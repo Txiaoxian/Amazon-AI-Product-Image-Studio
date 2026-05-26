@@ -40,7 +40,7 @@ Phase status:
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
-| P16 | Planned | Production launch hardening: deployment script failure cleanup, runtime log retention, and thumbnail policy. |
+| P16 | In Progress | Deployment script failure cleanup is complete; runtime log retention and thumbnail policy remain. |
 | P17 | Planned | Long-running storage and observability operations: orphan cleanup, strict storage quota reservation, and production diagnostics. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
@@ -96,7 +96,7 @@ R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend 
 
 `P15-SECURITY-FINAL-REGRESSION` was reviewed and merged. The repository now has `scripts/security-regression.sh` as a focused final security regression entry point. It runs focused backend and frontend security tests, production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Docker Compose config validation, and whitespace checks. The P15 core-flow test was extended with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. Validation passed the security regression script, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: cross-tenant negative coverage remains mapped primarily to existing focused tests.
 
-`P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. The repository now includes `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh`. The deploy validation script supports `--help`, safe default validation, explicit `--up`, and cleanup through `--down`; it verifies Compose config, frontend `/api/` and SSE proxy safety, image builds, security regression, live health checks, frontend proxy health, and cleanup. Validation passed default deploy release validation, live `--up --down` Compose health/proxy checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: the deploy script can later add a cleanup trap for failed `--up --down` runs.
+`P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. The repository now includes `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh`. The deploy validation script supports `--help`, safe default validation, explicit `--up`, and cleanup through `--down`; it verifies Compose config, frontend `/api/` and SSE proxy safety, image builds, security regression, live health checks, frontend proxy health, and cleanup. Validation passed default deploy release validation, live `--up --down` Compose health/proxy checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. P16 later added the cleanup trap for failed or interrupted `--up --down` runs.
 
 R15 reviewed the complete P15 range from `3db7980..HEAD` and found no blocking release-readiness issues. Validation passed `scripts/security-regression.sh`, `scripts/deploy-release-validation.sh`, live `scripts/deploy-release-validation.sh --up --down`, post-cleanup container/volume checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Docker Compose config, and whitespace checks. The live Compose run confirmed MySQL, Redis, MinIO, backend API, backend Worker, and frontend health; MinIO bootstrap completion; backend health endpoints; frontend `/api/` proxy health; SSE auth-boundary routing; and cleanup of project containers and volumes.
 
@@ -262,6 +262,7 @@ Suggested order:
 1. `P16-DEPLOY-SCRIPT-HARDENING`
    - First task. Harden `scripts/deploy-release-validation.sh --up --down` so failed live validation still attempts cleanup and does not leave project Compose containers or volumes behind.
    - Add script-level regression coverage for cleanup trap behavior without using real secrets or external AI Providers.
+   - Completed and merged. The script now uses scoped cleanup traps for `--up --down`, has fake-command regression coverage for failure/signal cleanup paths, and passed live Compose `--up --down` validation with no project containers or volumes left behind.
 2. `P16-BE-LOG-RETENTION`
    - Implement a real backend/Worker consumer for operation/API/task/error log retention before exposing retention as writable runtime state.
    - Cleanup must be tenant-safe where applicable, batch-limited, auditable, and sensitive-log safe.
@@ -366,4 +367,6 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P16-DEPLOY-SCRIPT-HARDENING` from latest `main`. This is the first stable-production task because failed deployment validation must not leave project Compose containers or volumes behind. It should only touch deployment validation scripts and script-level tests; public docs are updated by the main agent after review.
+Start `P16-BE-LOG-RETENTION` from latest `main`. `P16-DEPLOY-SCRIPT-HARDENING` is merged and verified. The next launch-hardening risk is unbounded database-backed log growth, so the next task must add a real Worker runtime consumer before `logRetention` becomes active writable system settings.
+
+The P16 log-retention contract is deliberately limited to existing database-backed logs: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities and must not be represented as an active backend setting in this task.
