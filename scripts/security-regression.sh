@@ -10,6 +10,7 @@ Usage: bash scripts/security-regression.sh [--help]
 Runs the focused P15 final security regression:
   - backend focused security tests
   - frontend focused security tests
+  - frontend npm dependency bootstrap when node_modules is absent
   - frontend production-code forbidden-pattern scans
   - backend production-code sensitive logging scans
   - deploy frontend proxy safety scan
@@ -58,6 +59,13 @@ run_quiet() {
     "$output" >&2
   rm -f "$output"
   return "$status"
+}
+
+ensure_frontend_dependencies() {
+  if [[ -x "$ROOT_DIR/frontend/node_modules/.bin/vitest" ]]; then
+    return 0
+  fi
+  run bash -lc "cd '$ROOT_DIR/frontend' && npm ci"
 }
 
 scan_no_hits() {
@@ -114,6 +122,7 @@ show_allowed_marker_files() {
 }
 
 run bash -lc "cd '$ROOT_DIR/backend' && go test ./internal/api ./internal/provider ./internal/provideradapter ./internal/sse ./internal/task ./internal/audit -count=1"
+ensure_frontend_dependencies
 run bash -lc "cd '$ROOT_DIR/frontend' && npm run test -- src/test/taskWorkbench.test.tsx src/test/historyAssetSource.test.tsx src/test/adminObservabilitySettingsPanel.test.tsx src/test/authFlow.test.tsx src/test/adminProviderModelPanel.test.tsx src/test/legacyRetirement.test.tsx"
 
 scan_no_hits "frontend production code must not call AI Providers or relay endpoints directly" \
