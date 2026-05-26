@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-R14 已完成，未发现阻塞问题。P14 的 Provider/model 生命周期完整性、后端 usage/cost reporting、前端成本可观测性和整批回归均已合并并验证。
+`P15-E2E-CORE-FLOWS` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径已有自动化覆盖，下一步进入最终安全回归切片。
 
 已完成的平台基础：
 
@@ -97,6 +97,7 @@ R14 已完成，未发现阻塞问题。P14 的 Provider/model 生命周期完�
 - P11-P12：用户/角色管理、统一历史、卖家项目/资产流程和项目最后 `OWNER` 约束。
 - P13 已合并切片：租户 `taskDefaults.{defaultProviderId,defaultModelId}` 的读写、任务创建真实消费路径、损坏持久化默认值的 fail-closed hardening、Worker 实际消费的 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`、soft-delete 资产物理清理基础服务、Worker 实际消费的 `storageRetention.deletedAssetRetentionDays`、引用图上传/Worker 输出实际消费的 `storageQuota.maxBytes` 与只读 `storageQuota.usedBytes`，以及只展示 active runtime-backed settings 的前端 admin 设置页。
 - P14 已合并切片：Provider/model 生命周期完整性、后端确定性 usage/cost reporting、前端 admin 成本可观测性和 R14。Worker 成本估算使用稳定 decimal，非法 pricing 归零且不失败成功任务；admin usage summary 支持 tenant/user/project/Provider/model 维度、tenant isolation、多币种分组和 exact decimal cost；前端 usage tab 支持 tenant totals、过滤、drilldown、多币种展示和 stale response 防护。
+- P15 已合并切片：`P15-E2E-CORE-FLOWS`。后端集成测试已串联 init-admin、Provider/model、project、reference upload、task create、fake Worker success、SSE replay、output asset download、history、usage records/summary、operation logs 和 API call logs，且不调用真实 AI Provider。
 
 当前已知后续项：
 
@@ -106,7 +107,7 @@ R14 已完成，未发现阻塞问题。P14 的 Provider/model 生命周期完�
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `P15-E2E-CORE-FLOWS`，串行补齐可由 operator 执行的核心端到端验证。
+- 下一任务是 `P15-SECURITY-FINAL-REGRESSION`，串行补齐最终安全回归入口、缺口测试和失败模式映射。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终 E2E 和发布验证仍需完整 seller flow 回归。
@@ -193,78 +194,94 @@ R14 已完成，未发现阻塞问题。P14 的 Provider/model 生命周期完�
 建议任务：
 
 1. `P15-E2E-CORE-FLOWS`
-   - 覆盖核心卖家和 admin 端到端流程。
+   - 已完成并合并。核心 API/Worker/SSE/history/usage/log 自动化集成路径已落地，且使用 fake Worker/Provider，不调用真实 AI Provider。
 2. `P15-SECURITY-FINAL-REGRESSION`
-   - 最终禁止模式扫描和安全回归套件。
+   - 下一个任务。补齐最终禁止模式扫描、安全回归入口和安全失败模式到测试的映射。
 3. `P15-DEPLOY-RUNBOOK-FINAL`
    - Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化。
 4. `R15`
    - 最终发布就绪 review。
 
-## 下一个任务包：P15-E2E-CORE-FLOWS
+## 下一个任务包：P15-SECURITY-FINAL-REGRESSION
 
 ### 调度决策
 
-- 本任务串行执行，不与最终安全回归或部署 runbook 并行。
-- 理由：P15 的第一步应先把核心平台流转固化为可重复验证的 E2E/集成回归，后续安全和发布验证才能复用同一套检查入口。
-- 本任务以测试和验证脚本为主，不开发新业务能力，不调用真实 AI Provider，不改公共合同文档或 Agent 规则。
+- 本任务串行执行，不与部署 runbook 或 R15 并行。
+- 理由：最终安全回归必须基于已合并的 P15 core-flow 覆盖，先把安全失败模式、禁止模式扫描和可复用命令入口稳定下来，后续部署验证和 R15 才能引用。
+- 本任务以测试、扫描脚本和安全回归映射为主。默认不改生产代码；如果发现真实安全缺陷，先停止并报告主 agent，不要扩大范围直接修业务逻辑。
 
 ### 任务信息
 
-- 任务名称：`P15-E2E-CORE-FLOWS`
-- 目标：新增可重复执行的核心平台端到端验证，覆盖 init admin/login、Provider/model 配置、项目、参考图上传、任务创建、Worker fake 执行或测试替身、SSE 事件/回放、输出资产、下载、再次编辑入口所需数据、history、usage/cost、operation/API logs 的关键合同。
-- 推荐线程名：`P15-E2E-CORE-FLOWS`
-- 推荐分支名：`codex/p15-e2e-core-flows`
-- 起始分支：已完成 R14 的最新 `main`
-- 前置依赖：P14 全部代码和 R14 文档已合并；共享本地 MySQL/Redis/MinIO 使用规则见 `docs/local-development.md`。
+- 任务名称：`P15-SECURITY-FINAL-REGRESSION`
+- 目标：新增最终安全回归入口，整合并补齐 auth、tenant isolation、RBAC、object authorization、upload validation、Provider SSRF、sensitive redaction、task state/SSE replay、frontend forbidden patterns、deployment config safety 的自动化验证和测试映射。
+- 推荐线程名：`P15-SECURITY-FINAL-REGRESSION`
+- 推荐分支名：`codex/p15-security-final-regression`
+- 起始分支：已合并 `P15-E2E-CORE-FLOWS` 的最新 `main`
+- 前置依赖：P15 core-flow E2E 已合并；现有 P9/P12/P14/P15 focused tests 可复用；共享本地环境规则见 `docs/local-development.md`。
 
 ### 子 agent 完整启动 prompt
 
 ```text
-你是本项目的子 agent，负责 `P15-E2E-CORE-FLOWS`。
+你是本项目的子 agent，负责 `P15-SECURITY-FINAL-REGRESSION`。
 
-你必须在分支 `codex/p15-e2e-core-flows` 上工作；如果当前不在该分支，先执行 `git switch codex/p15-e2e-core-flows`，确认 `git branch --show-current` 后再继续。起始点必须包含完成 R14 后的最新 `main`；如果 `git merge-base --is-ancestor main codex/p15-e2e-core-flows` 不通过，先停止并报告，不要自行修改公共合同。
+你必须在分支 `codex/p15-security-final-regression` 上工作；如果当前不在该分支，先执行 `git switch codex/p15-security-final-regression`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P15-E2E-CORE-FLOWS` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p15-security-final-regression` 不通过，先停止并报告，不要自行修改公共合同。
 
 任务目标：
-为完整平台补齐第一批 P15 核心 E2E/集成验证。验证必须证明平台关键合同可以串起来，而不是只测孤立函数：
-- 管理员初始化或登录链路可取得 HttpOnly Cookie 会话和内存 CSRF。
-- Provider/model 管理合同可创建启用的 Provider/model，并且 Provider API Key 不会完整返回。
-- 项目创建、参考图上传、资产 metadata、授权下载合同可用，上传仍走真实文件校验。
-- 任务创建进入后端任务合同，Worker 路径使用测试替身或 fake Provider Adapter 完成成功任务，不允许调用真实 OpenAI/Gemini/中转站。
-- SSE 事件、Last-Event-ID 回放或任务事件历史读取能看到排队、开始、输出、usage、完成等关键事件。
-- 输出图片进入项目资产库，项目 history 能看到生成/编辑结果，下载必须经后端鉴权。
-- usage/cost summary、usage records、operation logs、API call logs 可按租户读取并保持脱敏。
+为 P15 补齐最终安全回归入口和映射：
+- 建立一个可复用命令或脚本，能运行最终安全回归所需的后端/前端 focused tests、forbidden-pattern scans、Compose config 检查和 whitespace 检查。
+- 补齐高价值安全缺口测试，尤其是 P15 core-flow review 提到的跨租户/无权限负向场景映射不足。
+- 明确 auth、tenant isolation、RBAC、object authorization、upload validation、Provider SSRF、sensitive redaction、task state/SSE replay、frontend forbidden patterns、deployment config safety 对应的测试文件/测试名或扫描命令。
+- 保持生产代码不变；本任务是安全回归与验证能力建设，不是功能开发。
 
 必须遵守：
 1. 不修改 `docs/**`、`AGENTS.md`、`agent-instructions/**`。
-2. 不开发新业务能力，不改变公开 API/SSE 合同；如发现必须改合同，停止并报告主 agent。
-3. 不调用真实 AI Provider，不访问 OpenAI、Gemini 或任何外部中转站；Provider 调用必须用测试替身、fake adapter、httptest 或已有测试 helper。
-4. 不把真实本地 MySQL/Redis/MinIO 凭据、Provider Key、Authorization、Cookie、JWT、图片 base64、bucket 或 object_key 写入仓库、快照、日志或最终交付。
-5. 不使用前端轮询、`setInterval` 或循环 fetch 来模拟任务状态；任务状态验证必须走 SSE、任务事件历史或 Worker 测试事件。
-6. 如使用共享本地 MySQL/Redis/MinIO，只能创建任务命名空间测试数据，例如 `codex_p15_e2e_*`，不得 drop 数据库、删除共享 bucket、flush Redis 或删除无关数据。
-7. 测试必须可重复执行；失败时要清楚指出失败阶段和关键对象 ID，但不得泄露敏感字段。
+2. 不新增业务功能，不改变公开 API/SSE/RBAC/DB 合同；如测试暴露真实安全缺陷，停止并报告主 agent。
+3. 不调用真实 AI Provider，不访问 OpenAI、Gemini 或任何外部中转站。
+4. 不把真实本地 MySQL/Redis/MinIO 凭据、Provider Key、Authorization、Cookie、JWT、图片 base64、bucket 或 object_key 写入仓库、快照、日志、脚本输出或最终交付。
+5. 不使用前端轮询、`setInterval` 或循环 fetch 来模拟任务状态。
+6. 如果新增脚本，脚本必须只编排安全测试/扫描，不启动新的 MySQL/Redis/MinIO，不清空共享服务，不删除无关数据。
+7. 任何 forbidden-pattern scan 必须避免把测试中的“用于断言禁止泄漏的字符串”误判为生产违规；输出需要区分生产代码和测试断言。
 
 建议实现：
 1. 先阅读：
-   - `backend/internal/api/*_test.go`
-   - `backend/internal/task/worker_test.go`
-   - `backend/internal/sse/*_test.go`
+   - `backend/internal/api/e2e_core_flow_test.go`
+   - `backend/internal/api/auth_routes_test.go`
+   - `backend/internal/api/asset_routes_test.go`
+   - `backend/internal/api/task_routes_test.go`
+   - `backend/internal/api/task_history_routes_test.go`
+   - `backend/internal/api/audit_usage_routes_test.go`
+   - `backend/internal/api/provider_routes_test.go`
+   - `backend/internal/provider/ssrf_test.go`
+   - `backend/internal/provideradapter/redaction_test.go`
+   - `backend/internal/sse/no_polling_test.go`
    - `frontend/src/test/taskWorkbench.test.tsx`
    - `frontend/src/test/historyAssetSource.test.tsx`
    - `frontend/src/test/adminObservabilitySettingsPanel.test.tsx`
-   - `docs/api-contract.md`
-   - `docs/sse-contract.md`
+   - `frontend/src/test/authFlow.test.tsx`
+   - `frontend/src/test/adminProviderModelPanel.test.tsx`
    - `docs/security.md`
+   - `docs/sse-contract.md`
    - `docs/local-development.md`
-2. 优先新增后端集成测试文件，例如 `backend/internal/api/e2e_core_flow_test.go`，复用现有 test router/helper。测试应串联真实路由、真实 DB metadata、真实 MinIO/storage 测试替身或现有 upload helper、真实 task/event/history/usage/audit 查询；Provider/AI 调用必须 fake。
-3. 如单个后端测试难以跨包驱动 Worker，可在 `backend/internal/task/e2e_core_flow_test.go` 补 Worker fake execution 测试，并在 API 层测试验证创建、history、SSE replay、资产、usage/log reads 合同。不要为测试方便改生产代码。
-4. 可新增一个轻量脚本 `scripts/e2e-core-flow.sh`，作为 operator 本地验证入口。脚本只能编排已有测试命令或可选检查共享本地服务连通性；不得写死本机真实密码，不得启动新 MySQL/Redis/MinIO，不得清空共享服务。
-5. 如需要前端合同覆盖，可新增 `frontend/src/test/e2eCoreFlowContracts.test.tsx` 或扩展现有测试，验证 workbench/history/admin observability 对后端核心合同的串联假设，但不要重写 UI。
+2. 新增一个轻量安全回归脚本，推荐 `scripts/security-regression.sh`：
+   - 默认执行 focused backend security tests。
+   - 默认执行 focused frontend security tests 或全量 frontend tests 中安全相关文件。
+   - 执行 frontend production-code forbidden-pattern scans。
+   - 执行 backend sensitive marker scans，重点检查非测试代码。
+   - 执行 `docker compose -f deploy/docker-compose.yml config` 和 `git diff --check main...HEAD`。
+   - 支持 `--help`，输出命令说明，不打印任何 secret 值。
+3. 补齐缺口测试时优先新增或扩展测试文件，不改生产代码。重点补：
+   - P15 core-flow 后新增一组同一 flow 下的跨租户或低权限负向断言，至少覆盖 asset download、project history、usage/log reads 中两个资源类型。
+   - 如已有测试已覆盖，允许只新增脚本和最终映射，但最终交付必须把场景映射到真实测试名。
+4. forbidden-pattern scans 建议按范围拆分：
+   - frontend production files：禁止 `setInterval` polling、AI Provider direct strings、relay paths、Provider key storage、browser sensitive storage。
+   - backend production files：禁止完整 Authorization/Cookie/JWT/base64/object key logging patterns，允许安全 redaction utilities 和 tests 中的 marker 字符串。
+   - deploy config：确认 frontend 只代理 `/api/` 到 backend，不代理 AI Provider。
+5. 不要把本任务变成大规模安全重构；如发现问题，输出明确 failure 和复现命令，由主 agent 决定是否拆修复任务。
 
 验收命令：
 ```bash
 cd backend
-go test ./internal/api ./internal/task ./internal/sse ./internal/audit -count=1
+go test ./internal/api ./internal/provider ./internal/provideradapter ./internal/sse ./internal/task ./internal/audit -count=1
 go test ./...
 go test -race ./...
 go vet ./...
@@ -282,7 +299,8 @@ docker compose -f deploy/docker-compose.yml config
 git diff --check main...HEAD
 
 # 如新增脚本：
-bash scripts/e2e-core-flow.sh --help
+bash scripts/security-regression.sh --help
+bash scripts/security-regression.sh
 ```
 
 最终交付必须包含：
@@ -291,26 +309,29 @@ bash scripts/e2e-core-flow.sh --help
 - 每个 failure mode 对应的测试文件/测试名映射。
 - 安全自查结果，明确没有真实 AI Provider 调用、Provider Key 存储、task polling、localStorage/sessionStorage/IndexedDB 敏感数据、Authorization/Cookie/JWT/base64/object key 暴露。
 - 刻意未修改范围。
-- 如使用共享本地服务，说明创建/修改/清理了哪些 `codex_p15_e2e_*` 测试数据。
+- forbidden-pattern scan 命中项说明：哪些是生产违规、哪些是测试断言或 redaction helper 的允许命中。
+- 如使用共享本地服务，说明创建/修改/清理了哪些 `codex_p15_security_*` 测试数据；默认优先不依赖共享服务。
 - 如发现公共合同缺口，只报告给主 agent，不修改 docs。
 ```
 
 ### 允许修改文件
 
-- `backend/internal/api/*core_flow*_test.go`
-- `backend/internal/task/*core_flow*_test.go`
-- `backend/internal/sse/*core_flow*_test.go`
-- `backend/internal/audit/*core_flow*_test.go`
-- `frontend/src/test/*coreFlow*.test.tsx`
-- `scripts/e2e-core-flow.sh`
-- 为复用现有测试 helper，可小范围修改现有 `*_test.go`；不得改生产代码。
+- `backend/internal/api/*_test.go`
+- `backend/internal/provider/*_test.go`
+- `backend/internal/provideradapter/*_test.go`
+- `backend/internal/sse/*_test.go`
+- `backend/internal/task/*_test.go`
+- `backend/internal/audit/*_test.go`
+- `frontend/src/test/*.test.ts`
+- `frontend/src/test/*.test.tsx`
+- `scripts/security-regression.sh`
 
 ### 禁止修改文件
 
 - `docs/**`
 - `AGENTS.md`
 - `agent-instructions/**`
-- `backend/internal/**` 非测试生产文件，除非发现测试无法表达真实合同且先停止报告；默认不改
+- `backend/internal/**` 非测试生产文件，除非发现真实安全缺陷且先停止报告；默认不改
 - `frontend/src/**` 非测试生产文件
 - `deploy/**`
 - `frontend/src/lib/taskSseClient.ts`
@@ -318,77 +339,77 @@ bash scripts/e2e-core-flow.sh --help
 
 ### 具体开发内容
 
-1. 建立 P15 核心流转测试入口，优先为后端 API/Worker/SSE/audit 增加端到端或准端到端测试。
-2. 测试中创建命名空间化租户、管理员、Provider、模型、项目、参考图资产、任务和输出资产。
-3. 使用 fake Provider/Worker 执行路径产生输出图片、usage record、API call log 和 task events；不得访问外部网络。
-4. 验证 SSE 或 task event replay 的 Last-Event-ID/历史补发关键行为能覆盖该任务。
-5. 验证项目 history、资产 detail/download、usage summary/records、operation logs、API call logs 均只返回当前 tenant 数据并保持脱敏。
-6. 若新增脚本，只做验证编排，不写业务逻辑，不保存 secrets，不创建额外服务。
+1. 新增 `scripts/security-regression.sh`，提供 `--help` 和默认执行路径。
+2. 梳理现有安全测试，确定脚本覆盖的 focused backend/frontend test files。
+3. 补齐缺口测试，优先覆盖 P15 core-flow 下跨租户/低权限负向读取和敏感响应排除。
+4. 增加或固化 frontend/backend/deploy forbidden-pattern scans。
+5. 保持脚本可在普通开发机执行，失败时输出失败命令，不打印 secret 值。
 
 ### 必须保持的现有行为
 
 - 现有单元、集成和前端测试不回归。
-- 生产代码行为不因测试任务改变。
+- 生产代码行为不因本任务改变。
 - 任务状态仍通过 SSE/事件历史验证，不引入 polling。
-- Provider key、auth cookie、CSRF、JWT、object_key、bucket、image bytes 仍不进入日志、快照或前端可见状态。
+- Provider key、auth cookie、CSRF、JWT、object_key、bucket、image bytes 仍不进入日志、快照、脚本输出或前端可见状态。
 - Docker Compose 配置不被本任务改动。
 
 ### 允许的中间态
 
-- 本任务可以先以自动化测试和验证脚本覆盖核心合同，不要求启动完整真实外部 AI。
-- 如某些真实浏览器交互无法稳定自动化，可先用前端组件合同测试加后端 API/Worker 集成测试组合覆盖，但必须说明缺口。
-- 允许使用共享本地服务做额外手工验证，但自动化测试不得依赖本机私密凭据。
+- 安全回归脚本可以先编排 focused tests 和 scans，不要求启动完整 Compose runtime。
+- 部分已有安全场景可通过映射既有测试名完成，不必重复写测试。
+- 允许新增少量测试 helper，但不能改生产路径来方便测试。
 
 ### 禁止的半迁移状态
 
-- 只新增脚本但没有任何自动化断言。
-- 测试绕过权限、租户过滤、上传校验或 Worker/任务状态机，导致无法证明真实合同。
-- 用真实 Provider Key 或外部 AI 调用“验证成功”。
-- 通过改生产代码来适配测试，但没有产品需求或合同依据。
-- 留下不可清理的本地服务数据、Redis 队列消息或 MinIO 对象。
+- 只新增脚本但脚本没有运行任何真实测试或扫描。
+- 脚本扫描范围只扫测试文件，漏掉生产前端/后端代码。
+- 将测试 marker 字符串误报为生产安全失败却没有说明。
+- 为了让测试通过而放松认证、租户过滤、RBAC、上传校验、SSRF、SSE 或 redaction 行为。
+- 使用真实 Provider Key、真实外部 AI 调用或真实 object storage 直链完成验证。
 
 ### 失败模式与边界场景
 
 | 场景 | 预期行为 | 必须覆盖 |
 | --- | --- | --- |
 | 未登录访问核心接口 | 返回 401，不创建业务数据 | 是 |
-| 无权限或跨租户读取项目/资产/任务/history/usage/log | 返回 403/404，不泄露存在性 | 是 |
-| Provider API Key 创建后读取 | 只返回 hint/metadata，不返回完整 key | 是 |
-| 参考图上传 | 校验真实图片类型、大小和 metadata，禁止 SVG/base64 直存 | 是 |
-| 任务执行成功 | 产生 task events、output asset、usage record、API call log、operation log | 是 |
-| SSE replay / Last-Event-ID | 能补发历史事件或从事件历史验证等价合同 | 是 |
-| 输出资产下载 | 必须经后端鉴权，跨租户不可下载 | 是 |
-| usage/cost summary | 按 tenant 隔离，成本使用后端字符串，不重新计算 | 是 |
-| 敏感日志/响应 | 不包含 Provider Key、Authorization、Cookie、JWT、base64、bucket、object_key | 是 |
-| 测试失败清理 | 不留下无归属 Redis/MinIO/MySQL 测试数据 | 是 |
+| 无权限访问管理或项目资源 | 返回 403/404，不泄露敏感数据 | 是 |
+| 跨租户读取/写入项目、资产、任务、history、usage/log | 返回 404/空结果，不泄露存在性 | 是 |
+| Provider API Key 创建、测试、更新、读取 | 只返回 hint/metadata，日志和响应不含完整 key | 是 |
+| Provider base URL SSRF | localhost/private/link-local/Docker internal 被拒绝 | 是 |
+| 上传伪造文件/SVG/超限图片 | 被拒绝，不写 MinIO，不写成功 metadata | 是 |
+| Task/SSE replay | Last-Event-ID 补发正确，不用 polling，不跨租户 | 是 |
+| Worker/API metadata redaction | 不含 Authorization/Cookie/JWT/base64/b64_json/object_key/bucket/API key | 是 |
+| Frontend production forbidden patterns | 无 Provider direct calls、AI relay、Provider Key browser storage、task polling | 是 |
+| Deploy config | frontend 只代理 `/api/` 到 backend，不代理 AI Provider | 是 |
 
 ### 安全要求
 
-- 所有测试数据必须包含 tenant/project/task/asset 级别隔离，跨租户断言必须覆盖至少一个核心资源。
-- Provider/AI 调用必须 fake；测试替身返回的错误和 metadata 也要覆盖脱敏。
-- 任何脚本不得读取或打印真实 `.env` secrets；如需环境变量，只打印变量名是否存在，不打印值。
+- 所有新增测试必须使用测试替身或内存测试环境；不得调用真实 AI Provider。
+- Forbidden-pattern scan 必须覆盖生产前端文件，不得仅依赖测试。
+- 脚本必须 `set -euo pipefail`，失败时直接退出。
+- 脚本不得打印 `.env` 内容、cookie、JWT、Provider Key、MinIO secret、Redis/MySQL password。
 - 不得新增 browser storage、polling、Provider direct call、MinIO direct download 或 object key 暴露。
 
 ### 必须新增或更新的回归测试
 
-- 后端核心流转测试：覆盖 auth、Provider/model、project、asset upload/download、task create、fake Worker success、events/SSE replay/history、usage/log reads。
-- 跨租户/无权限负向测试：至少覆盖 project/history/asset download/usage 或 log 中的两个资源类型。
-- 敏感信息负向测试：响应与日志 payload 不含 Provider Key、Authorization、Cookie、JWT、image base64、bucket、object_key。
-- 如新增前端合同测试：覆盖 workbench/history/admin observability 对核心后端合同的调用顺序和 forbidden patterns。
+- `backend/internal/api/e2e_core_flow_test.go` 或相关 API 测试：补齐 P15 flow 级别的跨租户/低权限负向断言，至少覆盖两个资源类型。
+- 如缺口已由既有测试覆盖，必须在最终交付中列出真实测试名，不允许只写“已有覆盖”。
+- `scripts/security-regression.sh`：脚本自身通过 `--help` 和默认执行验证。
+- 如发现 frontend forbidden pattern 缺口，新增或更新相应 frontend test；否则用扫描证明无新增生产违规。
 
 ### 验收标准
 
-- 至少有一个可重复执行的核心流转自动化测试入口，且失败信息能定位阶段。
-- 测试证明核心 seller/admin flow 可以从认证走到资产、任务、事件、history、usage/cost 和 logs。
-- 无真实 AI Provider 调用，无敏感数据泄漏，无轮询，无浏览器 Provider Key 存储。
-- 现有前端、后端、Compose 配置验证全部通过。
+- 存在一个可重复执行的最终安全回归脚本或命令入口。
+- 失败模式表中的每一项都有测试名或扫描命令映射。
+- 跨租户/无权限负向场景在 P15 final security regression 中有明确覆盖。
+- 前端生产代码 forbidden-pattern scan、后端生产代码 sensitive-pattern scan、Compose config 检查均通过或有清晰允许项说明。
 - 未修改公共合同文档、Agent 规则、部署配置或无关生产代码。
 
 ### 测试命令
 
 ```bash
 cd backend
-go test ./internal/api ./internal/task ./internal/sse ./internal/audit -count=1
+go test ./internal/api ./internal/provider ./internal/provideradapter ./internal/sse ./internal/task ./internal/audit -count=1
 go test ./...
 go test -race ./...
 go vet ./...
@@ -405,8 +426,9 @@ cd ..
 docker compose -f deploy/docker-compose.yml config
 git diff --check main...HEAD
 
-if [ -f scripts/e2e-core-flow.sh ]; then
-  bash scripts/e2e-core-flow.sh --help
+if [ -f scripts/security-regression.sh ]; then
+  bash scripts/security-regression.sh --help
+  bash scripts/security-regression.sh
 fi
 ```
 
