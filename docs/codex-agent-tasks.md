@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION` 和 `P15-DEPLOY-RUNBOOK-FINAL` 已 review 并合并。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本和 operator runbook 均已落地，下一步由主 agent 直接执行 `R15`。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL` 和 `R15` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地。
 
 已完成的平台基础：
 
@@ -107,10 +107,10 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- 下一任务是 `R15`，由主 agent 直接执行最终 release-readiness review。
+- P15 已完成。下一任务需先由主 agent 根据用户确认的 post-R15 范围重新制定。
 - 缩略图策略、完整 orphan cleanup 和 log retention 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
-- 最终发布验证只剩 R15 release-readiness review 和文档落档。
+- 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
 ## 建议剩余阶段
 
@@ -200,7 +200,7 @@
 3. `P15-DEPLOY-RUNBOOK-FINAL`
    - 已完成并合并。Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化已落地。
 4. `R15`
-   - 下一个任务。由主 agent 直接执行最终发布就绪 review。
+   - 已完成。最终发布就绪 review 已通过。
 
 ## 最近已完成任务包：P15-SECURITY-FINAL-REGRESSION
 
@@ -481,6 +481,34 @@ cd ..
 docker compose -f deploy/docker-compose.yml config
 git diff --check
 ```
+
+### R15 实际结果
+
+- Review 范围：完整 P15 range `3db7980..HEAD`。
+- 总体结论：通过，未发现阻塞 release-readiness 问题。
+- 已通过验证：
+  - `bash scripts/security-regression.sh`
+  - `bash scripts/deploy-release-validation.sh`
+  - `bash scripts/deploy-release-validation.sh --up --down`
+  - `docker compose -f deploy/docker-compose.yml ps -a`
+  - `docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true`
+  - `cd backend && go test ./... && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker`
+  - `cd frontend && npm run lint && npm run type-check && npm run test && npm run build`
+  - `docker compose -f deploy/docker-compose.yml config`
+  - `git diff --check`
+- Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
+- 非阻塞遗留：`scripts/deploy-release-validation.sh --up --down` 可后续增加失败 cleanup trap；缩略图策略、完整 orphan cleanup、log retention、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog。
+
+## Post-R15 Backlog 候选
+
+这些不是当前自动创建分支的任务，需用户确认优先级后再由主 agent 生成下一批任务包：
+
+- `P16-BE-THUMBNAIL-POLICY`：明确缩略图生成或无缩略图策略，并让前端/后端展示一致。
+- `P16-BE-ORPHAN-CLEANUP`：补齐对象存储 orphan discovery、dry-run、执行和审计。
+- `P16-BE-LOG-RETENTION`：实现 operation/api/task/error 日志保留周期真实 consumer 后再暴露设置。
+- `P16-BE-PROVIDER-MODEL-SERIALIZATION`：强化 Provider/model 并发管理操作事务序列化。
+- `P16-BE-STORAGE-QUOTA-RESERVATION`：为高并发上传/Worker 输出增加严格 quota reservation 或 counter。
+- `P16-DEPLOY-SCRIPT-HARDENING`：给 deploy validation `--up --down` 增加失败 cleanup trap，并补充脚本级回归。
 
 ## 最近已完成任务包原始内容：P15-DEPLOY-RUNBOOK-FINAL
 

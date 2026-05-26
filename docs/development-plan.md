@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State During P15 Release Hardening
+## Current State After R15 Release Hardening
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -39,7 +39,7 @@ Phase status:
 | P12 | Complete | Seller workflow review completed. Frontend unified history, project/asset workflow polish, and backend project-member invariant hardening are merged and regressed. |
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
-| P15 | In progress | Core API/Worker/SSE/history/usage/log E2E coverage, final security regression, and deployment runbook validation are merged. R15 remains. |
+| P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -94,6 +94,8 @@ R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend 
 `P15-SECURITY-FINAL-REGRESSION` was reviewed and merged. The repository now has `scripts/security-regression.sh` as a focused final security regression entry point. It runs focused backend and frontend security tests, production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Docker Compose config validation, and whitespace checks. The P15 core-flow test was extended with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. Validation passed the security regression script, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: cross-tenant negative coverage remains mapped primarily to existing focused tests.
 
 `P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. The repository now includes `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh`. The deploy validation script supports `--help`, safe default validation, explicit `--up`, and cleanup through `--down`; it verifies Compose config, frontend `/api/` and SSE proxy safety, image builds, security regression, live health checks, frontend proxy health, and cleanup. Validation passed default deploy release validation, live `--up --down` Compose health/proxy checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. Non-blocking: the deploy script can later add a cleanup trap for failed `--up --down` runs.
+
+R15 reviewed the complete P15 range from `3db7980..HEAD` and found no blocking release-readiness issues. Validation passed `scripts/security-regression.sh`, `scripts/deploy-release-validation.sh`, live `scripts/deploy-release-validation.sh --up --down`, post-cleanup container/volume checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Docker Compose config, and whitespace checks. The live Compose run confirmed MySQL, Redis, MinIO, backend API, backend Worker, and frontend health; MinIO bootstrap completion; backend health endpoints; frontend `/api/` proxy health; SSE auth-boundary routing; and cleanup of project containers and volumes.
 
 ## Completed Platform Capabilities
 
@@ -244,9 +246,9 @@ Suggested order:
 3. `P15-DEPLOY-RUNBOOK-FINAL`
    - Completed and merged. Added the deployment release validation script and operator runbook, and verified Compose config/build/up/health/proxy/down cleanup.
 4. `R15`
-   - Next. Final release-readiness review.
+   - Completed. Final release-readiness review passed with no blocking issues.
 
-Parallelism: run `R15` directly on latest `main`; it depends on all P15 implementation slices being merged.
+Parallelism: P15 is complete. Future post-R15 work should start from latest `main` after the next scope is selected.
 
 ## Worktree Scheduling Policy
 
@@ -302,4 +304,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Run `R15` from latest `main`. The task should review the complete P15 range, verify release-readiness gates, confirm no project Compose containers or volumes remain after deployment checks, and update public docs with the actual result.
+P15 release hardening is complete. The next branch should not be created until the next post-R15 scope is selected. Known non-blocking backlog candidates remain thumbnail policy, full orphan cleanup, log retention, stronger Provider/model transaction serialization, strict concurrent storage-quota reservation/counters, and optional deploy-script failure cleanup trap.

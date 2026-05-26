@@ -285,3 +285,9 @@ Live Compose validation confirmed:
 Non-blocking note:
 
 - The deploy validation script can later add a cleanup trap so a failed `--up --down` run still attempts automatic Compose cleanup.
+
+## R15 deployment readiness result
+
+Validation date: 2026-05-26.
+
+R15 re-ran the deployment readiness gates on latest `main` after all P15 slices were merged. `scripts/deploy-release-validation.sh`, live `scripts/deploy-release-validation.sh --up --down`, full frontend and backend regression, Docker Compose config, and whitespace checks all passed. Follow-up checks confirmed no `amazon-ai-product-image-studio` Compose containers or volumes remained after cleanup.
