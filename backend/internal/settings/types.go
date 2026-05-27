@@ -13,6 +13,7 @@ const (
 	KeyTaskConcurrency  = "task_concurrency"
 	KeyStorageRetention = "storage_retention"
 	KeyStorageQuota     = "storage_quota"
+	KeyLogRetention     = "log_retention"
 
 	PermissionManage = "system:settings:manage"
 
@@ -25,6 +26,7 @@ var (
 	ErrStoredTaskConcurrencyInvalid  = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
 	ErrStoredStorageRetentionInvalid = fmt.Errorf("%w: invalid stored storage retention", ErrValidation)
 	ErrStoredStorageQuotaInvalid     = fmt.Errorf("%w: invalid stored storage quota", ErrValidation)
+	ErrStoredLogRetentionInvalid     = fmt.Errorf("%w: invalid stored log retention", ErrValidation)
 	ErrStorageQuotaExceeded          = errors.New("storage quota exceeded")
 	ErrForbidden                     = errors.New("system settings access forbidden")
 )
@@ -35,6 +37,7 @@ type Response struct {
 	TaskConcurrency  TaskConcurrency  `json:"taskConcurrency"`
 	StorageRetention StorageRetention `json:"storageRetention"`
 	StorageQuota     StorageQuota     `json:"storageQuota"`
+	LogRetention     LogRetention     `json:"logRetention"`
 }
 
 type UploadPolicy struct {
@@ -96,6 +99,24 @@ type StorageQuotaPatch struct {
 	HasMaxBytes   bool
 }
 
+type LogRetention struct {
+	OperationLogRetentionDays *int `json:"operationLogRetentionDays"`
+	APICallLogRetentionDays   *int `json:"apiCallLogRetentionDays"`
+	TaskEventRetentionDays    *int `json:"taskEventRetentionDays"`
+}
+
+type LogRetentionPatch struct {
+	OperationLogRetentionDays      *int64
+	ClearOperationLogRetentionDays bool
+	HasOperationLogRetentionDays   bool
+	APICallLogRetentionDays        *int64
+	ClearAPICallLogRetentionDays   bool
+	HasAPICallLogRetentionDays     bool
+	TaskEventRetentionDays         *int64
+	ClearTaskEventRetentionDays    bool
+	HasTaskEventRetentionDays      bool
+}
+
 type EnabledStorageRetention struct {
 	TenantID                  string
 	DeletedAssetRetentionDays int
@@ -106,12 +127,25 @@ type InvalidStorageRetention struct {
 	Err      error
 }
 
+type EnabledLogRetention struct {
+	TenantID                  string
+	OperationLogRetentionDays *int
+	APICallLogRetentionDays   *int
+	TaskEventRetentionDays    *int
+}
+
+type InvalidLogRetention struct {
+	TenantID string
+	Err      error
+}
+
 type PatchRequest struct {
 	UploadPolicy     *UploadPolicyPatch
 	TaskDefaults     *TaskDefaultsPatch
 	TaskConcurrency  *TaskConcurrencyPatch
 	StorageRetention *StorageRetentionPatch
 	StorageQuota     *StorageQuotaPatch
+	LogRetention     *LogRetentionPatch
 }
 
 func uploadPolicyFromConfig(upload config.UploadConfig) UploadPolicy {

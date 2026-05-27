@@ -48,6 +48,45 @@ func TestLoadStorageRetentionUsesNullableTenantScopedValue(t *testing.T) {
 	}
 }
 
+func TestLoadLogRetentionUsesNullableTenantScopedValue(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-b", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-b", KeyLogRetention, `{"operationLogRetentionDays":30,"apiCallLogRetentionDays":null,"taskEventRetentionDays":7}`, now)
+
+	tenantA, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant A scope: %v", err)
+	}
+	retention, err := LoadLogRetention(context.Background(), repo, tenantA)
+	if err != nil {
+		t.Fatalf("load tenant A log retention: %v", err)
+	}
+	if retention.OperationLogRetentionDays != nil || retention.APICallLogRetentionDays != nil || retention.TaskEventRetentionDays != nil {
+		t.Fatalf("tenant A log retention = %#v, want nil fallback", retention)
+	}
+
+	tenantB, err := tenant.NewScope("tenant-b")
+	if err != nil {
+		t.Fatalf("tenant B scope: %v", err)
+	}
+	retention, err = LoadLogRetention(context.Background(), repo, tenantB)
+	if err != nil {
+		t.Fatalf("load tenant B log retention: %v", err)
+	}
+	if retention.OperationLogRetentionDays == nil || *retention.OperationLogRetentionDays != 30 {
+		t.Fatalf("tenant B operationLogRetentionDays = %#v, want 30", retention.OperationLogRetentionDays)
+	}
+	if retention.APICallLogRetentionDays != nil {
+		t.Fatalf("tenant B apiCallLogRetentionDays = %#v, want nil", retention.APICallLogRetentionDays)
+	}
+	if retention.TaskEventRetentionDays == nil || *retention.TaskEventRetentionDays != 7 {
+		t.Fatalf("tenant B taskEventRetentionDays = %#v, want 7", retention.TaskEventRetentionDays)
+	}
+}
+
 func TestLoadStorageQuotaNullableUsageAndTenantIsolation(t *testing.T) {
 	db := newSettingsTestDB(t)
 	repo := NewRepository(db)
@@ -240,6 +279,40 @@ func TestLoadStorageRetentionRejectsMalformedStoredValues(t *testing.T) {
 	}
 }
 
+func TestLoadLogRetentionRejectsMalformedStoredValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		valueJSON string
+	}{
+		{name: "invalid json", valueJSON: `{`},
+		{name: "unknown field", valueJSON: `{"operationLogRetentionDays":30,"storageQuotaBytes":1}`},
+		{name: "operation zero", valueJSON: `{"operationLogRetentionDays":0,"apiCallLogRetentionDays":null,"taskEventRetentionDays":null}`},
+		{name: "api negative", valueJSON: `{"operationLogRetentionDays":null,"apiCallLogRetentionDays":-1,"taskEventRetentionDays":null}`},
+		{name: "task over range", valueJSON: `{"operationLogRetentionDays":null,"apiCallLogRetentionDays":null,"taskEventRetentionDays":3651}`},
+		{name: "string", valueJSON: `{"operationLogRetentionDays":"30","apiCallLogRetentionDays":null,"taskEventRetentionDays":null}`},
+		{name: "float", valueJSON: `{"operationLogRetentionDays":1.5,"apiCallLogRetentionDays":null,"taskEventRetentionDays":null}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newSettingsTestDB(t)
+			repo := NewRepository(db)
+			now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+			seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+			seedSettingsRow(t, db, "tenant-a", KeyLogRetention, tc.valueJSON, now)
+			scope, err := tenant.NewScope("tenant-a")
+			if err != nil {
+				t.Fatalf("tenant scope: %v", err)
+			}
+
+			_, err = LoadLogRetention(context.Background(), repo, scope)
+			if !errors.Is(err, ErrStoredLogRetentionInvalid) {
+				t.Fatalf("LoadLogRetention error = %v, want ErrStoredLogRetentionInvalid", err)
+			}
+		})
+	}
+}
+
 func TestLoadEnabledStorageRetentionsSkipsNullInvalidAndInactiveTenants(t *testing.T) {
 	db := newSettingsTestDB(t)
 	repo := NewRepository(db)
@@ -259,6 +332,40 @@ func TestLoadEnabledStorageRetentionsSkipsNullInvalidAndInactiveTenants(t *testi
 	}
 	if len(enabled) != 1 || enabled[0].TenantID != "tenant-valid" || enabled[0].DeletedAssetRetentionDays != 7 {
 		t.Fatalf("enabled retentions = %#v, want tenant-valid days=7", enabled)
+	}
+	if len(invalid) != 1 || invalid[0].TenantID != "tenant-invalid" {
+		t.Fatalf("invalid retentions = %#v, want tenant-invalid only", invalid)
+	}
+}
+
+func TestLoadEnabledLogRetentionsSkipsNullInvalidAndInactiveTenants(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-valid", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-null", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-invalid", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-inactive", "DISABLED", now)
+	seedSettingsRow(t, db, "tenant-valid", KeyLogRetention, `{"operationLogRetentionDays":7,"apiCallLogRetentionDays":null,"taskEventRetentionDays":3}`, now)
+	seedSettingsRow(t, db, "tenant-null", KeyLogRetention, `{"operationLogRetentionDays":null,"apiCallLogRetentionDays":null,"taskEventRetentionDays":null}`, now)
+	seedSettingsRow(t, db, "tenant-invalid", KeyLogRetention, `{"operationLogRetentionDays":0,"apiCallLogRetentionDays":null,"taskEventRetentionDays":null}`, now)
+	seedSettingsRow(t, db, "tenant-inactive", KeyLogRetention, `{"operationLogRetentionDays":1,"apiCallLogRetentionDays":1,"taskEventRetentionDays":1}`, now)
+
+	enabled, invalid, err := LoadEnabledLogRetentions(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadEnabledLogRetentions returned error: %v", err)
+	}
+	if len(enabled) != 1 || enabled[0].TenantID != "tenant-valid" {
+		t.Fatalf("enabled retentions = %#v, want tenant-valid only", enabled)
+	}
+	if enabled[0].OperationLogRetentionDays == nil || *enabled[0].OperationLogRetentionDays != 7 {
+		t.Fatalf("operation days = %#v, want 7", enabled[0].OperationLogRetentionDays)
+	}
+	if enabled[0].APICallLogRetentionDays != nil {
+		t.Fatalf("api call days = %#v, want nil", enabled[0].APICallLogRetentionDays)
+	}
+	if enabled[0].TaskEventRetentionDays == nil || *enabled[0].TaskEventRetentionDays != 3 {
+		t.Fatalf("task event days = %#v, want 3", enabled[0].TaskEventRetentionDays)
 	}
 	if len(invalid) != 1 || invalid[0].TenantID != "tenant-invalid" {
 		t.Fatalf("invalid retentions = %#v, want tenant-invalid only", invalid)
