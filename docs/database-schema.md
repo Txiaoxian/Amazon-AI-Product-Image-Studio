@@ -83,7 +83,7 @@ P13 storage cleanup foundation status:
 - `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds nullable physical purge marker `purged_at` and index `(tenant_id, deleted_at, purged_at)`.
 - Physical cleanup queries must include `tenant_id`, `deleted_at IS NOT NULL`, `deleted_at < cutoff`, and `purged_at IS NULL`.
 - `purged_at` records object cleanup completion only. It must not replace `deleted_at`, and cleanup must not hard-delete `image_assets` rows.
-- Next task should align the GORM `ImageAsset` model with the `purged_at` column if the merged cleanup foundation has not already done so.
+- `thumbnail_object_key` is reserved for backend-generated MinIO thumbnail objects. P16 thumbnail policy should make it active for new reference uploads and Worker outputs; MySQL still stores only metadata/object keys, not image bytes.
 
 ### prompt_templates
 
@@ -211,12 +211,12 @@ Implementation notes:
 - `storage_quota.maxBytes = null` means storage quota enforcement is disabled for the tenant. A positive integer means new reference uploads and generated/edited output assets must fit within the tenant quota before successful asset metadata is created.
 - `storageQuota.usedBytes` is a computed API field, not stored in `system_settings`. It must be calculated from tenant-scoped `image_assets.size_bytes` where `purged_at IS NULL`; soft-deleted but not yet purged assets still count because their MinIO objects still exist.
 - Malformed or unsupported `storage_quota` values must fail closed for new asset writes: reject the write with a sanitized error and do not create successful asset/task-output side effects.
-- `log_retention` is contracted for `P16-BE-LOG-RETENTION` only with a Worker runtime consumer. Its bounded JSON fields are nullable `operationLogRetentionDays`, `apiCallLogRetentionDays`, and `taskEventRetentionDays`.
+- `log_retention` is active after `P16-BE-LOG-RETENTION` because it has a Worker runtime consumer. Its bounded JSON fields are nullable `operationLogRetentionDays`, `apiCallLogRetentionDays`, and `taskEventRetentionDays`.
 - `log_retention.* = null` means automatic cleanup for that database-backed log category is disabled. A positive integer means Worker computes `cutoff = now - days` and deletes tenant-scoped rows older than the cutoff in bounded batches.
 - `taskEventRetentionDays` cleanup must only delete events for terminal tasks older than the cutoff. It must not delete events for queued, running, cancelling, or retryable tasks because `task_events` is the SSE replay source.
 - Log retention applies only to existing database-backed logs: `operation_logs`, `api_call_logs`, and `task_events`. It does not manage container stdout/stderr, external log aggregation, or MinIO object cleanup.
 - Malformed or unsupported `log_retention` values must fail closed for Worker cleanup: skip deletion for that tenant and log sanitized metadata only.
-- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption. `P13-BE-STORAGE-RETENTION-RUNTIME` merged `storage_retention` read/write and Worker maintenance consumption. `P13-BE-STORAGE-QUOTA-ACCOUNTING` merged `storage_quota` read/write, computed usage, and asset-write consumers. `log_retention` is frozen for `P16-BE-LOG-RETENTION` and is not active until its Worker cleanup consumer ships.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption. `P13-BE-STORAGE-RETENTION-RUNTIME` merged `storage_retention` read/write and Worker maintenance consumption. `P13-BE-STORAGE-QUOTA-ACCOUNTING` merged `storage_quota` read/write, computed usage, and asset-write consumers. `P16-BE-LOG-RETENTION` merged `log_retention` read/write and Worker maintenance cleanup.
 
 ## Indexing expectations
 

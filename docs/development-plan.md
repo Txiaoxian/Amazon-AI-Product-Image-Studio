@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After R15 Release Hardening
+## Current State After P16 Log Retention
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -40,7 +40,7 @@ Phase status:
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
-| P16 | In Progress | Deployment script failure cleanup is complete; runtime log retention and thumbnail policy remain. |
+| P16 | In Progress | Deployment script failure cleanup and runtime database log retention are complete; thumbnail policy remains. |
 | P17 | Planned | Long-running storage and observability operations: orphan cleanup, strict storage quota reservation, and production diagnostics. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
@@ -99,6 +99,8 @@ R14 reviewed the complete P14 range from `5585d99..HEAD` after merging frontend 
 `P15-DEPLOY-RUNBOOK-FINAL` was reviewed and merged. The repository now includes `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh`. The deploy validation script supports `--help`, safe default validation, explicit `--up`, and cleanup through `--down`; it verifies Compose config, frontend `/api/` and SSE proxy safety, image builds, security regression, live health checks, frontend proxy health, and cleanup. Validation passed default deploy release validation, live `--up --down` Compose health/proxy checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Compose config, and whitespace checks. P16 later added the cleanup trap for failed or interrupted `--up --down` runs.
 
 R15 reviewed the complete P15 range from `3db7980..HEAD` and found no blocking release-readiness issues. Validation passed `scripts/security-regression.sh`, `scripts/deploy-release-validation.sh`, live `scripts/deploy-release-validation.sh --up --down`, post-cleanup container/volume checks, full backend tests/race/vet/build, full frontend lint/type-check/test/build, Docker Compose config, and whitespace checks. The live Compose run confirmed MySQL, Redis, MinIO, backend API, backend Worker, and frontend health; MinIO bootstrap completion; backend health endpoints; frontend `/api/` proxy health; SSE auth-boundary routing; and cleanup of project containers and volumes.
+
+`P16-BE-LOG-RETENTION` was reviewed, fixed, and merged. Backend `logRetention` is now runtime-backed: the admin system-settings API can read/write nullable retention days for `operation_logs`, `api_call_logs`, and `task_events`, and the Worker maintenance loop consumes those settings per active tenant. Cleanup is batch-limited, tenant-scoped, fail-closed for malformed settings, preserves non-terminal task events for SSE/recovery, and records sanitized aggregate cleanup audit metadata. Validation passed focused settings/API/Worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
 ## Completed Platform Capabilities
 
@@ -266,13 +268,14 @@ Suggested order:
 2. `P16-BE-LOG-RETENTION`
    - Implement a real backend/Worker consumer for operation/API/task/error log retention before exposing retention as writable runtime state.
    - Cleanup must be tenant-safe where applicable, batch-limited, auditable, and sensitive-log safe.
+   - Completed and merged. The implemented scope is existing database-backed logs only: `operation_logs`, `api_call_logs`, and terminal-task `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities.
 3. `P16-BE-THUMBNAIL-POLICY`
    - Decide and implement the production thumbnail policy.
    - Preferred target: generate MinIO thumbnail objects for uploaded references and Worker outputs, store only metadata/object keys in MySQL, and make frontend asset/history views use authorized thumbnail access.
 4. `R16`
    - Review production launch hardening as a batch before moving into long-running storage operations.
 
-Parallelism: start P16 serially with `P16-DEPLOY-SCRIPT-HARDENING`. `P16-BE-LOG-RETENTION` and `P16-BE-THUMBNAIL-POLICY` should not run in parallel until their database/storage contract impacts are clear.
+Parallelism: P16 remains serial. `P16-BE-THUMBNAIL-POLICY` should start from latest `main` after `P16-BE-LOG-RETENTION` is merged.
 
 ### P17: Storage Governance And Observability
 
@@ -292,7 +295,7 @@ Suggested order:
 4. `R17`
    - Review storage governance and observability behavior before final Provider/admin consistency work.
 
-Parallelism: `P17-BE-ORPHAN-CLEANUP` and `P17-BE-OBSERVABILITY-METRICS` can be considered for limited parallel work only after `P16-BE-LOG-RETENTION` contracts are merged. Quota reservation should be serial because it touches write paths.
+Parallelism: `P17-BE-ORPHAN-CLEANUP` and `P17-BE-OBSERVABILITY-METRICS` can be considered for limited parallel work only after P16 is reviewed. Quota reservation should be serial because it touches write paths.
 
 ### P18: Production Confidence And Go/No-Go
 
@@ -367,6 +370,6 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P16-BE-LOG-RETENTION` from latest `main`. `P16-DEPLOY-SCRIPT-HARDENING` is merged and verified. The next launch-hardening risk is unbounded database-backed log growth, so the next task must add a real Worker runtime consumer before `logRetention` becomes active writable system settings.
+Start `P16-BE-THUMBNAIL-POLICY` from latest `main`. `P16-DEPLOY-SCRIPT-HARDENING` and `P16-BE-LOG-RETENTION` are merged and verified. The next launch-hardening risk is the current placeholder thumbnail contract: asset responses expose `thumbnailUrl`, cleanup handles `thumbnail_object_key`, and the schema stores `thumbnail_object_key`, but new uploads and Worker outputs still do not generate thumbnail objects or authorized thumbnail URLs.
 
-The P16 log-retention contract is deliberately limited to existing database-backed logs: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities and must not be represented as an active backend setting in this task.
+The P16 thumbnail contract is deliberately limited to new reference uploads and Worker-created generated/edited outputs. It should generate bounded MinIO thumbnail objects, store only `thumbnail_object_key` metadata, and expose same-origin backend-authorized thumbnail access. It must not expose MinIO URLs, bucket names, object keys, image base64, or browser-side thumbnail generation as the platform source of truth. Backfill for existing assets and advanced orphan discovery remain later storage-governance work.

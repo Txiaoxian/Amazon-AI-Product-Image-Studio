@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current transition risks during P13 runtime settings work
+## Current Transition Risks After P16 Hardening
 
-The current `main` branch has completed P10 runtime hardening, P11 backend/frontend user-admin work, P12 seller workflow/history work through R12 review, and the P13 runtime-defaults, malformed-row hardening, task-concurrency, storage-cleanup-foundation, and storage-retention-runtime backend slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P15 release hardening plus P16 deployment-script cleanup and backend database-log retention. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -15,7 +15,7 @@ Remaining security and hardening risks:
 
 - Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, and failed lifecycle writes do not record successful operation logs. Same-Provider `model_name` uniqueness remains a deferred data-integrity decision.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, and `storageQuota` is backed by reference upload and Worker output persistence checks. `logRetention` is contracted for P16 only with a Worker cleanup consumer; it must remain hidden from frontend settings until that backend slice is merged and reviewed.
+- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, `storageQuota` is backed by reference upload and Worker output persistence checks, and `logRetention` is backed by Worker database-log cleanup. Frontend settings may expose only settings with merged backend consumers; it must not expose orphan cleanup, manual cleanup triggers, MinIO listing, or any field without a runtime consumer.
 
 Resolved transition item:
 
@@ -57,11 +57,13 @@ Resolved transition item:
 - P15 final security regression now provides `scripts/security-regression.sh` and extends the core-flow test with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. The script also runs focused security tests, frontend production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Compose config validation, and whitespace checks.
 - R15 release-readiness review re-ran the final security regression and deployment validation on latest `main`; no blocking security issues were found, and live Compose cleanup left no project containers or project volumes.
 - P16 deploy script hardening now adds scoped cleanup traps to `scripts/deploy-release-validation.sh --up --down`, including failure and SIGINT/SIGTERM paths. Validation confirmed no project Compose containers or volumes remain after live deployment checks.
+- P16 backend log retention now exposes `logRetention` only with a Worker runtime consumer. Cleanup is tenant-scoped, batch-limited, skips malformed settings fail-closed, preserves non-terminal task events for SSE/recovery, and records only sanitized aggregate audit metadata.
+- P16 thumbnail policy must keep thumbnail generation and access backend-owned. Thumbnail endpoints must authenticate and authorize the asset, stream through the backend, avoid public MinIO URLs, and never expose bucket names, object keys, image base64, Authorization, Cookie, JWT, or Provider secrets. Generated thumbnail bytes must be bounded and derived only from images that passed backend validation.
 - P13 storage quota accounting now exposes nullable `storageQuota.maxBytes` only with real backend consumers. `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata; upload and Worker output quota failures must not create successful metadata, output events, usage records, success logs, or leak object identifiers.
 
 Storage and P5 review hardening backlog:
 
-- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`, and must continue to hide log retention until the backend runtime consumer is merged and a frontend task explicitly adds it. It must also hide orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
+- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`; frontend `logRetention` controls remain a separate UI decision after the backend slice, and the UI must still hide orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
 - Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
 - Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.

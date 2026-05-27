@@ -156,6 +156,7 @@ Current P5 implementation status:
 - `POST /assets/{assetId}/favorite`
 - `DELETE /assets/{assetId}/favorite`
 - `GET /assets/{assetId}/download`
+- `GET /assets/{assetId}/thumbnail`: stream generated thumbnail image through backend authorization. The endpoint is available only when the asset has a stored `thumbnail_object_key`; it must not expose MinIO bucket names, object keys, signed URLs, or public object URLs.
 - `POST /assets/{assetId}/edit-source`: optional future convenience endpoint for preparing an asset as an edit reference. P8 does not require it; the backendized workbench should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
 
 Downloads must stream through backend authorization or use short-lived signed URLs created after authorization.
@@ -171,11 +172,13 @@ Asset payload rules for P5:
 - `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; it must not change `tenantId`, `projectId`, `objectKey`, or image dimensions.
 - `DELETE /assets/{assetId}` is soft delete.
 - `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
+- `GET /assets/{assetId}/thumbnail` must require the same tenant/object authorization envelope as asset reads. If no thumbnail exists, return a sanitized 404 and keep `thumbnailUrl` empty in list/detail/history payloads until thumbnail generation is available for that asset.
 - Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. P8 can backendize edit flows through task creation without adding `edit-source`.
 - Current P5 frontend implementation consumes project-scoped asset list/upload and asset detail/update/delete/favorite/download through the authenticated API client with `credentials: include`.
 - P5 frontend downloads use the backend download endpoint as a blob response; the browser must not talk to MinIO directly.
 - P5 frontend must not depend on `POST /assets/{assetId}/edit-source`; selecting an asset as a local reference is transition UI only until P8 backendization.
 - P8 workbench tasks should use project asset IDs directly in `referenceAssetIds` / `editSourceAssetId`; uploaded files must enter the backend asset library before they become durable task inputs.
+- P16 thumbnail policy target: new reference uploads and Worker-created generated/edited outputs should populate `thumbnailUrl` with a same-origin backend path such as `/api/v1/assets/{assetId}/thumbnail` only after a thumbnail object has been generated and `thumbnail_object_key` is stored. Existing assets without thumbnails may keep an empty `thumbnailUrl` until an explicit backfill task exists.
 
 ## Task APIs
 
@@ -472,5 +475,5 @@ The active runtime-backed settings slices are intentionally narrow:
   - The setting covers existing database-backed logs only: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities.
   - Malformed persisted `log_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
 - Orphan object listing and manual cleanup triggers remain deferred. They must not be returned as active writable settings until their runtime consumers exist.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`; backend `logRetention` read/write and Worker maintenance cleanup are merged in `P16-BE-LOG-RETENTION`.
 - Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`. It sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps deferred settings absent from UI and requests. Frontend `logRetention` controls are deferred until after the backend runtime consumer is merged and reviewed.

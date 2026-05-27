@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15` 和 `P16-DEPLOY-SCRIPT-HARDENING` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap 已合并并通过真实 Compose `--up --down` 验证。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING` 和 `P16-BE-LOG-RETENTION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap 已合并并通过真实 Compose `--up --down` 验证，数据库日志保留已接入 backend settings 与 Worker maintenance consumer。
 
 已完成的平台基础：
 
@@ -107,9 +107,9 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap，脚本级 fake-command 回归和真实 Compose `--up --down` 均已通过。
-- P16 下一切片：`P16-BE-LOG-RETENTION`。只允许在有 Worker runtime consumer 的前提下暴露 `logRetention`，且范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、`task_events`。
-- 缩略图策略和完整 orphan cleanup 仍需实现。
+- P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING` 和 `P16-BE-LOG-RETENTION`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`。
+- P16 下一切片：`P16-BE-THUMBNAIL-POLICY`。需要为新 reference upload 和 Worker 输出资产生成 MinIO thumbnail object，通过后端鉴权访问，不暴露 bucket/object key/MinIO URL。
+- 完整 orphan cleanup 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -498,7 +498,7 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
-- 非阻塞遗留：缩略图策略、完整 orphan cleanup、log retention、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 log retention 是当前 P16 下一任务。
+- 非阻塞遗留：缩略图策略、完整 orphan cleanup、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中缩略图策略是当前 P16 下一任务。
 
 ## 稳定生产上线路线图
 
@@ -516,6 +516,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 2. `P16-BE-LOG-RETENTION`
    - 实现 operation logs、api call logs、task events/error logs 的 retention runtime consumer。
    - 未接入真实 consumer 前不得暴露新的 active writable settings。
+   - 已完成并合并。
 3. `P16-BE-THUMBNAIL-POLICY`
    - 明确并落地缩略图策略，推荐生成 MinIO thumbnail object 并经后端鉴权访问。
 4. `R16`
@@ -543,7 +544,230 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P16-BE-LOG-RETENTION
+## 下一个任务包：P16-BE-THUMBNAIL-POLICY
+
+### 调度决策
+
+- 本任务串行执行，不与 orphan cleanup、quota reservation 或前端 UI 任务并行。
+- 理由：缩略图会进入资产上传、Worker 输出持久化、MinIO 对象生命周期、资产响应 URL 和 cleanup rollback；先稳定后端合同，再决定是否需要前端展示优化。
+- 本任务只处理新资产的缩略图生成与鉴权访问。既有资产 backfill、MinIO orphan discovery、手动 cleanup trigger 和缩略图字节 quota 计数不在本任务范围内。
+
+### 任务信息
+
+- 任务名称：`P16-BE-THUMBNAIL-POLICY`
+- 目标：为新 reference upload 和 Worker 生成/编辑输出资产生成 MinIO thumbnail object，保存 `thumbnail_object_key`，并通过后端鉴权 endpoint 提供 `thumbnailUrl`。
+- 推荐线程名：`P16-BE-THUMBNAIL-POLICY`
+- 推荐分支名：`codex/p16-backend-thumbnail-policy`
+- 起始分支：已合并 `P16-BE-LOG-RETENTION` 的最新 `main`
+- 前置依赖：P16 deployment script hardening 和 backend log retention 已合并；现有 `image_assets.thumbnail_object_key`、`MINIO_BUCKET_THUMBNAILS`、asset cleanup foundation、reference upload、Worker output persistence、storage quota accounting 均可复用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P16-BE-THUMBNAIL-POLICY`。
+
+你必须在分支 `codex/p16-backend-thumbnail-policy` 上工作；如果当前不在该分支，先执行 `git switch codex/p16-backend-thumbnail-policy`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P16-BE-LOG-RETENTION` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p16-backend-thumbnail-policy` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+为新创建的图片资产落地生产缩略图策略：
+- Reference upload 成功创建资产时，同步生成 bounded thumbnail，写入 MinIO thumbnails bucket，并把 `thumbnail_object_key` 写入 `image_assets.thumbnail_object_key`。
+- Worker 持久化 generated/edited 输出资产时，同步生成 bounded thumbnail，写入 MinIO thumbnails bucket，并把 `thumbnail_object_key` 写入资产 metadata。
+- 资产 list/detail/history/task output event 只在 `thumbnail_object_key` 存在时返回同源后端 `thumbnailUrl`，推荐路径 `/api/v1/assets/{assetId}/thumbnail`。
+- 新增 `GET /api/v1/assets/{assetId}/thumbnail`，必须经过登录、tenant、project/member/RBAC/object authorization，再从 thumbnails bucket stream 图片。
+- 不 backfill 既有资产；既有无缩略图资产保持 `thumbnailUrl=""` 或缺省空值。
+
+允许修改文件：
+- `backend/internal/asset/**`
+- `backend/internal/task/runtime_persistence.go`
+- `backend/internal/task/types.go`
+- `backend/internal/task/worker_test.go`
+- `backend/internal/api/asset_routes_test.go`
+- `backend/internal/api/task_history_routes_test.go`
+- `backend/internal/api/e2e_core_flow_test.go`
+- 必要时新增 backend-only 测试文件，例如 `backend/internal/asset/thumbnail_test.go`
+- 如确实需要共享缩略图 helper，可新增 `backend/internal/thumbnail/**`，但不要把业务授权逻辑放进去
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/RBAC 主流程、SSE handler、Redis queue、Worker claim/cancel 状态机、system settings、log retention runtime
+- 不新增 AI Provider 直连、Provider key 处理、前端轮询、浏览器存储、公共 MinIO URL 或 object-key 暴露
+
+前置阅读：
+- `docs/api-contract.md` 的 Asset APIs 与 thumbnail 合同
+- `docs/storage.md` 的 Thumbnail generation 与 MinIO 规则
+- `docs/security.md` 的 P16 thumbnail 安全要求
+- `backend/internal/asset/service.go`
+- `backend/internal/asset/types.go`
+- `backend/internal/asset/repository.go`
+- `backend/internal/asset/cleanup.go`
+- `backend/internal/task/runtime_persistence.go`
+- `backend/internal/task/types.go`
+- `backend/internal/api/asset_routes_test.go`
+- `backend/internal/api/task_history_routes_test.go`
+- `backend/internal/api/e2e_core_flow_test.go`
+- `backend/internal/storage/store.go`
+- `backend/internal/config/config.go`
+
+具体开发内容：
+1. 缩略图生成：
+   - 从已通过后端验证的 JPEG/PNG/WebP 原图 bytes 生成 JPEG 缩略图。
+   - 使用已存在依赖 `golang.org/x/image/draw` 进行缩放；除非确有必要，不新增第三方依赖。
+   - 保持长宽比，不放大小图；建议最大边长 `512`，输出 JPEG quality 建议 `85`。
+   - 输出大小必须有合理上限；如生成结果异常，返回 sanitized storage/upload/persistence error。
+   - 缩略图 object key 使用 deterministic backend key：`tenants/{tenantId}/projects/{projectId}/assets/{assetId}/thumb.jpg`。
+2. Reference upload 路径：
+   - `UploadAsset` 在写 metadata 前生成缩略图并上传到 thumbnails bucket。
+   - `image_assets.thumbnail_object_key` 必须写入。
+   - 如果 original upload、thumbnail upload 或 metadata transaction 任一失败，必须尽力 cleanup 已上传的 original 和 thumbnail object，不能留下成功 asset row 指向缺失对象。
+   - Storage quota 仍按现有 `size_bytes` 原图元数据 enforcement；本任务不改变 quota schema，不把 thumbnail bytes 加入 `usedBytes`。
+3. Worker output 路径：
+   - `persistSuccessfulResult` 为每个待持久化 output 生成 thumbnail object key 和 bytes。
+   - 成功资产 metadata 必须包含 `ThumbnailObjectKey`。
+   - `IMAGE_OUTPUT` 事件中的 `thumbnailUrl` 应在有缩略图时返回 `/api/v1/assets/{assetId}/thumbnail`。
+   - 如果 DB transaction 失败、任务状态已变化、输出已存在或只部分持久化，cleanup 必须同时覆盖 generated original bucket 和 thumbnails bucket 中未持久化对象。
+   - 不改变 Worker claim/cancel/retry/timeout 状态机。
+4. Thumbnail endpoint：
+   - 注册 `GET /assets/:assetId/thumbnail`。
+   - 复用 asset authorization；最低应满足 `asset:read` 与 project viewer 权限。不要要求更高权限导致列表缩略图不可用。
+   - 如果 asset 不存在、已删除、跨租户、无权限或无 thumbnail object，返回现有 sanitized error shape，不泄漏 object key/bucket/MinIO URL。
+   - Stream 内容类型为 `image/jpeg`；不要添加下载文件名也可以，但不得暴露原始 object key。
+5. 响应映射：
+   - `responseFromRecord` 只在 `ThumbnailObjectKey != nil && *ThumbnailObjectKey != ""` 时返回 thumbnail URL。
+   - 资产 list/detail、project history、task output event 应保持同一 URL 语义。
+   - `previewUrl` 继续指向 authorized download endpoint，不改变现有下载行为。
+
+安全要求：
+- 所有 thumbnail 对象写入、读取、删除都只能使用后端生成的 object key。
+- 不允许前端传入或修改 `thumbnail_object_key`。
+- 不允许把 thumbnail bucket、object key、MinIO endpoint、signed URL、image base64、Authorization、Cookie、JWT、Provider Key 写入响应、operation log、task event metadata 或错误消息。
+- Thumbnail endpoint 必须做登录、tenant、object/project authorization；不能只校验登录状态。
+- 禁止上传 SVG 的现有行为不能回归。
+- Cleanup log 只能记录 `asset_id` 和 sanitized `error_kind` 等非敏感字段。
+
+必须保持的现有行为：
+- Reference upload validation、quota enforcement、audit log、favorite/update/delete/download、project member/RBAC 行为不回归。
+- Worker output idempotency：重复 queue delivery 或已存在 output index 不能创建重复资产或重复缩略图 side effects。
+- Soft-delete 和 P13 physical cleanup 继续能删除 original 和 thumbnail object。
+- Frontend 不修改；现有 UI 通过返回的 `thumbnailUrl` 或 `previewUrl` 兼容显示。
+- No thumbnail 的既有资产仍可 detail/download/history，不应因为缺 thumbnail 变成不可用。
+
+允许的中间态：
+- 可以先实现 backend thumbnail generator/helper 和 asset upload，再接 Worker output。
+- 可以在本任务只对新资产生成缩略图，不做既有资产 backfill。
+- 可以保持 storage quota 只按原图 metadata 计数，但最终交付必须说明该边界。
+
+禁止的半迁移状态：
+- `thumbnailUrl` 返回非空，但 endpoint 不存在或不鉴权。
+- Metadata 写入 `thumbnail_object_key`，但 thumbnail object upload 失败后仍返回成功。
+- Worker 成功 task/output event 中给出 thumbnail URL，但 DB 或 MinIO 没有对应 thumbnail object。
+- Cleanup 只删 original，不删本任务新写入的 thumbnail。
+- 直接返回 MinIO URL、bucket、object key 或 public/signed URL 给浏览器。
+- 为了缩略图而修改前端、Provider Adapter、SSE replay、queue claim 或 system settings。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| 上传 JPEG/PNG/WebP reference | 创建 original + thumbnail + asset row，响应含 thumbnailUrl | 是 |
+| 上传小图 | 不放大，仍生成合法 JPEG thumbnail | 是 |
+| original upload 成功但 thumbnail upload 失败 | upload 失败，清理 original，无 asset row，无成功 audit | 是 |
+| thumbnail upload 成功但 metadata transaction 失败 | upload 失败，清理 original + thumbnail，无成功 asset row | 是 |
+| asset 无 thumbnail_object_key | detail/list/history 可用，thumbnailUrl 为空；thumbnail endpoint 404 | 是 |
+| 跨租户或无项目权限访问 thumbnail | 拒绝，不能泄漏对象存在性或 object key | 是 |
+| Worker generated output success | original + thumbnail + asset row + task_output + IMAGE_OUTPUT thumbnailUrl 一致 | 是 |
+| Worker output DB transaction 失败 | 清理 original + thumbnail，任务不进入错误成功态 | 是 |
+| 重复 output index 已存在 | 不创建重复 original/thumbnail/asset/output | 是 |
+| soft-deleted asset | thumbnail endpoint/download/detail 均不可访问，cleanup 后可删除 thumbnail | 是 |
+| storage cleanup thumbnail not found | 保持幂等成功或现有 not-found 语义 | 是 |
+
+必须新增或更新的回归测试：
+- `backend/internal/api/asset_routes_test.go`：reference upload 生成 thumbnail、响应 URL、thumbnail endpoint auth/object auth/no-leak、failure cleanup。
+- `backend/internal/task/worker_test.go` 或相关 task persistence 测试：Worker output 生成 thumbnail、event thumbnailUrl、失败 cleanup、重复 output idempotency。
+- `backend/internal/api/task_history_routes_test.go`：history 在有 thumbnail 时返回后端同源 thumbnailUrl，仍不泄漏 object key。
+- `backend/internal/asset/cleanup_test.go`：如当前 coverage 不足，补 thumbnail object cleanup/rollback 场景。
+- 如新增 helper，补 helper 单元测试覆盖 JPEG/PNG/WebP、小图不放大、输出 bounds。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/asset ./internal/api ./internal/task -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+如果你实际修改了 frontend、docs、deploy、scripts、Provider Adapter、SSE 或 queue claim/cancel 主流程，立即停止并报告；本任务默认禁止。
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- failure matrix 到具体测试文件/测试名的映射。
+- 安全自查结果，明确 thumbnail endpoint authorization、无 object key/bucket/MinIO URL 泄漏、无 Provider 直连、无前端轮询、无浏览器存储变更。
+- 刻意未修改范围，特别说明 existing asset backfill、orphan cleanup、manual cleanup trigger、thumbnail-byte quota accounting、frontend thumbnail polish 不在本任务内。
+- 如使用共享本地 MySQL/Redis/MinIO，说明创建/修改/清理了哪些 `codex_p16_thumbnail_*` 测试数据；默认优先使用自动化测试和内存/fake store。
+- 如发现公共合同缺口，只报告主 agent，不修改 docs。
+```
+
+### 允许修改文件
+
+- `backend/internal/asset/**`
+- `backend/internal/task/runtime_persistence.go`
+- `backend/internal/task/types.go`
+- `backend/internal/task/worker_test.go`
+- `backend/internal/api/asset_routes_test.go`
+- `backend/internal/api/task_history_routes_test.go`
+- `backend/internal/api/e2e_core_flow_test.go`
+- 必要时新增 `backend/internal/thumbnail/**` 或 backend-only 测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/RBAC 主流程、SSE handler、Redis queue、Worker claim/cancel 状态机、system settings、log retention runtime
+
+### 验收标准
+
+- 新 reference upload 和 Worker output 会生成 thumbnail object，并在成功资产 metadata 中保存 `thumbnail_object_key`。
+- `thumbnailUrl` 只返回同源后端鉴权 endpoint，不返回 MinIO URL、bucket 或 object key。
+- `GET /assets/{assetId}/thumbnail` 通过登录、tenant、project/member/RBAC/object authorization 后 stream JPEG thumbnail。
+- 失败 rollback 会清理本任务新写入的 original/thumbnail 对象；成功 cleanup foundation 仍能删除 thumbnail。
+- 既有无缩略图资产不回归，仍可 detail/download/history。
+- 现有 upload validation、quota、Worker idempotency、task output event、security regression 不回归。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/asset ./internal/api ./internal/task -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+## 最近已完成任务包：P16-BE-LOG-RETENTION
+
+本任务已合并到 `main`，保留在本文档中作为日志保留任务包审计记录。
 
 ### 调度决策
 

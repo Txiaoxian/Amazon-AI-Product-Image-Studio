@@ -116,7 +116,18 @@ Worker retries and duplicate queue delivery must not create duplicate output ass
 
 ## Thumbnail generation
 
-Reference uploads and generated outputs should create thumbnails. Thumbnail creation may run synchronously for small files or through a worker path later.
+Reference uploads and generated/edited Worker outputs should create thumbnails as part of the backend persistence path for new assets.
+
+P16 thumbnail policy target:
+
+- Generate bounded thumbnails from already validated image bytes on the backend.
+- Store thumbnail bytes in the configured thumbnails bucket, defaulting to `product-thumbnails`.
+- Store only `thumbnail_object_key` in MySQL. Do not store thumbnail blobs in MySQL.
+- Expose thumbnail access only through a same-origin backend-authorized endpoint such as `GET /api/v1/assets/{assetId}/thumbnail`.
+- Keep `thumbnailUrl` empty for assets that do not have `thumbnail_object_key`; do not expose MinIO bucket names, object keys, permanent public URLs, or browser-generated thumbnail data.
+- New reference uploads and new Worker outputs should either persist original object, thumbnail object, metadata, task output, and task event consistently or roll back uploaded objects. Do not create asset metadata that points at a missing thumbnail.
+- Existing assets without thumbnails are not backfilled in P16. Backfill and orphan discovery remain storage-governance work.
+- Thumbnail bytes are intentionally bounded operational overhead in this phase. Quota enforcement still uses the existing metadata source of truth until a later schema/counter task explicitly adds thumbnail-byte accounting.
 
 ## Deletion
 
