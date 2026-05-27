@@ -58,6 +58,9 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if stringField(t, uploadData, "previewUrl") != "/api/v1/assets/"+assetID+"/download" {
 		t.Fatalf("previewUrl = %q", stringField(t, uploadData, "previewUrl"))
 	}
+	if stringField(t, uploadData, "thumbnailUrl") != "/api/v1/assets/"+assetID+"/thumbnail" {
+		t.Fatalf("thumbnailUrl = %q", stringField(t, uploadData, "thumbnailUrl"))
+	}
 
 	var record database.ImageAsset
 	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, assetID).First(&record).Error; err != nil {
@@ -66,6 +69,10 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	expectedObjectKey := "tenants/" + adminSession.tenantID + "/projects/" + projectID + "/assets/" + assetID + "/original.png"
 	if record.ObjectKey != expectedObjectKey {
 		t.Fatalf("object key = %q, want %q", record.ObjectKey, expectedObjectKey)
+	}
+	expectedThumbnailKey := "tenants/" + adminSession.tenantID + "/projects/" + projectID + "/assets/" + assetID + "/thumbnail.jpg"
+	if record.ThumbnailObjectKey == nil || *record.ThumbnailObjectKey != expectedThumbnailKey {
+		t.Fatalf("thumbnail object key = %#v, want %q", record.ThumbnailObjectKey, expectedThumbnailKey)
 	}
 	if record.MimeType != "image/png" || record.SizeBytes != int64(len(imageBytes)) || record.Width != 2 || record.Height != 2 || record.SHA256 == "" {
 		t.Fatalf("stored metadata is incomplete: %#v", record)
@@ -76,6 +83,9 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if !store.has(config.DefaultStorageConfig().BucketOriginals, record.ObjectKey) {
 		t.Fatal("uploaded object was not written to object storage")
 	}
+	if !store.has(config.DefaultStorageConfig().BucketThumbnails, *record.ThumbnailObjectKey) {
+		t.Fatal("uploaded thumbnail was not written to thumbnails storage")
+	}
 
 	listResponse := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?kind=REFERENCE&category=reference&favorite=true&pageNum=1&pageSize=10", nil, editorSession.cookies, nil)
 	if listResponse.Code != http.StatusOK {
@@ -85,10 +95,17 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if total, ok := listData["total"].(float64); !ok || total != 1 {
 		t.Fatalf("asset list total = %#v, want 1", listData["total"])
 	}
+	listRecord := recordsField(t, listData)[0].(map[string]any)
+	if stringField(t, listRecord, "thumbnailUrl") != "/api/v1/assets/"+assetID+"/thumbnail" {
+		t.Fatalf("list thumbnailUrl = %q", stringField(t, listRecord, "thumbnailUrl"))
+	}
 
 	detailResponse := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID, nil, editorSession.cookies, nil)
 	if detailResponse.Code != http.StatusOK {
 		t.Fatalf("detail status = %d, want %d: %s", detailResponse.Code, http.StatusOK, detailResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, detailResponse), "thumbnailUrl") != "/api/v1/assets/"+assetID+"/thumbnail" {
+		t.Fatalf("detail thumbnailUrl = %q", stringField(t, decodeData(t, detailResponse), "thumbnailUrl"))
 	}
 
 	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/assets/"+assetID, map[string]any{
@@ -129,6 +146,16 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if !bytes.Equal(downloadResponse.Body.Bytes(), imageBytes) {
 		t.Fatal("downloaded bytes do not match uploaded object")
 	}
+	thumbnailResponse := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, editorSession.cookies, nil)
+	if thumbnailResponse.Code != http.StatusOK {
+		t.Fatalf("thumbnail status = %d, want %d: %s", thumbnailResponse.Code, http.StatusOK, thumbnailResponse.Body.String())
+	}
+	if thumbnailResponse.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("thumbnail content type = %q, want image/jpeg", thumbnailResponse.Header().Get("Content-Type"))
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(thumbnailResponse.Body.Bytes())); err != nil {
+		t.Fatalf("thumbnail body is not a JPEG: %v", err)
+	}
 
 	editorDeleteResponse := performJSON(router, http.MethodDelete, "/api/v1/assets/"+assetID, nil, editorSession.cookies, editorSession.csrfHeader())
 	if editorDeleteResponse.Code != http.StatusForbidden {
@@ -152,6 +179,10 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	deletedDownload := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/download", nil, adminSession.cookies, nil)
 	if deletedDownload.Code != http.StatusNotFound {
 		t.Fatalf("deleted download status = %d, want %d", deletedDownload.Code, http.StatusNotFound)
+	}
+	deletedThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, adminSession.cookies, nil)
+	if deletedThumbnail.Code != http.StatusNotFound {
+		t.Fatalf("deleted thumbnail status = %d, want %d", deletedThumbnail.Code, http.StatusNotFound)
 	}
 
 	assertAssetOperationLogs(t, db, []string{
@@ -217,8 +248,8 @@ func TestAssetUploadEnforcesTenantStorageQuotaAndDoesNotLeakObject(t *testing.T)
 	if success.Code != http.StatusCreated {
 		t.Fatalf("upload after clearing quota status = %d, want %d: %s", success.Code, http.StatusCreated, success.Body.String())
 	}
-	if store.count() != 1 {
-		t.Fatalf("upload after clearing quota stored objects = %d, want 1", store.count())
+	if store.count() != 2 {
+		t.Fatalf("upload after clearing quota stored objects = %d, want 2", store.count())
 	}
 }
 
@@ -240,6 +271,7 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	}{
 		{name: "detail", method: http.MethodGet, path: "/api/v1/assets/" + assetID},
 		{name: "download", method: http.MethodGet, path: "/api/v1/assets/" + assetID + "/download"},
+		{name: "thumbnail", method: http.MethodGet, path: "/api/v1/assets/" + assetID + "/thumbnail"},
 	} {
 		response := performJSON(router, tc.method, tc.path, tc.body, viewerSession.cookies, nil)
 		if response.Code != http.StatusOK {
@@ -271,6 +303,28 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	if nonMemberDetail.Code != http.StatusForbidden {
 		t.Fatalf("non-member detail status = %d, want %d", nonMemberDetail.Code, http.StatusForbidden)
 	}
+	nonMemberThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, nonMemberSession.cookies, nil)
+	if nonMemberThumbnail.Code != http.StatusForbidden {
+		t.Fatalf("non-member thumbnail status = %d, want %d", nonMemberThumbnail.Code, http.StatusForbidden)
+	}
+
+	seedActiveUser(t, db, adminSession.tenantID, "read-only-asset-user", "read-only-asset@example.com", "Read Only Asset", "read-only-asset-password-123")
+	assignRole(t, db, adminSession.tenantID, "read-only-asset-user", "viewer")
+	removeRolePermission(t, db, adminSession.tenantID, "viewer", "asset:download")
+	addMember(t, router, adminSession, projectID, "read-only-asset-user", project.RoleViewer)
+	readOnlySession := loginProjectRouteUser(t, router, adminSession.tenantID, "read-only-asset@example.com", "read-only-asset-password-123")
+	readOnlyDetail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID, nil, readOnlySession.cookies, nil)
+	if readOnlyDetail.Code != http.StatusOK {
+		t.Fatalf("read-only detail status = %d, want %d: %s", readOnlyDetail.Code, http.StatusOK, readOnlyDetail.Body.String())
+	}
+	readOnlyThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, readOnlySession.cookies, nil)
+	if readOnlyThumbnail.Code != http.StatusOK {
+		t.Fatalf("read-only thumbnail status = %d, want %d: %s", readOnlyThumbnail.Code, http.StatusOK, readOnlyThumbnail.Body.String())
+	}
+	readOnlyDownload := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/download", nil, readOnlySession.cookies, nil)
+	if readOnlyDownload.Code != http.StatusForbidden {
+		t.Fatalf("read-only download status = %d, want %d: %s", readOnlyDownload.Code, http.StatusForbidden, readOnlyDownload.Body.String())
+	}
 
 	seedOtherTenantProject(t, db)
 	now := time.Now().UTC()
@@ -294,6 +348,10 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	crossTenantResponse := performJSON(router, http.MethodGet, "/api/v1/assets/asset-tenant-b", nil, adminSession.cookies, nil)
 	if crossTenantResponse.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant asset status = %d, want %d", crossTenantResponse.Code, http.StatusNotFound)
+	}
+	crossTenantThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/asset-tenant-b/thumbnail", nil, adminSession.cookies, nil)
+	if crossTenantThumbnail.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant thumbnail status = %d, want %d", crossTenantThumbnail.Code, http.StatusNotFound)
 	}
 }
 
@@ -330,6 +388,7 @@ func TestAssetRoutesCrossTenantObjectActionsAreInvisibleAndSideEffectFree(t *tes
 	}{
 		{name: "detail", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b"},
 		{name: "download", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b/download"},
+		{name: "thumbnail", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b/thumbnail"},
 		{name: "update", method: http.MethodPatch, path: "/api/v1/assets/asset-tenant-b", body: map[string]string{"category": "stolen"}},
 		{name: "favorite", method: http.MethodPost, path: "/api/v1/assets/asset-tenant-b/favorite"},
 		{name: "unfavorite", method: http.MethodDelete, path: "/api/v1/assets/asset-tenant-b/favorite"},
@@ -393,6 +452,20 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 		}
 	})
 
+	t.Run("thumbnail storage failure deletes uploaded original and leaves no metadata", func(t *testing.T) {
+		router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+		store.failPutBucket = config.DefaultStorageConfig().BucketThumbnails
+		projectID := createAssetTestProject(t, router, adminSession, "Thumbnail Storage Failure Project")
+		response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "ok.png", "image/png", validPNG(t, 2, 2), nil, adminSession.cookies, adminSession.csrfHeader())
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("upload status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+		}
+		assertNoAssetRows(t, db, adminSession.tenantID)
+		if store.count() != 0 {
+			t.Fatalf("thumbnail storage failure left orphan objects: %#v", store.objects)
+		}
+	})
+
 	t.Run("database failure deletes uploaded object", func(t *testing.T) {
 		router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
 		projectID := createAssetTestProject(t, router, adminSession, "Database Failure Project")
@@ -452,8 +525,8 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 			t.Fatalf("upload status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
 		}
 		assertNoAssetRows(t, db, adminSession.tenantID)
-		if store.count() != 1 {
-			t.Fatalf("cleanup failure should leave the uploaded object for later recovery, got count %d", store.count())
+		if store.count() != 2 {
+			t.Fatalf("cleanup failure should leave uploaded objects for later recovery, got count %d", store.count())
 		}
 		body := response.Body.String()
 		for _, forbidden := range []string{"product-originals", "tenants/", "object_key", "objectKey", "ok.png", "base64", "data:image", "metadata insert failed", "remove failed"} {
@@ -478,7 +551,7 @@ func TestAssetUploadAcceptsAllowedImageTypesWithinPolicy(t *testing.T) {
 	}{
 		{name: "png", filename: "allowed.png", contentType: "image/png", body: validPNG(t, 2, 2), wantWidth: 2, wantHeight: 2},
 		{name: "jpeg", filename: "allowed.jpg", contentType: "image/jpeg", body: validJPEG(t, 3, 2), wantWidth: 3, wantHeight: 2},
-		{name: "webp", filename: "allowed.webp", contentType: "image/webp", body: validWebP(t), wantWidth: 1, wantHeight: 1},
+		{name: "webp", filename: "allowed.webp", contentType: "image/webp", body: validWebP(t), wantWidth: 75, wantHeight: 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", tc.filename, tc.contentType, tc.body, nil, adminSession.cookies, adminSession.csrfHeader())
@@ -493,19 +566,64 @@ func TestAssetUploadAcceptsAllowedImageTypesWithinPolicy(t *testing.T) {
 			assertFloatField(t, data, "height", tc.wantHeight)
 		})
 	}
-	if store.count() != 3 {
-		t.Fatalf("stored allowed upload object count = %d, want 3", store.count())
+	if store.count() != 6 {
+		t.Fatalf("stored allowed upload object count = %d, want 6", store.count())
 	}
 }
 
+func TestAssetRoutesExistingAssetWithoutThumbnailKeepsEmptyThumbnailURLAnd404Thumbnail(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+	projectID := createAssetTestProject(t, router, adminSession, "Legacy Asset Project")
+	now := time.Now().UTC()
+	if err := db.Create(&database.ImageAsset{
+		ID:        "legacy-asset-no-thumbnail",
+		TenantID:  adminSession.tenantID,
+		ProjectID: projectID,
+		Kind:      asset.KindReference,
+		ObjectKey: "tenants/" + adminSession.tenantID + "/projects/" + projectID + "/assets/legacy-asset-no-thumbnail/original.png",
+		MimeType:  "image/png",
+		SizeBytes: 1,
+		Width:     1,
+		Height:    1,
+		SHA256:    strings.Repeat("1", 64),
+		CreatedBy: adminSession.userID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed legacy asset: %v", err)
+	}
+
+	detail := performJSON(router, http.MethodGet, "/api/v1/assets/legacy-asset-no-thumbnail", nil, adminSession.cookies, nil)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("legacy detail status = %d, want %d: %s", detail.Code, http.StatusOK, detail.Body.String())
+	}
+	if got := stringField(t, decodeData(t, detail), "thumbnailUrl"); got != "" {
+		t.Fatalf("legacy detail thumbnailUrl = %q, want empty", got)
+	}
+	list := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets", nil, adminSession.cookies, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("legacy list status = %d, want %d: %s", list.Code, http.StatusOK, list.Body.String())
+	}
+	record := recordsField(t, decodeData(t, list))[0].(map[string]any)
+	if got := stringField(t, record, "thumbnailUrl"); got != "" {
+		t.Fatalf("legacy list thumbnailUrl = %q, want empty", got)
+	}
+	thumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/legacy-asset-no-thumbnail/thumbnail", nil, adminSession.cookies, nil)
+	if thumbnail.Code != http.StatusNotFound {
+		t.Fatalf("legacy thumbnail status = %d, want %d: %s", thumbnail.Code, http.StatusNotFound, thumbnail.Body.String())
+	}
+	assertResponseExcludes(t, thumbnail.Body.String(), "legacy-asset-no-thumbnail", "tenants/", "objectKey", "thumbnailObjectKey", "product-thumbnails", "minio")
+}
+
 type fakeObjectStore struct {
-	mu          sync.Mutex
-	objects     map[string]fakeObject
-	failPut     bool
-	failRemove  error
-	onPut       func()
-	removeErrs  []error
-	removeCount int
+	mu            sync.Mutex
+	objects       map[string]fakeObject
+	failPut       bool
+	failPutBucket string
+	failRemove    error
+	onPut         func()
+	removeErrs    []error
+	removeCount   int
 }
 
 type fakeObject struct {
@@ -519,7 +637,7 @@ func newFakeObjectStore() *fakeObjectStore {
 
 func (s *fakeObjectStore) PutObject(_ context.Context, bucket string, key string, body io.Reader, _ int64, contentType string) error {
 	s.mu.Lock()
-	if s.failPut {
+	if s.failPut || bucket == s.failPutBucket {
 		s.mu.Unlock()
 		return storage.ErrUnavailable
 	}
@@ -647,6 +765,23 @@ func uploadAssetForTest(t *testing.T, router http.Handler, session projectRouteS
 	return stringField(t, decodeData(t, response), "id")
 }
 
+func removeRolePermission(t *testing.T, db *gorm.DB, tenantID string, roleCode string, permissionCode string) {
+	t.Helper()
+
+	var role database.Role
+	if err := db.Where("tenant_id = ? AND code = ?", tenantID, roleCode).First(&role).Error; err != nil {
+		t.Fatalf("find role %s: %v", roleCode, err)
+	}
+	var permission database.Permission
+	if err := db.Where("code = ?", permissionCode).First(&permission).Error; err != nil {
+		t.Fatalf("find permission %s: %v", permissionCode, err)
+	}
+	if err := db.Where("tenant_id = ? AND role_id = ? AND permission_id = ?", tenantID, role.ID, permission.ID).
+		Delete(&database.RolePermission{}).Error; err != nil {
+		t.Fatalf("remove permission %s from role %s: %v", permissionCode, roleCode, err)
+	}
+}
+
 func performMultipart(router http.Handler, method string, path string, fileField string, filename string, contentType string, data []byte, fields map[string]string, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
 	return performMultipartWithContext(context.Background(), router, method, path, fileField, filename, contentType, data, fields, cookies, headers)
 }
@@ -722,7 +857,7 @@ func validJPEG(t *testing.T, width int, height int) []byte {
 func validWebP(t *testing.T) []byte {
 	t.Helper()
 
-	data, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AA/vuUAAA=")
+	data, err := base64.StdEncoding.DecodeString("UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA==")
 	if err != nil {
 		t.Fatalf("decode webp fixture: %v", err)
 	}

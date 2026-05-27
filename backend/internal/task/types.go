@@ -3,9 +3,11 @@ package task
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/thumbnail"
 )
 
 const (
@@ -217,13 +219,20 @@ func assetResponseFromRecord(record database.ImageAsset) AssetResponse {
 		FileSize:     record.SizeBytes,
 		Width:        record.Width,
 		Height:       record.Height,
-		ThumbnailURL: "",
+		ThumbnailURL: thumbnailURL(record),
 		PreviewURL:   "/api/v1/assets/" + record.ID + "/download",
 		IsFavorite:   record.IsFavorite,
 		CreatedBy:    record.CreatedBy,
 		CreatedAt:    formatTime(record.CreatedAt),
 		UpdatedAt:    formatTime(record.UpdatedAt),
 	}
+}
+
+func thumbnailURL(record database.ImageAsset) string {
+	if record.ThumbnailObjectKey == nil || strings.TrimSpace(*record.ThumbnailObjectKey) == "" {
+		return ""
+	}
+	return thumbnail.URL(record.ID)
 }
 
 func optionalTime(value *time.Time) *string {

@@ -145,6 +145,9 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	}
 	assertResponseExcludes(t, uploadResponse.Body.String(), fakeProviderKey, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
 	referenceAssetID := stringField(t, decodeData(t, uploadResponse), "id")
+	if got := stringField(t, decodeData(t, uploadResponse), "thumbnailUrl"); got != "/api/v1/assets/"+referenceAssetID+"/thumbnail" {
+		t.Fatalf("reference upload thumbnailUrl = %q", got)
+	}
 
 	updateAsset := performJSON(router, http.MethodPatch, "/api/v1/assets/"+referenceAssetID, map[string]any{
 		"category":   "hero-reference",
@@ -160,6 +163,13 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	}
 	if !bytes.Equal(downloadReference.Body.Bytes(), referenceBytes) {
 		t.Fatalf("authorized reference download bytes did not match uploaded image")
+	}
+	thumbnailReference := performJSON(router, http.MethodGet, "/api/v1/assets/"+referenceAssetID+"/thumbnail", nil, adminSession.cookies, nil)
+	if thumbnailReference.Code != http.StatusOK {
+		t.Fatalf("reference thumbnail status = %d, want %d: %s", thumbnailReference.Code, http.StatusOK, thumbnailReference.Body.String())
+	}
+	if thumbnailReference.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("reference thumbnail content type = %q, want image/jpeg", thumbnailReference.Header().Get("Content-Type"))
 	}
 
 	createTaskResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
@@ -267,6 +277,10 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 		assertSSETaskEventFrame(t, frame, event)
 		assertP15CoreFlowTextExcludes(t, frame, fakeProviderKey, redactionSentinel, b64JSONMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
 	}
+	imageOutputEvent := loadP15CoreFlowEvent(t, db, adminSession.tenantID, taskID, task.EventImageOutput)
+	if !strings.Contains(imageOutputEvent.EventPayloadJSON, `"/api/v1/assets/`+outputAssetID+`/thumbnail"`) {
+		t.Fatalf("image output event missing thumbnail URL: %s", imageOutputEvent.EventPayloadJSON)
+	}
 
 	generatedAssets := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?kind=GENERATED&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
 	if generatedAssets.Code != http.StatusOK {
@@ -274,6 +288,10 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	}
 	assertResponseExcludes(t, generatedAssets.Body.String(), fakeProviderKey, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
 	assertPageMeta(t, decodeData(t, generatedAssets), 1, 1, 10)
+	generatedRecord := recordsField(t, decodeData(t, generatedAssets))[0].(map[string]any)
+	if got := stringField(t, generatedRecord, "thumbnailUrl"); got != "/api/v1/assets/"+outputAssetID+"/thumbnail" {
+		t.Fatalf("generated asset thumbnailUrl = %q", got)
+	}
 
 	historyResponse := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history", nil, adminSession.cookies, nil)
 	if historyResponse.Code != http.StatusOK {
@@ -288,6 +306,9 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	if stringField(t, historyAsset, "id") != outputAssetID || stringField(t, historyAsset, "kind") != asset.KindGenerated {
 		t.Fatalf("history output asset = %#v, want generated output %s", historyAsset, outputAssetID)
 	}
+	if got := stringField(t, historyAsset, "thumbnailUrl"); got != "/api/v1/assets/"+outputAssetID+"/thumbnail" {
+		t.Fatalf("history thumbnailUrl = %q", got)
+	}
 
 	downloadOutput := performJSON(router, http.MethodGet, "/api/v1/assets/"+outputAssetID+"/download", nil, adminSession.cookies, nil)
 	if downloadOutput.Code != http.StatusOK {
@@ -295,6 +316,13 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	}
 	if !bytes.Equal(downloadOutput.Body.Bytes(), outputBytes) {
 		t.Fatalf("authorized output download bytes did not match worker output image")
+	}
+	thumbnailOutput := performJSON(router, http.MethodGet, "/api/v1/assets/"+outputAssetID+"/thumbnail", nil, adminSession.cookies, nil)
+	if thumbnailOutput.Code != http.StatusOK {
+		t.Fatalf("output thumbnail status = %d, want %d: %s", thumbnailOutput.Code, http.StatusOK, thumbnailOutput.Body.String())
+	}
+	if thumbnailOutput.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("output thumbnail content type = %q, want image/jpeg", thumbnailOutput.Header().Get("Content-Type"))
 	}
 
 	usageSummary := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
@@ -349,6 +377,11 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 		t.Fatalf("limited output download status = %d, want %d: %s", limitedOutputDownload.Code, http.StatusForbidden, limitedOutputDownload.Body.String())
 	}
 	assertResponseExcludes(t, limitedOutputDownload.Body.String(), outputAssetID, fakeProviderKey, redactionSentinel, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
+	limitedOutputThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+outputAssetID+"/thumbnail", nil, limitedSession.cookies, nil)
+	if limitedOutputThumbnail.Code != http.StatusForbidden {
+		t.Fatalf("limited output thumbnail status = %d, want %d: %s", limitedOutputThumbnail.Code, http.StatusForbidden, limitedOutputThumbnail.Body.String())
+	}
+	assertResponseExcludes(t, limitedOutputThumbnail.Body.String(), outputAssetID, fakeProviderKey, redactionSentinel, storagePathFieldMarker, objectPathMarker, authHeaderMarker, cookieHeaderMarker, imageEncodingMarker)
 
 	limitedHistory := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history", nil, limitedSession.cookies, nil)
 	if limitedHistory.Code != http.StatusForbidden {
