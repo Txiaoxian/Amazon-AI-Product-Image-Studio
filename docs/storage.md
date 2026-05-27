@@ -129,11 +129,11 @@ P16 thumbnail policy status:
 - Existing assets without thumbnails are not backfilled. Backfill and orphan discovery remain storage-governance work.
 - Thumbnail bytes are intentionally bounded operational overhead in this phase. Quota enforcement still uses the existing metadata source of truth until a later schema/counter task explicitly adds thumbnail-byte accounting.
 
-P17 orphan cleanup target:
+P17 orphan cleanup status:
 
-- Orphan cleanup must be backend-owned and conservative by default.
-- Dry-run and execution must use recognized backend object-key patterns plus MySQL metadata, not bucket listing alone, to identify candidates.
-- Cleanup must be tenant-scoped, batch-limited, retry-safe, auditable, and sanitized.
+- Orphan cleanup is backend-owned and conservative by default.
+- Dry-run and execution use recognized backend object-key patterns plus MySQL metadata, not bucket listing alone, to identify candidates.
+- Cleanup is tenant-scoped, batch-limited, retry-safe, auditable, and sanitized.
 - Responses and logs must not expose full bucket names, object keys, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.
 
 ## Deletion
@@ -165,4 +165,15 @@ P13 storage quota rules:
 - `storageQuota.usedBytes` is read-only and must be computed from tenant-scoped `image_assets` metadata, counting records whose bytes still exist in MinIO. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
 - Quota enforcement must run before creating new reference upload assets and before Worker persists generated/edited output assets. Exceeding quota must fail without successful asset metadata, successful task output events, or leaked object keys.
 - Quota accounting must not use MinIO bucket listing as its source of truth in this phase. MySQL metadata remains the authoritative accounting source.
-- Current non-blocking limitation: quota checks are optimistic and do not yet reserve bytes under concurrent writers. A future task may add strict reservation/counter semantics if operationally required.
+- Current limitation before `P17-BE-STORAGE-QUOTA-RESERVATION`: quota checks are optimistic and do not yet reserve bytes under concurrent writers.
+
+P17 storage quota reservation target:
+
+- Add tenant-scoped strict reservation/counter behavior for all asset-creating write paths.
+- Reserve original image bytes before MinIO writes for reference uploads and Worker generated/edited outputs.
+- Finalize reservations atomically with `image_assets` / `task_outputs` metadata creation, so successful rows and quota counters cannot diverge under normal operation.
+- Release reservations on validation, storage, DB transaction, cancellation, timeout, duplicate-output, or cleanup failure paths.
+- Reconcile quota counters from MySQL metadata because MySQL remains the authoritative source for expected object ownership. MinIO listing must not become quota truth.
+- Soft delete must not decrement used bytes. Physical purge after retention cleanup must decrement or reconcile used bytes only when objects are no longer expected to exist.
+- `storageQuota.usedBytes` should reflect the authoritative counter after reconciliation, and must remain read-only in the API/UI.
+- Responses, logs, audit metadata, and task events must not expose internal reservation IDs, object keys, bucket names, MinIO URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.

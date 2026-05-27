@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY` 和 `R16` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16` 和 `P17-BE-ORPHAN-CLEANUP` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup 已合并。
 
 已完成的平台基础：
 
@@ -109,8 +109,8 @@
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
 - P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION` 和 `P16-BE-THUMBNAIL-POLICY`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`；新 reference upload 和 Worker 输出资产会生成 MinIO thumbnail object 并通过后端鉴权访问。
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
-- 下一切片：`P17-BE-ORPHAN-CLEANUP`。需要为 MinIO orphan object 增加 conservative scan、dry-run、execution、retry-safe 失败处理和 sanitized audit，不允许仅凭 bucket listing 删除对象。
-- 完整 orphan cleanup 仍需实现。
+- P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit，不允许仅凭 bucket listing 删除对象。
+- 下一切片：`P17-BE-STORAGE-QUOTA-RESERVATION`。需要为 reference upload 和 Worker output 增加严格 quota reservation/counter 与 reconciliation，解决并发写入下的 optimistic quota race。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -499,7 +499,7 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
-- 非阻塞遗留：完整 orphan cleanup、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 orphan cleanup 是当前 P17 下一任务。
+- 非阻塞遗留：Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 quota reservation 是当前 P17 下一任务。
 
 ## 稳定生产上线路线图
 
@@ -529,6 +529,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 
 1. `P17-BE-ORPHAN-CLEANUP`
    - MinIO orphan discovery、dry-run、执行、审计、批量限制和失败重试。
+   - 已完成并合并。
 2. `P17-BE-STORAGE-QUOTA-RESERVATION`
    - 为并发上传和 Worker 输出增加严格 quota reservation/counter 与 reconciliation。
 3. `P17-BE-OBSERVABILITY-METRICS`
@@ -547,7 +548,238 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P17-BE-ORPHAN-CLEANUP
+## 下一个任务包：P17-BE-STORAGE-QUOTA-RESERVATION
+
+### 调度决策
+
+- 本任务串行执行，不与 observability metrics、Provider/model serialization 或前端任务并行。
+- 理由：严格 quota reservation 会触达数据库 schema、settings quota 读取、reference upload、Worker output persistence、physical purge cleanup 和系统设置 usedBytes 语义；必须先稳定写入路径，再做生产 diagnostics。
+- 本任务保持现有 `storageQuota` API 形状不变，不新增前端 UI，不把内部 reservation ID 暴露给浏览器。
+
+### 任务信息
+
+- 任务名称：`P17-BE-STORAGE-QUOTA-RESERVATION`
+- 目标：为并发 reference upload 和 Worker generated/edited output 写入增加 tenant-scoped strict storage quota reservation/counter 与 reconciliation，消除当前 metadata-sum check 的并发超额风险。
+- 推荐线程名：`P17-BE-STORAGE-QUOTA-RESERVATION`
+- 推荐分支名：`codex/p17-backend-storage-quota-reservation`
+- 起始分支：已合并 `P17-BE-ORPHAN-CLEANUP` 的最新 `main`
+- 前置依赖：P13 storage quota accounting、P13 storage cleanup foundation、P13 storage retention runtime、P16 thumbnail policy、P17 orphan cleanup 已合并。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P17-BE-STORAGE-QUOTA-RESERVATION`。
+
+你必须在分支 `codex/p17-backend-storage-quota-reservation` 上工作；如果当前不在该分支，先执行 `git switch codex/p17-backend-storage-quota-reservation`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P17-BE-ORPHAN-CLEANUP` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p17-backend-storage-quota-reservation` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+当前 storage quota enforcement 通过读取 `image_assets.size_bytes` 聚合值做写入前检查；并发 reference upload 或 Worker output 可同时通过检查并共同超过 `storageQuota.maxBytes`。本任务要增加严格 reservation/counter：
+- Reference upload 在写 MinIO 前 reserve 原图 bytes；成功 metadata transaction 内 finalize；失败路径 release。
+- Worker output persistence 在写 generated/edited objects 前 reserve 所有 pending output 原图 bytes；成功 metadata transaction 内 finalize；失败、取消、超时、重复输出、storage/DB error 路径 release。
+- `storageQuota.usedBytes` 对外仍是只读字段；内部可使用 counter/reservation 表，但不得返回 internal reservation IDs。
+- MySQL `image_assets` metadata 仍是 reconciliation source of truth；MinIO listing 不得成为 quota truth。
+- Soft delete 不释放 used bytes；physical purge 后才释放或通过 reconciliation 扣减 used bytes。
+
+允许修改文件：
+- `backend/internal/database/**`
+- `backend/internal/settings/**`
+- `backend/internal/asset/**`
+- `backend/internal/task/**`
+- `backend/internal/api/**` 仅限既有 quota/asset/task/settings 测试或必要错误映射
+- `backend/cmd/worker/**` 仅限 cleanup/reconciliation maintenance 如确有 runtime consumer 需要
+- backend-only 测试文件
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/JWT/Cookie 主流程、SSE handler、Redis queue、Worker claim/cancel/retry/timeout 状态机
+- 不新增 AI Provider 直连、Provider key 处理、前端轮询、浏览器存储、公共 MinIO URL、signed URL、bucket/object-key 暴露
+
+前置阅读：
+- `docs/storage.md` 的 P17 storage quota reservation target
+- `docs/api-contract.md` 的 `storageQuota` 合同
+- `docs/database-schema.md` 的 quota reservation 规划
+- `docs/security.md` 的 quota 安全要求
+- `backend/internal/settings/service.go`
+- `backend/internal/settings/repository.go`
+- `backend/internal/settings/types.go`
+- `backend/internal/asset/service.go`
+- `backend/internal/asset/cleanup.go`
+- `backend/internal/task/runtime_persistence.go`
+- `backend/internal/task/worker.go`
+- `backend/internal/database/migrations.go`
+- 现有 quota 测试：`backend/internal/settings/service_test.go`、`backend/internal/api/system_settings_routes_test.go`、`backend/internal/api/asset_routes_test.go`、`backend/internal/task/worker_test.go`
+
+具体开发内容：
+1. 数据模型与迁移：
+   - 可新增 tenant-scoped quota counter/reservation 表，例如 `storage_quota_counters`，字段至少应支持 `tenant_id`、`used_bytes`、`reserved_bytes`、`updated_at`、`reconciled_at`。
+   - 如需要 reservation 明细表，可新增 `storage_quota_reservations`，必须包含 `tenant_id`、reservation id、bytes、status、expires_at、created_at、updated_at。
+   - 所有业务表必须包含 `tenant_id`，并建立必要唯一索引/查询索引。
+   - 迁移必须可重复运行，不能破坏已有 `image_assets`、`system_settings` 或任务数据。
+2. Reservation service：
+   - 增加明确的后端 API/内部接口，例如 `ReserveStorageQuota`、`FinalizeStorageQuotaReservation`、`ReleaseStorageQuotaReservation`、`ReconcileStorageQuotaCounter`。
+   - Reserve 必须在 DB transaction 中锁定 tenant counter row，读取有效 `storage_quota.maxBytes`，校验 `used + reserved + pending <= maxBytes`。
+   - `maxBytes=null` 时应保持 unlimited 行为；可以 no-op reservation，但接口行为必须清晰。
+   - Malformed persisted quota 或 malformed counter 必须 fail closed。
+   - Release 必须 idempotent；Finalize 必须 idempotent 或在重复调用时安全返回。
+   - Reservation 过期或 cleanup 可通过 reconciliation 修复，但不得让 stale reservations 永久阻断 tenant。
+3. Reference upload 接入：
+   - 在 validated image bytes 和 quota pending bytes 确定后、写 MinIO 前 reserve。
+   - Original + thumbnail upload 成功后，在 metadata/audit DB transaction 中创建 asset row 并 finalize reservation。
+   - 任何 validation/storage/metadata/audit failure 均必须 release reservation，并保留现有 uploaded object rollback 行为。
+   - Quota exceeded 仍返回现有 sanitized `409 STORAGE_QUOTA_EXCEEDED`，不写 successful asset row，不写成功 audit，不泄漏 object key。
+4. Worker output 接入：
+   - 在 pending outputs 和 pendingBytes 确定后、写 generated/thumbnail MinIO 前 reserve。
+   - 成功 DB transaction 中创建 assets/task_outputs/events/usage 时 finalize reservation。
+   - Provider output validation failure、quota exceeded、storage failure、DB failure、task no longer running、duplicate output race、context canceled/deadline exceeded 等路径必须 release 或避免创建 reservation。
+   - 不改变 Worker claim/cancel/retry/timeout 状态机。
+5. Physical cleanup / retention 接入：
+   - Soft delete 不改变 quota used bytes。
+   - P13 physical purge 成功后必须 decrement counter 或触发 reconciliation；missing object idempotent success 要保持一致。
+   - Orphan cleanup 删除非 metadata 对象时不得改变 quota counter。
+6. Reconciliation：
+   - 增加从 MySQL metadata 重建 tenant quota counter 的能力，至少用于测试和 repair path。
+   - `storageQuota.usedBytes` 应反映 counter used bytes；如果 counter 不存在，应先基于 metadata 初始化或安全回退。
+   - Reconciliation 不能使用 MinIO listing 作为 truth。
+7. 错误、安全与审计：
+   - 内部 reservation ID、counter row、lock detail 不得出现在 API response、operation log、task event 或错误消息中。
+   - 只记录 sanitized aggregate metadata，例如 `pendingBytes`、`maxBytesSet`、`reservationResult`、`reason`，不要记录 object key/bucket/MinIO URL。
+   - Quota failure、release failure、reconcile failure 的日志必须脱敏。
+
+安全要求：
+- 所有 quota/counter/reservation 查询必须 tenant-scoped。
+- 不能把 internal reservation ID、bucket、object key、MinIO URL、signed URL、image base64、Authorization、Cookie、JWT、Provider Key 写入响应、日志、audit metadata 或 task event。
+- 不能为了 quota reservation 改成 Redis 最终状态；MySQL 仍是 quota/counter 和 asset metadata truth。
+- 不允许使用 MinIO bucket listing 计算 quota used bytes。
+- 不得 drop 数据库、删除共享 bucket、flush Redis 或清空 MinIO。
+- 如使用共享本地 MySQL/Redis/MinIO 验证，只能创建带 `codex_p17_quota_reservation_` 前缀或明显测试路径的数据，并在最终交付说明是否清理。
+
+必须保持的现有行为：
+- `GET/PATCH /api/v1/admin/system-settings` 的 `storageQuota.maxBytes` / read-only `usedBytes` API 形状不变。
+- `maxBytes=null` 仍表示 unlimited。
+- Reference upload validation、SVG 禁止、thumbnail generation、rollback cleanup、asset audit、download/detail/list/favorite/update/delete 不回归。
+- Worker output idempotency、usage/API logs、task events、SSE replay、不重复 output index 不回归。
+- Storage retention physical purge 和 P17 orphan cleanup 不回归。
+- Frontend 不变。
+
+允许的中间态：
+- 可以新增内部 quota service 和 migration，再接 reference upload，最后接 Worker output 和 purge/reconcile。
+- 可以保留公共 API response 字段不变，只改变内部 `usedBytes` 来源。
+- 可以新增 backend-only repair/reconcile helper，不需要新增前端 UI。
+
+禁止的半迁移状态：
+- Reference upload 使用 reservation，但 Worker output 仍绕过 reservation。
+- Reservation 成功后，失败路径不 release，导致 tenant 永久被 stale reserved bytes 阻塞。
+- Metadata 成功但 counter finalize 失败且无修复路径。
+- Soft delete 立即释放 quota used bytes。
+- Orphan cleanup 删除非 metadata object 时修改 quota counter。
+- API response、audit、task event 泄漏 reservation id、bucket、object key 或 MinIO URL。
+- 使用 Redis 作为 quota 最终来源。
+- 使用 MinIO listing 作为 usedBytes truth。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| maxBytes=null | upload/Worker 不受 quota 限制，reservation no-op 或安全通过 | 是 |
+| 单个 upload within quota | reserve -> MinIO write -> metadata transaction finalize，usedBytes 增加 | 是 |
+| 单个 upload exceeds quota | 409，无 MinIO write、无 asset row、无成功 audit、无 reservation leak | 是 |
+| 两个并发 uploads 各自单独可通过但合计超额 | 只有一个成功，另一个 quota exceeded 或等待后失败，最终 usedBytes 不超额 | 是 |
+| thumbnail upload failure | original cleanup + reservation release，无 asset row | 是 |
+| metadata/audit transaction failure after MinIO write | object cleanup + reservation release，无 stale reservation | 是 |
+| Worker multi-output within quota | 一次性 reserve pending bytes，成功 finalize，assets/task_outputs/events 正常 | 是 |
+| Worker output quota exceeded | task 失败为现有 sanitized quota error，无 output assets/events/usage 成功副作用 | 是 |
+| Worker DB transaction failure after object writes | cleanup generated/thumbnail objects + reservation release | 是 |
+| duplicate output index / already persisted output | 不重复 reserve/finalize，不重复 asset/output | 是 |
+| soft delete | usedBytes 不减少 | 是 |
+| physical purge success | usedBytes 减少或 reconciliation 后减少 | 是 |
+| orphan cleanup deletes non-metadata object | usedBytes 不变 | 是 |
+| malformed stored quota/counter | fail closed，不写 successful asset/task side effects | 是 |
+| stale reservation | reconciliation 或 cleanup 后不会永久阻塞 tenant | 是 |
+
+必须新增或更新的回归测试：
+- `backend/internal/database/**`：migration/schema/index/idempotency 覆盖 quota counter/reservation 表。
+- `backend/internal/settings/**`：reserve/finalize/release/reconcile、malformed counter fail-closed、usedBytes 来源、并发 reservation。
+- `backend/internal/asset/**` 或 `backend/internal/api/asset_routes_test.go`：reference upload 成功、quota exceeded、并发超额、thumbnail/storage/metadata failure release。
+- `backend/internal/task/worker_test.go`：Worker multi-output reservation、quota exceeded、storage/DB failure release、duplicate output idempotency。
+- `backend/internal/asset/cleanup_test.go`：physical purge 后 counter/reconcile 正确，orphan cleanup 不影响 quota counter。
+- 现有 `system_settings` quota API 测试需继续证明 public contract 不变。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/database ./internal/settings ./internal/asset ./internal/api ./internal/task -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- failure matrix 到具体测试文件/测试名的映射。
+- 安全自查结果，明确无 reservation id/object key/bucket/MinIO URL 泄漏，无 Redis-as-truth，无 MinIO-listing-as-quota-truth，无前端轮询或浏览器存储变更。
+- 刻意未修改范围，特别说明 frontend settings UI、observability metrics、Provider/model serialization、real Provider smoke 不在本任务内。
+- 如使用共享本地 MySQL/Redis/MinIO，说明创建/修改/清理了哪些 `codex_p17_quota_reservation_*` 测试数据；默认优先使用自动化测试和 fake store。
+- 如发现公共合同缺口，只报告主 agent，不修改 docs。
+```
+
+### 允许修改文件
+
+- `backend/internal/database/**`
+- `backend/internal/settings/**`
+- `backend/internal/asset/**`
+- `backend/internal/task/**`
+- `backend/internal/api/**` 仅限相关后端测试和错误映射
+- `backend/cmd/worker/**` 仅限必要 cleanup/reconciliation runtime
+- backend-only 测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/JWT/Cookie 主流程、SSE handler、Redis queue、Worker claim/cancel/retry/timeout 状态机
+
+### 验收标准
+
+- 并发 reference upload / Worker output 无法突破 tenant `storageQuota.maxBytes`。
+- Reservation/finalize/release/reconcile 均 tenant-scoped、idempotent 或 retry-safe。
+- 失败路径不留下 stale reservation、成功 asset row 指向缺失对象、成功 task output event 或敏感日志。
+- `storageQuota.usedBytes` 保持只读且与 quota counter/reconciliation 一致。
+- Soft delete、physical purge、orphan cleanup 与 quota accounting 语义正确。
+- 现有前端和 API contract 不变。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/database ./internal/settings ./internal/asset ./internal/api ./internal/task -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+## 最近已完成任务包：P17-BE-ORPHAN-CLEANUP
 
 ### 调度决策
 

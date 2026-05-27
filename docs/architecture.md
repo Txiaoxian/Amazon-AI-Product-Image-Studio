@@ -30,7 +30,7 @@ Important current facts:
 - The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays` and `logRetention` settings; unset/null/malformed settings fail closed and do not delete anything.
 - Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, R16 validation, and a deployment runbook. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P17 starts storage governance with conservative orphan cleanup, then strict quota reservation and production diagnostics. Writable settings still cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P17 has completed conservative orphan cleanup and continues with strict quota reservation, then production diagnostics. Writable settings still cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 
