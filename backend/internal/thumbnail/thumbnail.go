@@ -13,7 +13,9 @@ import (
 
 const (
 	MaxDimension = 512
-	MIMEType     = "image/png"
+	MaxSizeBytes = 1024 * 1024
+	MIMEType     = "image/jpeg"
+	Quality      = 85
 )
 
 type Image struct {
@@ -28,20 +30,23 @@ type Image struct {
 func Generate(data []byte, mimeType string) (Image, error) {
 	source, err := decode(data, mimeType)
 	if err != nil {
-		return fallbackBoundedOriginal(data, mimeType, err)
+		return Image{}, err
 	}
 	width, height := boundedDimensions(source.Bounds().Dx(), source.Bounds().Dy(), MaxDimension)
 	dst := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), source, source.Bounds(), draw.Over, nil)
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, dst); err != nil {
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: Quality}); err != nil {
 		return Image{}, err
+	}
+	if buf.Len() > MaxSizeBytes {
+		return Image{}, image.ErrFormat
 	}
 	return Image{
 		Data:      buf.Bytes(),
 		MIMEType:  MIMEType,
-		Ext:       "png",
+		Ext:       "jpg",
 		SizeBytes: int64(buf.Len()),
 		Width:     width,
 		Height:    height,
@@ -49,11 +54,7 @@ func Generate(data []byte, mimeType string) (Image, error) {
 }
 
 func ObjectKey(tenantID string, projectID string, assetID string, ext string) string {
-	ext = strings.Trim(strings.ToLower(strings.TrimSpace(ext)), ".")
-	if ext == "" {
-		ext = "img"
-	}
-	return "tenants/" + tenantID + "/projects/" + projectID + "/assets/" + assetID + "/thumbnail." + ext
+	return "tenants/" + tenantID + "/projects/" + projectID + "/assets/" + assetID + "/thumbnail.jpg"
 }
 
 func URL(assetID string) string {
@@ -74,27 +75,6 @@ func decode(data []byte, mimeType string) (image.Image, error) {
 	default:
 		return nil, image.ErrFormat
 	}
-}
-
-func fallbackBoundedOriginal(data []byte, mimeType string, decodeErr error) (Image, error) {
-	if strings.ToLower(strings.TrimSpace(mimeType)) != "image/webp" {
-		return Image{}, decodeErr
-	}
-	cfg, err := webp.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return Image{}, decodeErr
-	}
-	if cfg.Width > MaxDimension || cfg.Height > MaxDimension {
-		return Image{}, decodeErr
-	}
-	return Image{
-		Data:      data,
-		MIMEType:  "image/webp",
-		Ext:       "webp",
-		SizeBytes: int64(len(data)),
-		Width:     cfg.Width,
-		Height:    cfg.Height,
-	}, nil
 }
 
 func boundedDimensions(width int, height int, maxDimension int) (int, int) {

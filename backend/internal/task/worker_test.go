@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"reflect"
 	"strings"
@@ -286,8 +287,8 @@ func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *te
 	if err := db.Where("tenant_id = ? AND source_task_id = ?", "tenant-worker", taskID).First(&assetRecord).Error; err != nil {
 		t.Fatalf("load worker output asset: %v", err)
 	}
-	if assetRecord.ThumbnailObjectKey == nil || !strings.HasSuffix(*assetRecord.ThumbnailObjectKey, "/thumbnail.png") {
-		t.Fatalf("thumbnail object key = %#v, want thumbnail.png key", assetRecord.ThumbnailObjectKey)
+	if assetRecord.ThumbnailObjectKey == nil || !strings.HasSuffix(*assetRecord.ThumbnailObjectKey, "/thumbnail.jpg") {
+		t.Fatalf("thumbnail object key = %#v, want thumbnail.jpg key", assetRecord.ThumbnailObjectKey)
 	}
 	payload := workerImageOutputPayload(t, db, taskID)
 	if got := payload["thumbnailUrl"]; got != "/api/v1/assets/"+assetRecord.ID+"/thumbnail" {
@@ -366,6 +367,32 @@ func TestWorkerProcessorCleansGeneratedObjectWhenThumbnailStorageFails(t *testin
 	}
 	if got := len(store.objects["thumbnail-assets"]); got != 0 {
 		t.Fatalf("thumbnail storage failure stored thumbnails = %d, want 0", got)
+	}
+}
+
+func TestWorkerProcessorCleanupLogsSanitizedErrorKind(t *testing.T) {
+	var logBuffer bytes.Buffer
+	store := newMemoryObjectStore()
+	store.failRemove = errors.New("remove failed bucket generated-assets key tenants/tenant-worker/projects/project-worker/assets/secret/original.png minio http://127.0.0.1:9000")
+	processor := NewWorkerProcessor(nil, slog.New(slog.NewTextHandler(&logBuffer, nil)), WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketThumbnails: "thumbnail-assets"},
+	})
+
+	processor.cleanupUploadedOutputs(context.Background(), []uploadedOutput{{
+		AssetID:            "asset-cleanup-log",
+		ObjectKey:          "tenants/tenant-worker/projects/project-worker/assets/asset-cleanup-log/original.png",
+		ThumbnailObjectKey: "tenants/tenant-worker/projects/project-worker/assets/asset-cleanup-log/thumbnail.jpg",
+	}})
+
+	text := logBuffer.String()
+	if !strings.Contains(text, "asset-cleanup-log") || !strings.Contains(text, "error_kind=internal_error") {
+		t.Fatalf("cleanup log missing sanitized fields: %s", text)
+	}
+	for _, forbidden := range []string{"generated-assets", "thumbnail-assets", "tenants/", "secret", "127.0.0.1", "minio", "original.png", "thumbnail.jpg", "error="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("cleanup log leaked %q: %s", forbidden, text)
+		}
 	}
 }
 
@@ -1900,6 +1927,7 @@ func (r staticIPResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, e
 type memoryObjectStore struct {
 	objects       map[string]map[string][]byte
 	failPutBucket string
+	failRemove    error
 	onPut         func()
 }
 
@@ -1934,6 +1962,9 @@ func (s *memoryObjectStore) GetObject(_ context.Context, bucket string, key stri
 }
 
 func (s *memoryObjectStore) RemoveObject(_ context.Context, bucket string, key string) error {
+	if s.failRemove != nil {
+		return s.failRemove
+	}
 	if s.objects[bucket] != nil {
 		delete(s.objects[bucket], key)
 	}

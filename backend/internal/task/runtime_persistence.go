@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image/jpeg"
 	"image/png"
@@ -350,11 +351,11 @@ func (p *WorkerProcessor) cleanupUploadedOutputs(ctx context.Context, outputs []
 			continue
 		}
 		if err := p.store.RemoveObject(ctx, p.storage.BucketGenerated, output.ObjectKey); err != nil {
-			p.log.Warn("generated output cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+			p.log.Warn("generated output cleanup failed", "asset_id", output.AssetID, "error_kind", safeWorkerCleanupErrorKind(err))
 		}
 		if strings.TrimSpace(output.ThumbnailObjectKey) != "" {
 			if err := p.store.RemoveObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey); err != nil {
-				p.log.Warn("generated thumbnail cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+				p.log.Warn("generated thumbnail cleanup failed", "asset_id", output.AssetID, "error_kind", safeWorkerCleanupErrorKind(err))
 			}
 		}
 	}
@@ -369,13 +370,30 @@ func (p *WorkerProcessor) cleanupUnpersistedOutputs(ctx context.Context, outputs
 			continue
 		}
 		if err := p.store.RemoveObject(ctx, p.storage.BucketGenerated, output.ObjectKey); err != nil {
-			p.log.Warn("unpersisted generated output cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+			p.log.Warn("unpersisted generated output cleanup failed", "asset_id", output.AssetID, "error_kind", safeWorkerCleanupErrorKind(err))
 		}
 		if strings.TrimSpace(output.ThumbnailObjectKey) != "" {
 			if err := p.store.RemoveObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey); err != nil {
-				p.log.Warn("unpersisted generated thumbnail cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+				p.log.Warn("unpersisted generated thumbnail cleanup failed", "asset_id", output.AssetID, "error_kind", safeWorkerCleanupErrorKind(err))
 			}
 		}
+	}
+}
+
+func safeWorkerCleanupErrorKind(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context_deadline_exceeded"
+	case errors.Is(err, storage.ErrNotFound):
+		return "storage_not_found"
+	case errors.Is(err, storage.ErrUnavailable):
+		return "storage_unavailable"
+	default:
+		return "internal_error"
 	}
 }
 

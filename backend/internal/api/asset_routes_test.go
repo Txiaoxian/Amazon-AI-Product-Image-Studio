@@ -70,7 +70,7 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if record.ObjectKey != expectedObjectKey {
 		t.Fatalf("object key = %q, want %q", record.ObjectKey, expectedObjectKey)
 	}
-	expectedThumbnailKey := "tenants/" + adminSession.tenantID + "/projects/" + projectID + "/assets/" + assetID + "/thumbnail.png"
+	expectedThumbnailKey := "tenants/" + adminSession.tenantID + "/projects/" + projectID + "/assets/" + assetID + "/thumbnail.jpg"
 	if record.ThumbnailObjectKey == nil || *record.ThumbnailObjectKey != expectedThumbnailKey {
 		t.Fatalf("thumbnail object key = %#v, want %q", record.ThumbnailObjectKey, expectedThumbnailKey)
 	}
@@ -150,11 +150,11 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	if thumbnailResponse.Code != http.StatusOK {
 		t.Fatalf("thumbnail status = %d, want %d: %s", thumbnailResponse.Code, http.StatusOK, thumbnailResponse.Body.String())
 	}
-	if thumbnailResponse.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("thumbnail content type = %q, want image/png", thumbnailResponse.Header().Get("Content-Type"))
+	if thumbnailResponse.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("thumbnail content type = %q, want image/jpeg", thumbnailResponse.Header().Get("Content-Type"))
 	}
-	if _, err := png.Decode(bytes.NewReader(thumbnailResponse.Body.Bytes())); err != nil {
-		t.Fatalf("thumbnail body is not a PNG: %v", err)
+	if _, err := jpeg.Decode(bytes.NewReader(thumbnailResponse.Body.Bytes())); err != nil {
+		t.Fatalf("thumbnail body is not a JPEG: %v", err)
 	}
 
 	editorDeleteResponse := performJSON(router, http.MethodDelete, "/api/v1/assets/"+assetID, nil, editorSession.cookies, editorSession.csrfHeader())
@@ -306,6 +306,24 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	nonMemberThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, nonMemberSession.cookies, nil)
 	if nonMemberThumbnail.Code != http.StatusForbidden {
 		t.Fatalf("non-member thumbnail status = %d, want %d", nonMemberThumbnail.Code, http.StatusForbidden)
+	}
+
+	seedActiveUser(t, db, adminSession.tenantID, "read-only-asset-user", "read-only-asset@example.com", "Read Only Asset", "read-only-asset-password-123")
+	assignRole(t, db, adminSession.tenantID, "read-only-asset-user", "viewer")
+	removeRolePermission(t, db, adminSession.tenantID, "viewer", "asset:download")
+	addMember(t, router, adminSession, projectID, "read-only-asset-user", project.RoleViewer)
+	readOnlySession := loginProjectRouteUser(t, router, adminSession.tenantID, "read-only-asset@example.com", "read-only-asset-password-123")
+	readOnlyDetail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID, nil, readOnlySession.cookies, nil)
+	if readOnlyDetail.Code != http.StatusOK {
+		t.Fatalf("read-only detail status = %d, want %d: %s", readOnlyDetail.Code, http.StatusOK, readOnlyDetail.Body.String())
+	}
+	readOnlyThumbnail := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/thumbnail", nil, readOnlySession.cookies, nil)
+	if readOnlyThumbnail.Code != http.StatusOK {
+		t.Fatalf("read-only thumbnail status = %d, want %d: %s", readOnlyThumbnail.Code, http.StatusOK, readOnlyThumbnail.Body.String())
+	}
+	readOnlyDownload := performJSON(router, http.MethodGet, "/api/v1/assets/"+assetID+"/download", nil, readOnlySession.cookies, nil)
+	if readOnlyDownload.Code != http.StatusForbidden {
+		t.Fatalf("read-only download status = %d, want %d: %s", readOnlyDownload.Code, http.StatusForbidden, readOnlyDownload.Body.String())
 	}
 
 	seedOtherTenantProject(t, db)
@@ -533,7 +551,7 @@ func TestAssetUploadAcceptsAllowedImageTypesWithinPolicy(t *testing.T) {
 	}{
 		{name: "png", filename: "allowed.png", contentType: "image/png", body: validPNG(t, 2, 2), wantWidth: 2, wantHeight: 2},
 		{name: "jpeg", filename: "allowed.jpg", contentType: "image/jpeg", body: validJPEG(t, 3, 2), wantWidth: 3, wantHeight: 2},
-		{name: "webp", filename: "allowed.webp", contentType: "image/webp", body: validWebP(t), wantWidth: 1, wantHeight: 1},
+		{name: "webp", filename: "allowed.webp", contentType: "image/webp", body: validWebP(t), wantWidth: 75, wantHeight: 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", tc.filename, tc.contentType, tc.body, nil, adminSession.cookies, adminSession.csrfHeader())
@@ -747,6 +765,23 @@ func uploadAssetForTest(t *testing.T, router http.Handler, session projectRouteS
 	return stringField(t, decodeData(t, response), "id")
 }
 
+func removeRolePermission(t *testing.T, db *gorm.DB, tenantID string, roleCode string, permissionCode string) {
+	t.Helper()
+
+	var role database.Role
+	if err := db.Where("tenant_id = ? AND code = ?", tenantID, roleCode).First(&role).Error; err != nil {
+		t.Fatalf("find role %s: %v", roleCode, err)
+	}
+	var permission database.Permission
+	if err := db.Where("code = ?", permissionCode).First(&permission).Error; err != nil {
+		t.Fatalf("find permission %s: %v", permissionCode, err)
+	}
+	if err := db.Where("tenant_id = ? AND role_id = ? AND permission_id = ?", tenantID, role.ID, permission.ID).
+		Delete(&database.RolePermission{}).Error; err != nil {
+		t.Fatalf("remove permission %s from role %s: %v", permissionCode, roleCode, err)
+	}
+}
+
 func performMultipart(router http.Handler, method string, path string, fileField string, filename string, contentType string, data []byte, fields map[string]string, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
 	return performMultipartWithContext(context.Background(), router, method, path, fileField, filename, contentType, data, fields, cookies, headers)
 }
@@ -822,7 +857,7 @@ func validJPEG(t *testing.T, width int, height int) []byte {
 func validWebP(t *testing.T) []byte {
 	t.Helper()
 
-	data, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AA/vuUAAA=")
+	data, err := base64.StdEncoding.DecodeString("UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA==")
 	if err != nil {
 		t.Fatalf("decode webp fixture: %v", err)
 	}

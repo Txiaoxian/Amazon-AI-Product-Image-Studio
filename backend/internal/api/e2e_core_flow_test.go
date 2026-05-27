@@ -168,8 +168,8 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	if thumbnailReference.Code != http.StatusOK {
 		t.Fatalf("reference thumbnail status = %d, want %d: %s", thumbnailReference.Code, http.StatusOK, thumbnailReference.Body.String())
 	}
-	if thumbnailReference.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("reference thumbnail content type = %q, want image/png", thumbnailReference.Header().Get("Content-Type"))
+	if thumbnailReference.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("reference thumbnail content type = %q, want image/jpeg", thumbnailReference.Header().Get("Content-Type"))
 	}
 
 	createTaskResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", map[string]any{
@@ -321,8 +321,8 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	if thumbnailOutput.Code != http.StatusOK {
 		t.Fatalf("output thumbnail status = %d, want %d: %s", thumbnailOutput.Code, http.StatusOK, thumbnailOutput.Body.String())
 	}
-	if thumbnailOutput.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("output thumbnail content type = %q, want image/png", thumbnailOutput.Header().Get("Content-Type"))
+	if thumbnailOutput.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("output thumbnail content type = %q, want image/jpeg", thumbnailOutput.Header().Get("Content-Type"))
 	}
 
 	usageSummary := performJSON(router, http.MethodGet, "/api/v1/admin/usage/summary?dimension=tenant&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)

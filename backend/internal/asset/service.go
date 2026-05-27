@@ -615,7 +615,7 @@ func (s *Service) downloadThumbnail(ctx context.Context, principal auth.Principa
 	if s.store == nil {
 		return database.ImageAsset{}, storage.Object{}, ErrStorageUnavailable
 	}
-	record, _, err := s.authorizeAsset(ctx, principal, assetID, PermissionDownload)
+	record, _, err := s.authorizeAsset(ctx, principal, assetID, PermissionRead)
 	if err != nil {
 		return database.ImageAsset{}, storage.Object{}, err
 	}
