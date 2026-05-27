@@ -178,6 +178,25 @@ func (r Repository) ListPurgeCandidates(ctx context.Context, scope tenant.Scope,
 	return records, err
 }
 
+func (r Repository) ObjectKeyReferenced(ctx context.Context, scope tenant.Scope, objectKey string) (bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	objectKey = strings.TrimSpace(objectKey)
+	if objectKey == "" {
+		return false, ErrValidation
+	}
+
+	var count int64
+	if err := db.Model(&database.ImageAsset{}).
+		Where("tenant_id = ? AND (object_key = ? OR thumbnail_object_key = ?)", scope.ID(), objectKey, objectKey).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r Repository) MarkAssetPurged(ctx context.Context, scope tenant.Scope, assetID string, purgedAt time.Time) error {
 	db, err := r.base(ctx, scope)
 	if err != nil {

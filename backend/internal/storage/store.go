@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/minio/minio-go/v7"
@@ -24,9 +25,28 @@ type Object struct {
 	ContentType string
 }
 
+type ListedObject struct {
+	Key          string
+	Size         int64
+	LastModified time.Time
+}
+
+type ListObjectsInput struct {
+	Bucket string
+	Prefix string
+	Cursor string
+	Limit  int
+}
+
+type ListObjectsResult struct {
+	Objects    []ListedObject
+	NextCursor string
+}
+
 type ObjectStore interface {
 	PutObject(ctx context.Context, bucket string, key string, body io.Reader, size int64, contentType string) error
 	GetObject(ctx context.Context, bucket string, key string) (Object, error)
+	ListObjects(ctx context.Context, input ListObjectsInput) (ListObjectsResult, error)
 	RemoveObject(ctx context.Context, bucket string, key string) error
 }
 
@@ -94,6 +114,54 @@ func (s *MinIOStore) GetObject(ctx context.Context, bucket string, key string) (
 		Size:        stat.Size,
 		ContentType: stat.ContentType,
 	}, nil
+}
+
+func (s *MinIOStore) ListObjects(ctx context.Context, input ListObjectsInput) (ListObjectsResult, error) {
+	if s == nil || s.client == nil {
+		return ListObjectsResult{}, ErrUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if input.Limit <= 0 {
+		return ListObjectsResult{}, nil
+	}
+
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	objects := make([]ListedObject, 0, input.Limit)
+	var hasMore bool
+	stopped := false
+	for object := range s.client.ListObjects(listCtx, input.Bucket, minio.ListObjectsOptions{
+		Prefix:     input.Prefix,
+		Recursive:  true,
+		MaxKeys:    input.Limit + 1,
+		StartAfter: input.Cursor,
+	}) {
+		if object.Err != nil {
+			if stopped && errors.Is(object.Err, context.Canceled) {
+				continue
+			}
+			return ListObjectsResult{}, mapError(object.Err)
+		}
+		if len(objects) >= input.Limit {
+			hasMore = true
+			stopped = true
+			cancel()
+			continue
+		}
+		objects = append(objects, ListedObject{
+			Key:          object.Key,
+			Size:         object.Size,
+			LastModified: object.LastModified,
+		})
+	}
+
+	result := ListObjectsResult{Objects: objects}
+	if hasMore && len(objects) > 0 {
+		result.NextCursor = objects[len(objects)-1].Key
+	}
+	return result, nil
 }
 
 func (s *MinIOStore) RemoveObject(ctx context.Context, bucket string, key string) error {

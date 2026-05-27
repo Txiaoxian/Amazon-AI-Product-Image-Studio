@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -627,8 +628,9 @@ type fakeObjectStore struct {
 }
 
 type fakeObject struct {
-	contentType string
-	body        []byte
+	contentType  string
+	body         []byte
+	lastModified time.Time
 }
 
 func newFakeObjectStore() *fakeObjectStore {
@@ -646,7 +648,7 @@ func (s *fakeObjectStore) PutObject(_ context.Context, bucket string, key string
 		s.mu.Unlock()
 		return err
 	}
-	s.objects[bucket+"/"+key] = fakeObject{contentType: contentType, body: data}
+	s.objects[bucket+"/"+key] = fakeObject{contentType: contentType, body: data, lastModified: time.Now().UTC()}
 	onPut := s.onPut
 	s.mu.Unlock()
 	if onPut != nil {
@@ -667,6 +669,50 @@ func (s *fakeObjectStore) GetObject(_ context.Context, bucket string, key string
 		Size:        int64(len(object.body)),
 		ContentType: object.contentType,
 	}, nil
+}
+
+func (s *fakeObjectStore) ListObjects(_ context.Context, input storage.ListObjectsInput) (storage.ListObjectsResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if input.Limit <= 0 {
+		return storage.ListObjectsResult{}, nil
+	}
+
+	prefix := input.Bucket + "/"
+	keys := make([]string, 0, len(s.objects))
+	for stored := range s.objects {
+		if !strings.HasPrefix(stored, prefix) {
+			continue
+		}
+		key := strings.TrimPrefix(stored, prefix)
+		if input.Prefix != "" && !strings.HasPrefix(key, input.Prefix) {
+			continue
+		}
+		if input.Cursor != "" && key <= input.Cursor {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	hasMore := input.Limit > 0 && len(keys) > input.Limit
+	if hasMore {
+		keys = keys[:input.Limit]
+	}
+
+	objects := make([]storage.ListedObject, 0, len(keys))
+	for _, key := range keys {
+		object := s.objects[input.Bucket+"/"+key]
+		objects = append(objects, storage.ListedObject{
+			Key:          key,
+			Size:         int64(len(object.body)),
+			LastModified: object.lastModified,
+		})
+	}
+	result := storage.ListObjectsResult{Objects: objects}
+	if hasMore && len(objects) > 0 {
+		result.NextCursor = objects[len(objects)-1].Key
+	}
+	return result, nil
 }
 
 func (s *fakeObjectStore) RemoveObject(ctx context.Context, bucket string, key string) error {
@@ -696,6 +742,12 @@ func (s *fakeObjectStore) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.objects)
+}
+
+func (s *fakeObjectStore) putListedObject(bucket string, key string, lastModified time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.objects[bucket+"/"+key] = fakeObject{contentType: "image/png", body: []byte("orphan-test-object"), lastModified: lastModified.UTC()}
 }
 
 func newAssetRouteTestRouter(t *testing.T, uploadConfig config.UploadConfig) (http.Handler, *gorm.DB, *fakeObjectStore, projectRouteSession) {

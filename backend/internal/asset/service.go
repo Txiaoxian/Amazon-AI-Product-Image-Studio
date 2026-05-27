@@ -81,6 +81,9 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.DELETE("/assets/:assetId/favorite", s.UnfavoriteAsset)
 	group.GET("/assets/:assetId/download", s.DownloadAsset)
 	group.GET("/assets/:assetId/thumbnail", s.DownloadThumbnail)
+	admin := group.Group("/admin/storage/orphans")
+	admin.POST("/scan", s.ScanStorageOrphans)
+	admin.POST("/cleanup", s.CleanupStorageOrphans)
 }
 
 func (s *Service) ListAssets(c *gin.Context) {
