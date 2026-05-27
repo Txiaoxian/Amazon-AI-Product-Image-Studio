@@ -27,7 +27,7 @@ Use deterministic, non-guessable object keys:
 
 ```text
 tenants/{tenantId}/projects/{projectId}/assets/{assetId}/original.{ext}
-tenants/{tenantId}/projects/{projectId}/assets/{assetId}/thumb.{ext}
+tenants/{tenantId}/projects/{projectId}/assets/{assetId}/thumbnail.jpg
 ```
 
 Never trust user file names for object keys. Original file names may be stored as metadata after sanitization.
@@ -116,18 +116,25 @@ Worker retries and duplicate queue delivery must not create duplicate output ass
 
 ## Thumbnail generation
 
-Reference uploads and generated/edited Worker outputs should create thumbnails as part of the backend persistence path for new assets.
+Reference uploads and generated/edited Worker outputs create thumbnails as part of the backend persistence path for new assets.
 
-P16 thumbnail policy target:
+P16 thumbnail policy status:
 
-- Generate bounded thumbnails from already validated image bytes on the backend.
+- Backend now generates bounded JPEG thumbnails from already validated image bytes.
 - Store thumbnail bytes in the configured thumbnails bucket, defaulting to `product-thumbnails`.
 - Store only `thumbnail_object_key` in MySQL. Do not store thumbnail blobs in MySQL.
-- Expose thumbnail access only through a same-origin backend-authorized endpoint such as `GET /api/v1/assets/{assetId}/thumbnail`.
+- Expose thumbnail access only through `GET /api/v1/assets/{assetId}/thumbnail`, which uses the same authenticated tenant/object authorization envelope as asset reads.
 - Keep `thumbnailUrl` empty for assets that do not have `thumbnail_object_key`; do not expose MinIO bucket names, object keys, permanent public URLs, or browser-generated thumbnail data.
-- New reference uploads and new Worker outputs should either persist original object, thumbnail object, metadata, task output, and task event consistently or roll back uploaded objects. Do not create asset metadata that points at a missing thumbnail.
-- Existing assets without thumbnails are not backfilled in P16. Backfill and orphan discovery remain storage-governance work.
+- New reference uploads and new Worker outputs either persist original object, thumbnail object, metadata, task output, and task event consistently or roll back uploaded objects. Asset metadata must not point at a missing thumbnail.
+- Existing assets without thumbnails are not backfilled. Backfill and orphan discovery remain storage-governance work.
 - Thumbnail bytes are intentionally bounded operational overhead in this phase. Quota enforcement still uses the existing metadata source of truth until a later schema/counter task explicitly adds thumbnail-byte accounting.
+
+P17 orphan cleanup target:
+
+- Orphan cleanup must be backend-owned and conservative by default.
+- Dry-run and execution must use recognized backend object-key patterns plus MySQL metadata, not bucket listing alone, to identify candidates.
+- Cleanup must be tenant-scoped, batch-limited, retry-safe, auditable, and sanitized.
+- Responses and logs must not expose full bucket names, object keys, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.
 
 ## Deletion
 

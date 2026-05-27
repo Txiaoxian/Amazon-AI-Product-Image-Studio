@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING` 和 `P16-BE-LOG-RETENTION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap 已合并并通过真实 Compose `--up --down` 验证，数据库日志保留已接入 backend settings 与 Worker maintenance consumer。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY` 和 `R16` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证。
 
 已完成的平台基础：
 
@@ -107,8 +107,9 @@
 - R12 已验证 P12 范围内的卖家工作流、统一历史、项目/资产 UI、项目成员 API、最后 `OWNER` 保护、操作日志、权限边界、前端禁止模式和 Compose 配置。
 - 用户/角色管理后端接口和前端管理 UI 已完成；后续租户/团队更深层能力可在新的任务中继续补齐。
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
-- P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING` 和 `P16-BE-LOG-RETENTION`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`。
-- P16 下一切片：`P16-BE-THUMBNAIL-POLICY`。需要为新 reference upload 和 Worker 输出资产生成 MinIO thumbnail object，通过后端鉴权访问，不暴露 bucket/object key/MinIO URL。
+- P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION` 和 `P16-BE-THUMBNAIL-POLICY`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`；新 reference upload 和 Worker 输出资产会生成 MinIO thumbnail object 并通过后端鉴权访问。
+- R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
+- 下一切片：`P17-BE-ORPHAN-CLEANUP`。需要为 MinIO orphan object 增加 conservative scan、dry-run、execution、retry-safe 失败处理和 sanitized audit，不允许仅凭 bucket listing 删除对象。
 - 完整 orphan cleanup 仍需实现。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
@@ -498,7 +499,7 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
-- 非阻塞遗留：缩略图策略、完整 orphan cleanup、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中缩略图策略是当前 P16 下一任务。
+- 非阻塞遗留：完整 orphan cleanup、Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 orphan cleanup 是当前 P17 下一任务。
 
 ## 稳定生产上线路线图
 
@@ -519,8 +520,10 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 已完成并合并。
 3. `P16-BE-THUMBNAIL-POLICY`
    - 明确并落地缩略图策略，推荐生成 MinIO thumbnail object 并经后端鉴权访问。
+   - 已完成并合并。
 4. `R16`
    - 主 agent review P16 全部代码和回归。
+   - 已完成。未发现阻塞问题。
 
 ### P17：存储治理与生产观测
 
@@ -544,7 +547,227 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P16-BE-THUMBNAIL-POLICY
+## 下一个任务包：P17-BE-ORPHAN-CLEANUP
+
+### 调度决策
+
+- 本任务串行执行，不与 quota reservation、observability metrics 或 Provider/model serialization 并行。
+- 理由：orphan cleanup 会触达 MinIO listing、对象删除、资产 metadata truth、审计日志和生产运维安全边界；先把保守扫描和删除合同稳定下来，再推进严格 quota reservation。
+- 本任务只实现后端 owned orphan scan / dry-run / cleanup 能力。不得把它做成 system-settings 字段，也不得暴露 bucket/object key 给前端。
+
+### 任务信息
+
+- 任务名称：`P17-BE-ORPHAN-CLEANUP`
+- 目标：为 MinIO 中不再被 MySQL 可信 metadata 引用的对象增加 conservative discovery、dry-run、execution、retry-safe failure handling 和 sanitized audit 支持。
+- 推荐线程名：`P17-BE-ORPHAN-CLEANUP`
+- 推荐分支名：`codex/p17-backend-orphan-cleanup`
+- 起始分支：已完成 R16 的最新 `main`
+- 前置依赖：P16 thumbnail policy 已合并，`image_assets.object_key`、`image_assets.thumbnail_object_key`、P13 physical cleanup foundation、P16 thumbnail bucket、operation logs、RBAC/auth middleware 和 storage ObjectStore 均可复用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P17-BE-ORPHAN-CLEANUP`。
+
+你必须在分支 `codex/p17-backend-orphan-cleanup` 上工作；如果当前不在该分支，先执行 `git switch codex/p17-backend-orphan-cleanup`，确认 `git branch --show-current` 后再继续。起始点必须包含已完成 R16 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p17-backend-orphan-cleanup` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+为生产存储治理增加后端 conservative orphan cleanup 能力：
+- 能扫描 configured originals/generated/thumbnails buckets 中符合后端对象命名规则的对象。
+- 能与 MySQL `image_assets.object_key` / `image_assets.thumbnail_object_key` 可信 metadata 对比，识别“可疑 orphan candidate”。
+- 默认 dry-run，不删除对象。
+- 显式 cleanup 时必须 batch-limited、age-gated、tenant-scoped、retry-safe、auditable，并且不泄漏 bucket/object key/MinIO URL。
+- 删除 eligibility 必须同时满足 recognized backend object-key pattern、tenant scope、older-than grace period、未被可信 MySQL metadata 引用。禁止只因为 bucket listing 里有陌生对象就删除。
+
+允许修改文件：
+- `backend/internal/storage/**`
+- `backend/internal/asset/**`
+- `backend/internal/api/**`
+- `backend/internal/audit/**` 仅限复用或补充测试 helper；不要改变既有 audit 公共行为
+- `backend/internal/config/**` 仅限新增 orphan cleanup 的安全默认配置或测试覆盖
+- `backend/internal/database/**` 仅限查询 helper 或测试 schema 补齐；默认不要新增表或迁移，除非实现无法审计/重试并先在交付中说明
+- `backend/internal/httpx/**` 仅限复用现有错误响应；一般不应修改
+- backend-only 测试文件
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/JWT/Cookie 主流程、SSE、Redis queue、Worker claim/cancel/retry/timeout 状态机、task execution 主流程、system settings、log retention runtime、thumbnail 生成算法
+- 不新增 AI Provider 直连、Provider key 处理、前端轮询、浏览器存储、公共 MinIO URL、signed URL 或 object-key 暴露
+
+前置阅读：
+- `docs/api-contract.md` 的 Admin Storage Orphan APIs
+- `docs/storage.md` 的 P17 orphan cleanup target
+- `docs/security.md` 的 P17 orphan cleanup 安全要求
+- `backend/internal/storage/store.go`
+- `backend/internal/asset/cleanup.go`
+- `backend/internal/asset/repository.go`
+- `backend/internal/asset/service.go`
+- `backend/internal/api/router.go`
+- `backend/internal/api/*_routes_test.go` 中 admin/auth/RBAC 测试模式
+- `backend/internal/audit/recorder.go`
+
+具体开发内容：
+1. Storage listing abstraction：
+   - 为 ObjectStore 增加受控 listing 能力，或新增最小接口，只允许后端代码按 bucket/prefix/cursor/batch limit 列出对象 metadata。
+   - MinIO 实现必须支持 bounded listing，不得一次性加载整个 bucket。
+   - fake/in-memory store 测试实现必须覆盖 list cursor、not-found delete、delete failure 等情况。
+2. Orphan candidate 识别：
+   - 只识别后端生成的对象路径：
+     - `tenants/{tenantId}/projects/{projectId}/assets/{assetId}/original.{ext}`
+     - `tenants/{tenantId}/projects/{projectId}/assets/{assetId}/thumbnail.jpg`
+     - 当前 generated/edited output object key 既有格式也必须覆盖，以代码实际格式为准。
+   - 解析失败、tenant/project/asset ID 异常、bucket kind 不匹配、对象过新、tenant 不匹配、对象仍被 `image_assets.object_key` 或 `image_assets.thumbnail_object_key` 引用时，一律 skip。
+   - 候选必须 older-than configurable/default grace period。建议默认最小 24 小时；测试可注入更小时间。
+   - MySQL metadata 是可信 truth。不要以 MinIO listing 反推资产存在。
+3. Admin API：
+   - 新增 `POST /api/v1/admin/storage/orphans/scan`，dry-run only。
+   - 新增 `POST /api/v1/admin/storage/orphans/cleanup`，默认 dry-run；只有 `dryRun=false` 且 `confirm="DELETE_ORPHANS"` 时才执行删除。
+   - 要求 tenant admin 或 `system:settings:manage` 权限；不引入新权限码，除非发现现有 RBAC 无法表达并先报告。
+   - Tenant admin 只能操作自己的 tenant；如果请求中带其他 tenant ID，必须拒绝或忽略为当前 tenant，不能跨租户扫描/删除。
+   - Response 只返回 aggregate counts、bucket kind、tenantId、skipped/error categories、candidate hashes/opaque IDs。禁止返回 raw bucket/object key/MinIO endpoint。
+4. Execution / retry / audit：
+   - Cleanup 必须 batch-limited；达到 batch limit 时返回 `hasMore` 或 cursor 信息，供后续调用继续。
+   - 删除 missing object 应视为 idempotent success。
+   - 删除失败必须记录 sanitized error kind，不能中断已完成对象的结果，但整体响应要体现 failed count。
+   - 失败 candidate 后续 scan 应仍可发现，方便 retry。
+   - 执行 cleanup 必须写 operation log，metadata 只包含 aggregate counts、bucket kinds、tenantId、dryRun/execute、skipped/error categories 和 hash/opaque sample，不包含 raw object key。
+   - Dry-run 可以写 `storage.orphan.scan` operation log；execute 写 `storage.orphan.cleanup`。
+5. 错误与安全：
+   - 所有错误走现有统一错误响应，保持 sanitized。
+   - Storage unavailable、list failure、delete failure、malformed request、permission denied、cross-tenant request 均需有明确测试。
+   - 不要把 orphan cleanup 暴露到 frontend UI；本任务是后端/API 能力。
+
+安全要求：
+- 不允许基于 bucket listing 单独删除对象。
+- 不允许删除不符合后端对象命名规则的对象；陌生对象必须 skip。
+- 不允许返回或记录 raw bucket name、object key、MinIO URL、signed URL、image base64、Authorization、Cookie、JWT、Provider Key。
+- 所有查询必须 tenant-scoped，所有 object ID 或 candidate 操作必须做 object/tenant-level 判断。
+- Dry-run 是默认行为；执行删除必须显式确认。
+- 不得 drop 数据库、删除共享 bucket、flush Redis 或清空 MinIO。
+- 如果使用共享本地 MySQL/Redis/MinIO 验证，只能创建带 `codex_p17_orphan_cleanup_` 前缀或明显测试路径的数据，并在交付中说明是否清理。
+
+必须保持的现有行为：
+- 正常 asset upload/download/detail/list/delete/favorite/update 不回归。
+- P13 soft-delete physical cleanup foundation 不回归。
+- P16 thumbnail generation/download/cleanup 不回归。
+- Storage quota、storage retention、log retention、task Worker 输出、SSE、Provider Adapter 运行时不回归。
+- Frontend 不变。
+
+允许的中间态：
+- 可以先实现 service + focused tests，再接 admin routes。
+- 可以先只支持 originals/generated/thumbnails 当前配置 bucket；不需要支持任意 bucket 名。
+- 可以不新增数据库表，使用 operation logs 记录 aggregate cleanup result。
+
+禁止的半迁移状态：
+- API 返回 candidate object keys 或 bucket names。
+- Cleanup endpoint 默认执行删除。
+- 只按 bucket listing 删除对象。
+- 跨租户 admin 可以扫描/删除其他 tenant 对象。
+- 删除仍被 MySQL metadata 引用的 original 或 thumbnail object。
+- Listing 一次性读完整 bucket，缺少 batch/cursor/limit。
+- Storage delete 失败后响应假装全部成功。
+- 为 orphan cleanup 新增 system-settings writable 字段但没有真实 runtime consumer。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| dry-run 扫描有 orphan candidate | 返回 sanitized aggregate 和 candidate hash，不删除对象 | 是 |
+| cleanup 未传 confirm 或 dryRun 省略 | 保持 dry-run，不删除对象 | 是 |
+| cleanup dryRun=false 且 confirm 正确 | 只删除 eligible candidate，写 sanitized audit | 是 |
+| 对象 key 格式陌生 | skip，不删除，不返回 raw key | 是 |
+| 对象仍被 object_key 引用 | skip，不删除 | 是 |
+| 对象仍被 thumbnail_object_key 引用 | skip，不删除 | 是 |
+| 对象过新 | skip，不删除 | 是 |
+| 跨租户请求 | 拒绝或限定当前 tenant，不能扫描/删除其他 tenant | 是 |
+| 非 admin/无权限用户 | 403，不能泄漏 candidate 存在性 | 是 |
+| storage list 失败 | sanitized error 或 failed count，无 raw storage path | 是 |
+| delete not found | idempotent success | 是 |
+| delete failed | failed count/error kind，candidate 后续可 retry | 是 |
+| batch limit 达到 | 返回 hasMore/cursor，不超量删除 | 是 |
+
+必须新增或更新的回归测试：
+- `backend/internal/storage/**`：listing abstraction/fake store cursor、delete not-found/delete failure。
+- `backend/internal/asset/**`：orphan candidate parsing、metadata exclusion、age gate、tenant scope、dry-run no delete、execute delete、failed delete retry-safe、audit metadata sanitized。
+- `backend/internal/api/**`：admin scan/cleanup auth/RBAC、CSRF、dry-run default、explicit confirm execute、cross-tenant denial、response no raw object key/bucket/MinIO URL。
+- 如修改 config，补 `backend/internal/config/**` 测试。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/storage ./internal/asset ./internal/api -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- failure matrix 到具体测试文件/测试名的映射。
+- 安全自查结果，明确没有 raw object key/bucket/MinIO URL 泄漏，没有 bucket-listing-only deletion，没有跨租户扫描/删除，没有 Provider 直连、前端轮询或浏览器存储变更。
+- 刻意未修改范围，特别说明 strict quota reservation、frontend UI、Prometheus/metrics、Provider/model serialization、real Provider smoke 不在本任务内。
+- 如使用共享本地 MySQL/Redis/MinIO，说明创建/修改/清理了哪些 `codex_p17_orphan_cleanup_*` 测试数据；默认优先使用自动化测试和 fake store。
+- 如发现公共合同缺口，只报告主 agent，不修改 docs。
+```
+
+### 允许修改文件
+
+- `backend/internal/storage/**`
+- `backend/internal/asset/**`
+- `backend/internal/api/**`
+- `backend/internal/audit/**` 仅限测试/helper
+- `backend/internal/config/**` 仅限必要配置和测试
+- `backend/internal/database/**` 仅限必要查询 helper 或测试 schema
+- backend-only 测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理、认证/JWT/Cookie 主流程、SSE、Redis queue、Worker claim/cancel/retry/timeout 状态机、task execution 主流程、system settings、log retention runtime、thumbnail 生成算法
+
+### 验收标准
+
+- Admin dry-run scan 能发现 eligible orphan candidate，但不删除对象。
+- Admin cleanup 只有在 `dryRun=false` 且确认字符串正确时执行删除。
+- Candidate eligibility 同时依赖 recognized backend object-key pattern、tenant scope、age gate 和 MySQL metadata exclusion。
+- Response 和 operation log 不包含 raw bucket、object key、MinIO URL、signed URL 或敏感凭据。
+- Listing 和 cleanup batch-limited，支持 retry-safe failed delete。
+- 正常 asset upload/download/thumbnail/retention/quota/Worker 路径不回归。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/storage ./internal/asset ./internal/api -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+## 最近已完成任务包：P16-BE-THUMBNAIL-POLICY
 
 ### 调度决策
 

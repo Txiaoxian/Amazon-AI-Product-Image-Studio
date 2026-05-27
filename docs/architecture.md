@@ -13,9 +13,9 @@ The repository started as a pure frontend local app:
 
 This baseline was preserved during the early platformization phases so existing UI concepts could be migrated instead of rewritten.
 
-## Current Platform State During P16
+## Current Platform State After R16
 
-The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has completed P15 release hardening. P16 is in progress: deployment script cleanup traps and backend database-log retention are merged; thumbnail policy remains. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, MinIO-backed reference/generated/edited assets, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, release validation, security regression, deployment runbook, and Docker Compose release checks.
+The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has completed P16 production launch hardening. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, MinIO-backed reference/generated/edited assets, backend-generated authorized thumbnails for new assets, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, release validation, security regression, deployment runbook, and Docker Compose release checks.
 
 Important current facts:
 
@@ -28,9 +28,9 @@ Important current facts:
 - The backend now exposes tenant `taskDefaults` and consumes them only when task creation omits both Provider/model IDs. Malformed persisted defaults fail closed for default-backed requests without task creation side effects.
 - The backend now exposes tenant `taskConcurrency` only with a Worker runtime consumer. Tenant values can narrow environment hard caps, global concurrency remains deployment-owned, and malformed persisted concurrency settings fail closed before Provider execution.
 - The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays` and `logRetention` settings; unset/null/malformed settings fail closed and do not delete anything.
-- Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, and a deployment runbook. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
+- Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, R16 validation, and a deployment runbook. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P16 continues with backend thumbnail policy. Writable settings still cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P17 starts storage governance with conservative orphan cleanup, then strict quota reservation and production diagnostics. Writable settings still cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 

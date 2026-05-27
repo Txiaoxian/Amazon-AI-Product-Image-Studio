@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P16 Log Retention
+## Current State After R16 Production Launch Hardening
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -40,7 +40,7 @@ Phase status:
 | P13 | Complete | Runtime-backed tenant task defaults, malformed-row hardening, task concurrency policy, storage cleanup foundation, storage retention runtime, storage quota accounting, frontend system settings, and R13 regression are complete. |
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
-| P16 | In Progress | Deployment script failure cleanup and runtime database log retention are complete; thumbnail policy remains. |
+| P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
 | P17 | Planned | Long-running storage and observability operations: orphan cleanup, strict storage quota reservation, and production diagnostics. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
@@ -102,6 +102,10 @@ R15 reviewed the complete P15 range from `3db7980..HEAD` and found no blocking r
 
 `P16-BE-LOG-RETENTION` was reviewed, fixed, and merged. Backend `logRetention` is now runtime-backed: the admin system-settings API can read/write nullable retention days for `operation_logs`, `api_call_logs`, and `task_events`, and the Worker maintenance loop consumes those settings per active tenant. Cleanup is batch-limited, tenant-scoped, fail-closed for malformed settings, preserves non-terminal task events for SSE/recovery, and records sanitized aggregate cleanup audit metadata. Validation passed focused settings/API/Worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
+`P16-BE-THUMBNAIL-POLICY` was reviewed, fixed, and merged. New reference uploads and Worker generated/edited outputs now generate bounded backend JPEG thumbnails, store them in the configured MinIO thumbnails bucket, persist `thumbnail_object_key`, return `/api/v1/assets/{assetId}/thumbnail` only when a thumbnail exists, and stream thumbnails through backend `asset:read` authorization. Existing assets without thumbnails remain usable with empty `thumbnailUrl`, and thumbnail bytes remain outside quota accounting until a later explicit schema/counter task.
+
+R16 reviewed the complete P16 range from `4b1913e..HEAD` and found no blocking issues. Validation passed backend focused tests, full backend tests, race tests, vet, API/Worker builds, frontend lint/type-check/test/build, Docker Compose config, security regression, default deployment release validation, live `scripts/deploy-release-validation.sh --up --down`, and post-cleanup container/volume checks.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -110,7 +114,7 @@ The current `main` branch supports:
 - Backend tenant user administration: list, create, detail, update safe fields, disable/enable, role assignment, role reads, and permission reads.
 - Frontend tenant user/role administration UI gated by `user:*` and `role:*` permissions, with password inputs kept transient and write requests sent through CSRF-protected backend APIs.
 - Project and project-member management foundations, including backend last-`OWNER` protection for member update/delete paths.
-- MinIO-backed reference/generated/edited image assets with backend authorization.
+- MinIO-backed reference/generated/edited image assets with backend authorization and backend-generated authorized JPEG thumbnails for new assets.
 - Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
 - Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
 - Frontend workbench submission through backend task APIs and SSE only.
@@ -272,10 +276,12 @@ Suggested order:
 3. `P16-BE-THUMBNAIL-POLICY`
    - Decide and implement the production thumbnail policy.
    - Preferred target: generate MinIO thumbnail objects for uploaded references and Worker outputs, store only metadata/object keys in MySQL, and make frontend asset/history views use authorized thumbnail access.
+   - Completed and merged. New reference uploads and Worker outputs generate bounded JPEG thumbnails in MinIO, persist `thumbnail_object_key`, expose authorized same-origin thumbnail URLs, keep legacy no-thumbnail assets usable, and preserve cleanup rollback behavior.
 4. `R16`
    - Review production launch hardening as a batch before moving into long-running storage operations.
+   - Completed. Full P16 review and regression found no blocking issues.
 
-Parallelism: P16 remains serial. `P16-BE-THUMBNAIL-POLICY` should start from latest `main` after `P16-BE-LOG-RETENTION` is merged.
+Parallelism: P16 is complete. Move to P17 from latest `main`.
 
 ### P17: Storage Governance And Observability
 
@@ -370,6 +376,6 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P16-BE-THUMBNAIL-POLICY` from latest `main`. `P16-DEPLOY-SCRIPT-HARDENING` and `P16-BE-LOG-RETENTION` are merged and verified. The next launch-hardening risk is the current placeholder thumbnail contract: asset responses expose `thumbnailUrl`, cleanup handles `thumbnail_object_key`, and the schema stores `thumbnail_object_key`, but new uploads and Worker outputs still do not generate thumbnail objects or authorized thumbnail URLs.
+Start `P17-BE-ORPHAN-CLEANUP` from latest `main`. P16 is merged and reviewed. The next production risk is storage drift after partial failures, interrupted cleanup, manual operator mistakes, or future lifecycle changes: MinIO may contain objects that are no longer represented by trusted MySQL metadata.
 
-The P16 thumbnail contract is deliberately limited to new reference uploads and Worker-created generated/edited outputs. It should generate bounded MinIO thumbnail objects, store only `thumbnail_object_key` metadata, and expose same-origin backend-authorized thumbnail access. It must not expose MinIO URLs, bucket names, object keys, image base64, or browser-side thumbnail generation as the platform source of truth. Backfill for existing assets and advanced orphan discovery remain later storage-governance work.
+The P17 orphan cleanup task must be conservative. It should add backend-owned orphan discovery, dry-run, execution, retry-safe failure handling, and sanitized audit support, but it must never delete objects solely because a bucket listing looks unfamiliar. MySQL metadata and recognized backend object-key patterns remain the source of truth for deciding whether an object is eligible for cleanup.

@@ -286,6 +286,7 @@ Follow-up status:
 
 - P16 has added the cleanup trap so a failed or interrupted `--up --down` run still attempts automatic Compose cleanup.
 - P16 has added backend database-log retention through the Worker maintenance process. Operators still manage container stdout/stderr and external log aggregation retention outside the backend `logRetention` setting.
+- P16 has added backend-generated asset thumbnails for new reference uploads and Worker outputs. Operators must keep the configured thumbnails bucket available along with originals/generated buckets; object access still goes through backend authorization.
 
 ## R15 deployment readiness result
 
@@ -335,5 +336,21 @@ Actual checks passed:
 Validation date: 2026-05-27.
 
 `P16-BE-LOG-RETENTION` was reviewed, fixed, and merged. Backend `logRetention` covers database-backed `operation_logs`, `api_call_logs`, and terminal-task `task_events` only. The Worker maintenance loop consumes active tenant settings, applies bounded batch cleanup, preserves non-terminal task events for SSE/recovery, and records sanitized aggregate audit metadata. Container stdout/stderr, host logs, and external log aggregation retention remain deployment/operator responsibilities.
+
+## R16 production launch hardening result
+
+R16 reviewed the full P16 range after deployment script hardening, backend log retention, and backend thumbnail policy were merged. No blocking deployment issues were found.
+
+Validation passed:
+
+- `bash scripts/deploy-release-validation-test.sh`
+- `bash scripts/security-regression.sh`
+- `bash scripts/deploy-release-validation.sh`
+- `bash scripts/deploy-release-validation.sh --up --down`
+- `docker compose -f deploy/docker-compose.yml ps -a`
+- `docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true`
+- `docker compose -f deploy/docker-compose.yml config`
+
+The live Compose run verified MySQL, Redis, MinIO, MinIO bootstrap, backend API, backend Worker, and frontend health checks; backend `/healthz`; frontend `/api/` proxy health; SSE auth-boundary routing; and cleanup of project containers and volumes.
 
 Live Compose validation confirmed the stack reached healthy/running state, frontend `/api/` and SSE auth-boundary proxy checks passed, cleanup completed, and follow-up checks showed no project containers or project volumes left behind.

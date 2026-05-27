@@ -83,7 +83,7 @@ P13 storage cleanup foundation status:
 - `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds nullable physical purge marker `purged_at` and index `(tenant_id, deleted_at, purged_at)`.
 - Physical cleanup queries must include `tenant_id`, `deleted_at IS NOT NULL`, `deleted_at < cutoff`, and `purged_at IS NULL`.
 - `purged_at` records object cleanup completion only. It must not replace `deleted_at`, and cleanup must not hard-delete `image_assets` rows.
-- `thumbnail_object_key` is reserved for backend-generated MinIO thumbnail objects. P16 thumbnail policy should make it active for new reference uploads and Worker outputs; MySQL still stores only metadata/object keys, not image bytes.
+- `thumbnail_object_key` is active for backend-generated MinIO thumbnail objects after `P16-BE-THUMBNAIL-POLICY`. New reference uploads and Worker generated/edited outputs persist this key when a bounded JPEG thumbnail has been stored. MySQL still stores only metadata/object keys, not image bytes.
 
 ### prompt_templates
 
@@ -216,7 +216,7 @@ Implementation notes:
 - `taskEventRetentionDays` cleanup must only delete events for terminal tasks older than the cutoff. It must not delete events for queued, running, cancelling, or retryable tasks because `task_events` is the SSE replay source.
 - Log retention applies only to existing database-backed logs: `operation_logs`, `api_call_logs`, and `task_events`. It does not manage container stdout/stderr, external log aggregation, or MinIO object cleanup.
 - Malformed or unsupported `log_retention` values must fail closed for Worker cleanup: skip deletion for that tenant and log sanitized metadata only.
-- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption. `P13-BE-STORAGE-RETENTION-RUNTIME` merged `storage_retention` read/write and Worker maintenance consumption. `P13-BE-STORAGE-QUOTA-ACCOUNTING` merged `storage_quota` read/write, computed usage, and asset-write consumers. `P16-BE-LOG-RETENTION` merged `log_retention` read/write and Worker maintenance cleanup.
+- Implementation status: `P9-BE-RUNTIME-SETTINGS-CONTRACT` merged the `system_settings` model/migration and `upload_policy` runtime path. `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING` merged the `task_defaults` path and malformed-row fail-closed behavior. `P13-BE-CONCURRENCY-POLICY` merged `task_concurrency` read/write and Worker consumption. `P13-BE-STORAGE-RETENTION-RUNTIME` merged `storage_retention` read/write and Worker maintenance consumption. `P13-BE-STORAGE-QUOTA-ACCOUNTING` merged `storage_quota` read/write, computed usage, and asset-write consumers. `P16-BE-LOG-RETENTION` merged `log_retention` read/write and Worker maintenance cleanup. `P16-BE-THUMBNAIL-POLICY` activated `image_assets.thumbnail_object_key` for new assets without adding image blobs to MySQL.
 
 ## Indexing expectations
 

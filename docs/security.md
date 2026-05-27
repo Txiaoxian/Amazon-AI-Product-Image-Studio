@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current Transition Risks After P16 Hardening
+## Current Transition Risks After R16 Production Launch Hardening
 
-The current `main` branch has completed P15 release hardening plus P16 deployment-script cleanup and backend database-log retention. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P15 release hardening plus P16 deployment-script cleanup, backend database-log retention, backend thumbnail policy, and R16 regression. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -58,7 +58,8 @@ Resolved transition item:
 - R15 release-readiness review re-ran the final security regression and deployment validation on latest `main`; no blocking security issues were found, and live Compose cleanup left no project containers or project volumes.
 - P16 deploy script hardening now adds scoped cleanup traps to `scripts/deploy-release-validation.sh --up --down`, including failure and SIGINT/SIGTERM paths. Validation confirmed no project Compose containers or volumes remain after live deployment checks.
 - P16 backend log retention now exposes `logRetention` only with a Worker runtime consumer. Cleanup is tenant-scoped, batch-limited, skips malformed settings fail-closed, preserves non-terminal task events for SSE/recovery, and records only sanitized aggregate audit metadata.
-- P16 thumbnail policy must keep thumbnail generation and access backend-owned. Thumbnail endpoints must authenticate and authorize the asset, stream through the backend, avoid public MinIO URLs, and never expose bucket names, object keys, image base64, Authorization, Cookie, JWT, or Provider secrets. Generated thumbnail bytes must be bounded and derived only from images that passed backend validation.
+- P16 thumbnail policy is now backend-owned. New thumbnails are generated only from images that passed backend validation, stored in MinIO, and accessed through `GET /api/v1/assets/{assetId}/thumbnail` after login, tenant, project/member, RBAC, and object authorization checks. Responses and logs must continue to avoid bucket names, object keys, MinIO URLs, image base64, Authorization, Cookie, JWT, and Provider secrets.
+- P17 orphan cleanup must be conservative. It may scan storage only through backend code, but deletion eligibility must require recognized backend object-key patterns and absence from trusted MySQL metadata; a raw bucket listing is not sufficient. Dry-run and execution responses must use sanitized aggregate counts and hashes/opaque IDs instead of raw object keys.
 - P13 storage quota accounting now exposes nullable `storageQuota.maxBytes` only with real backend consumers. `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata; upload and Worker output quota failures must not create successful metadata, output events, usage records, success logs, or leak object identifiers.
 
 Storage and P5 review hardening backlog:
