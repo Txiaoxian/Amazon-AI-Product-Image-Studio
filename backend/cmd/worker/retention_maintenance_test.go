@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -125,6 +127,62 @@ func TestRetentionMaintenanceRunOnceProcessesLogRetentionOnlyForValidActiveTenan
 	}
 	if call.operationDays == nil || *call.operationDays != 30 || call.apiCallDays != nil || call.taskEventDays == nil || *call.taskEventDays != 7 {
 		t.Fatalf("log cleanup config = %#v, want operation=30 api=nil task=7", call)
+	}
+}
+
+func TestRetentionMaintenanceRunOnceContinuesAfterLogCleanupFailureWithSanitizedWarning(t *testing.T) {
+	db := newRetentionMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "ACTIVE", now)
+	seedLogRetentionSetting(t, db, "tenant-a", `{"operationLogRetentionDays":30,"apiCallLogRetentionDays":14,"taskEventRetentionDays":7}`, now)
+	seedLogRetentionSetting(t, db, "tenant-b", `{"operationLogRetentionDays":30,"apiCallLogRetentionDays":14,"taskEventRetentionDays":7}`, now)
+
+	var logs bytes.Buffer
+	cleaner := &fakeLogRetentionCleaner{
+		errByTenant: map[string]error{
+			"tenant-a": fmt.Errorf("bucket product-originals object_key tenant-a/raw.png api_key super-secret: %w", errLogRetentionCleanupFailed),
+		},
+		summaryByTenant: map[string]logRetentionCleanupSummary{
+			"tenant-a": {
+				OperationLogs: logRetentionCategorySummary{Processed: 3, Deleted: 2, Failed: 1},
+				APICallLogs:   logRetentionCategorySummary{Processed: 4, Deleted: 3, Failed: 1},
+				TaskEvents:    logRetentionCategorySummary{Processed: 5, Deleted: 4, Failed: 1},
+			},
+			"tenant-b": {
+				OperationLogs: logRetentionCategorySummary{Processed: 1, Deleted: 1},
+				APICallLogs:   logRetentionCategorySummary{Processed: 1, Deleted: 1},
+				TaskEvents:    logRetentionCategorySummary{Processed: 1, Deleted: 1},
+			},
+		},
+	}
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(&logs, nil)), retentionMaintenanceOptions{
+		Interval:   time.Hour,
+		BatchLimit: 11,
+		Now:        func() time.Time { return now },
+		LogCleaner: cleaner,
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	if len(cleaner.calls) != 2 {
+		t.Fatalf("log cleanup calls = %#v, want tenant-a failure then tenant-b success", cleaner.calls)
+	}
+	if cleaner.calls[0].tenantID != "tenant-a" || cleaner.calls[1].tenantID != "tenant-b" {
+		t.Fatalf("log cleanup call order = %#v, want tenant-a then tenant-b", cleaner.calls)
+	}
+
+	logOutput := strings.ToLower(logs.String())
+	for _, required := range []string{"log retention cleanup failed", "tenant-a", "cleanup_failed", "operation_processed=3", "api_call_processed=4", "task_event_processed=5"} {
+		if !strings.Contains(logOutput, required) {
+			t.Fatalf("warning log missing %q: %s", required, logs.String())
+		}
+	}
+	for _, forbidden := range []string{"product-originals", "object_key", "raw.png", "api_key", "super-secret", "bucket"} {
+		if strings.Contains(logOutput, forbidden) {
+			t.Fatalf("warning log leaked %q: %s", forbidden, logs.String())
+		}
 	}
 }
 
@@ -277,6 +335,40 @@ func TestDatabaseLogRetentionCleanerReturnsContextCancelWithoutDeleting(t *testi
 	assertRowExists(t, db, &database.OperationLog{}, "id = ?", "op-old")
 }
 
+func TestDatabaseLogRetentionCleanerSQLFailureReturnsSanitizedErrorAndRollsBack(t *testing.T) {
+	db := newLogRetentionCleanerTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedOperationLog(t, db, "tenant-a", "op-old", now.Add(-31*24*time.Hour))
+	if err := db.Exec("DROP TABLE api_call_logs").Error; err != nil {
+		t.Fatalf("drop api_call_logs to induce SQL failure: %v", err)
+	}
+	cleaner := newDatabaseLogRetentionCleaner(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	summary, err := cleaner.CleanupLogRetention(context.Background(), settings.EnabledLogRetention{
+		TenantID:                  "tenant-a",
+		OperationLogRetentionDays: ptrWorkerInt(30),
+		APICallLogRetentionDays:   ptrWorkerInt(30),
+	}, now, 100)
+	if !errors.Is(err, errLogRetentionCleanupFailed) {
+		t.Fatalf("CleanupLogRetention error = %v, want errLogRetentionCleanupFailed", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "api_call_logs") {
+		t.Fatalf("cleanup error leaked SQL table name: %v", err)
+	}
+	if summary.OperationLogs.Processed != 1 || summary.OperationLogs.Deleted != 1 {
+		t.Fatalf("operation summary = %#v, want attempted processed/deleted before rollback", summary.OperationLogs)
+	}
+	assertRowExists(t, db, &database.OperationLog{}, "id = ?", "op-old")
+	var auditRows int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ?", "tenant-a", actionLogRetentionCleanup).Count(&auditRows).Error; err != nil {
+		t.Fatalf("count cleanup audit logs: %v", err)
+	}
+	if auditRows != 0 {
+		t.Fatalf("cleanup audit rows after SQL failure = %d, want 0", auditRows)
+	}
+}
+
 type fakeRetentionCleaner struct {
 	calls       []retentionCleanupCall
 	errByTenant map[string]error
@@ -301,8 +393,10 @@ func (c *fakeRetentionCleaner) PurgeDeletedAssets(ctx context.Context, tenantID 
 }
 
 type fakeLogRetentionCleaner struct {
-	calls     []logRetentionCleanupCall
-	afterCall func()
+	calls           []logRetentionCleanupCall
+	errByTenant     map[string]error
+	summaryByTenant map[string]logRetentionCleanupSummary
+	afterCall       func()
 }
 
 type logRetentionCleanupCall struct {
@@ -326,7 +420,11 @@ func (c *fakeLogRetentionCleaner) CleanupLogRetention(ctx context.Context, confi
 	if c.afterCall != nil {
 		c.afterCall()
 	}
-	return logRetentionCleanupSummary{}, ctx.Err()
+	summary := c.summaryByTenant[config.TenantID]
+	if err := c.errByTenant[config.TenantID]; err != nil {
+		return summary, err
+	}
+	return summary, ctx.Err()
 }
 
 func assertRetentionCleanupCall(t *testing.T, got retentionCleanupCall, tenantID string, cutoff time.Time, batchLimit int) {
