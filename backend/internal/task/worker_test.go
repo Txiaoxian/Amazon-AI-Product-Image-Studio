@@ -1961,6 +1961,10 @@ func (s *memoryObjectStore) GetObject(_ context.Context, bucket string, key stri
 	return storage.Object{Body: io.NopCloser(bytes.NewReader(data)), Size: int64(len(data)), ContentType: "image/png"}, nil
 }
 
+func (s *memoryObjectStore) ListObjects(context.Context, storage.ListObjectsInput) (storage.ListObjectsResult, error) {
+	return storage.ListObjectsResult{}, nil
+}
+
 func (s *memoryObjectStore) RemoveObject(_ context.Context, bucket string, key string) error {
 	if s.failRemove != nil {
 		return s.failRemove

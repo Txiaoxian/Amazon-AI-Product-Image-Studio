@@ -149,6 +149,10 @@ func (s *cleanupFakeStore) GetObject(context.Context, string, string) (storage.O
 	return storage.Object{Body: io.NopCloser(bytes.NewReader(nil))}, nil
 }
 
+func (s *cleanupFakeStore) ListObjects(context.Context, storage.ListObjectsInput) (storage.ListObjectsResult, error) {
+	return storage.ListObjectsResult{}, nil
+}
+
 func (s *cleanupFakeStore) RemoveObject(_ context.Context, bucket string, key string) error {
 	s.removed = append(s.removed, removedObject{bucket: bucket, key: key})
 	if err := s.errByObject[bucket+"/"+key]; err != nil {
