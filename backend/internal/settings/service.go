@@ -28,6 +28,8 @@ import (
 const (
 	minStorageRetentionDays = 1
 	maxStorageRetentionDays = 3650
+	minLogRetentionDays     = 1
+	maxLogRetentionDays     = 3650
 	minStorageQuotaBytes    = 1
 	maxStorageQuotaBytes    = int64(109951162777600)
 )
@@ -123,6 +125,12 @@ func (s *Service) PatchSystemSettings(c *gin.Context) {
 			return
 		}
 	}
+	if patch.LogRetention != nil {
+		if _, err := s.UpdateLogRetention(c.Request.Context(), principal, *patch.LogRetention, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			s.respondError(c, err)
+			return
+		}
+	}
 
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
@@ -190,7 +198,11 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention, StorageQuota: storageQuota}, nil
+	logRetention, err := LoadLogRetention(ctx, s.repo, scope)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention, StorageQuota: storageQuota, LogRetention: logRetention}, nil
 }
 
 func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) (TaskDefaults, error) {
@@ -281,6 +293,24 @@ func LoadStorageQuota(ctx context.Context, repo Repository, scope tenant.Scope) 
 	return quota, nil
 }
 
+func LoadLogRetention(ctx context.Context, repo Repository, scope tenant.Scope) (LogRetention, error) {
+	record, ok, err := repo.FindByKey(ctx, scope, KeyLogRetention)
+	if err != nil {
+		return LogRetention{}, err
+	}
+	if !ok {
+		return LogRetention{}, nil
+	}
+	retention, err := decodeStoredLogRetention(record.ValueJSON)
+	if err != nil {
+		return LogRetention{}, ErrStoredLogRetentionInvalid
+	}
+	if err := validateLogRetention(retention); err != nil {
+		return LogRetention{}, ErrStoredLogRetentionInvalid
+	}
+	return retention, nil
+}
+
 func LoadStorageQuotaWithUsage(ctx context.Context, repo Repository, scope tenant.Scope) (StorageQuota, error) {
 	quota, err := LoadStorageQuota(ctx, repo, scope)
 	if err != nil {
@@ -347,6 +377,37 @@ func LoadEnabledStorageRetentions(ctx context.Context, repo Repository) ([]Enabl
 		enabled = append(enabled, EnabledStorageRetention{
 			TenantID:                  record.TenantID,
 			DeletedAssetRetentionDays: *retention.DeletedAssetRetentionDays,
+		})
+	}
+	return enabled, invalid, nil
+}
+
+func LoadEnabledLogRetentions(ctx context.Context, repo Repository) ([]EnabledLogRetention, []InvalidLogRetention, error) {
+	records, err := repo.ListByKeyForActiveTenants(ctx, KeyLogRetention)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	enabled := make([]EnabledLogRetention, 0, len(records))
+	invalid := make([]InvalidLogRetention, 0)
+	for _, record := range records {
+		retention, err := decodeStoredLogRetention(record.ValueJSON)
+		if err != nil {
+			invalid = append(invalid, InvalidLogRetention{TenantID: record.TenantID, Err: ErrStoredLogRetentionInvalid})
+			continue
+		}
+		if err := validateLogRetention(retention); err != nil {
+			invalid = append(invalid, InvalidLogRetention{TenantID: record.TenantID, Err: ErrStoredLogRetentionInvalid})
+			continue
+		}
+		if retention.OperationLogRetentionDays == nil && retention.APICallLogRetentionDays == nil && retention.TaskEventRetentionDays == nil {
+			continue
+		}
+		enabled = append(enabled, EnabledLogRetention{
+			TenantID:                  record.TenantID,
+			OperationLogRetentionDays: retention.OperationLogRetentionDays,
+			APICallLogRetentionDays:   retention.APICallLogRetentionDays,
+			TaskEventRetentionDays:    retention.TaskEventRetentionDays,
 		})
 	}
 	return enabled, invalid, nil
@@ -645,6 +706,62 @@ func (s *Service) UpdateStorageQuota(ctx context.Context, principal auth.Princip
 	return updated, nil
 }
 
+func (s *Service) UpdateLogRetention(ctx context.Context, principal auth.Principal, patch LogRetentionPatch, ip string, userAgent string) (LogRetention, error) {
+	if s.db == nil {
+		return LogRetention{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return LogRetention{}, err
+	}
+	current, err := LoadLogRetention(ctx, s.repo, scope)
+	if err != nil {
+		return LogRetention{}, err
+	}
+	updated, changedFields, err := applyLogRetentionPatch(current, patch)
+	if err != nil {
+		return LogRetention{}, err
+	}
+	if len(changedFields) == 0 {
+		return LogRetention{}, ErrValidation
+	}
+	valueJSON, err := json.Marshal(updated)
+	if err != nil {
+		return LogRetention{}, err
+	}
+
+	now := s.now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		if err := repo.Upsert(ctx, scope, KeyLogRetention, string(valueJSON), now); err != nil {
+			return err
+		}
+		sort.Strings(changedFields)
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       ActionUpdateSystemSettings,
+			ResourceType: "system_settings",
+			ResourceID:   KeyLogRetention,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"key":           KeyLogRetention,
+				"changedFields": changedFields,
+				"logRetention": map[string]any{
+					"operationLogRetentionDays": updated.OperationLogRetentionDays,
+					"apiCallLogRetentionDays":   updated.APICallLogRetentionDays,
+					"taskEventRetentionDays":    updated.TaskEventRetentionDays,
+				},
+			},
+		})
+	})
+	if err != nil {
+		return LogRetention{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) requireAdminPermission(c *gin.Context) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
@@ -718,6 +835,13 @@ func parsePatchRequest(body io.Reader) (PatchRequest, error) {
 			return PatchRequest{}, err
 		}
 		return PatchRequest{StorageQuota: &patch}, nil
+	}
+	if rawRetention, ok := root["logRetention"]; ok {
+		patch, err := parseLogRetentionPatch(rawRetention)
+		if err != nil {
+			return PatchRequest{}, err
+		}
+		return PatchRequest{LogRetention: &patch}, nil
 	}
 	return PatchRequest{}, ErrValidation
 }
@@ -890,6 +1014,57 @@ func parseStorageQuotaPatch(raw json.RawMessage) (StorageQuotaPatch, error) {
 	}, nil
 }
 
+func parseLogRetentionPatch(raw json.RawMessage) (LogRetentionPatch, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return LogRetentionPatch{}, ErrValidation
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return LogRetentionPatch{}, ErrValidation
+	}
+	if len(fields) == 0 {
+		return LogRetentionPatch{}, ErrValidation
+	}
+	var patch LogRetentionPatch
+	for key, value := range fields {
+		isNull := bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+		var parsed int64
+		var err error
+		if !isNull {
+			parsed, err = decodeJSONInt64(value)
+			if err != nil {
+				return LogRetentionPatch{}, err
+			}
+		}
+		switch key {
+		case "operationLogRetentionDays":
+			patch.HasOperationLogRetentionDays = true
+			if isNull {
+				patch.ClearOperationLogRetentionDays = true
+			} else {
+				patch.OperationLogRetentionDays = &parsed
+			}
+		case "apiCallLogRetentionDays":
+			patch.HasAPICallLogRetentionDays = true
+			if isNull {
+				patch.ClearAPICallLogRetentionDays = true
+			} else {
+				patch.APICallLogRetentionDays = &parsed
+			}
+		case "taskEventRetentionDays":
+			patch.HasTaskEventRetentionDays = true
+			if isNull {
+				patch.ClearTaskEventRetentionDays = true
+			} else {
+				patch.TaskEventRetentionDays = &parsed
+			}
+		default:
+			return LogRetentionPatch{}, ErrValidation
+		}
+	}
+	return patch, nil
+}
+
 func decodeJSONInt64(raw json.RawMessage) (int64, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return 0, ErrValidation
@@ -976,6 +1151,20 @@ func decodeStoredStorageQuota(valueJSON string) (StorageQuota, error) {
 		return StorageQuota{}, ErrValidation
 	}
 	return StorageQuota{MaxBytes: stored.MaxBytes}, nil
+}
+
+func decodeStoredLogRetention(valueJSON string) (LogRetention, error) {
+	var retention LogRetention
+	decoder := json.NewDecoder(strings.NewReader(valueJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&retention); err != nil {
+		return LogRetention{}, ErrValidation
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return LogRetention{}, ErrValidation
+	}
+	return retention, nil
 }
 
 func applyUploadPolicyPatch(current UploadPolicy, patch UploadPolicyPatch, hardCap config.UploadConfig) (UploadPolicy, []string, error) {
@@ -1142,6 +1331,66 @@ func validateStorageQuota(quota StorageQuota) error {
 	}
 	if *quota.MaxBytes < minStorageQuotaBytes || *quota.MaxBytes > maxStorageQuotaBytes {
 		return ErrValidation
+	}
+	return nil
+}
+
+func applyLogRetentionPatch(current LogRetention, patch LogRetentionPatch) (LogRetention, []string, error) {
+	updated := current
+	changedFields := make([]string, 0, 3)
+	if patch.HasOperationLogRetentionDays {
+		changedFields = append(changedFields, "logRetention.operationLogRetentionDays")
+		if patch.ClearOperationLogRetentionDays {
+			updated.OperationLogRetentionDays = nil
+		} else {
+			if patch.OperationLogRetentionDays == nil || *patch.OperationLogRetentionDays > maxIntValue() {
+				return LogRetention{}, nil, ErrValidation
+			}
+			days := int(*patch.OperationLogRetentionDays)
+			updated.OperationLogRetentionDays = &days
+		}
+	}
+	if patch.HasAPICallLogRetentionDays {
+		changedFields = append(changedFields, "logRetention.apiCallLogRetentionDays")
+		if patch.ClearAPICallLogRetentionDays {
+			updated.APICallLogRetentionDays = nil
+		} else {
+			if patch.APICallLogRetentionDays == nil || *patch.APICallLogRetentionDays > maxIntValue() {
+				return LogRetention{}, nil, ErrValidation
+			}
+			days := int(*patch.APICallLogRetentionDays)
+			updated.APICallLogRetentionDays = &days
+		}
+	}
+	if patch.HasTaskEventRetentionDays {
+		changedFields = append(changedFields, "logRetention.taskEventRetentionDays")
+		if patch.ClearTaskEventRetentionDays {
+			updated.TaskEventRetentionDays = nil
+		} else {
+			if patch.TaskEventRetentionDays == nil || *patch.TaskEventRetentionDays > maxIntValue() {
+				return LogRetention{}, nil, ErrValidation
+			}
+			days := int(*patch.TaskEventRetentionDays)
+			updated.TaskEventRetentionDays = &days
+		}
+	}
+	if len(changedFields) == 0 {
+		return LogRetention{}, nil, ErrValidation
+	}
+	if err := validateLogRetention(updated); err != nil {
+		return LogRetention{}, nil, err
+	}
+	return updated, changedFields, nil
+}
+
+func validateLogRetention(retention LogRetention) error {
+	for _, days := range []*int{retention.OperationLogRetentionDays, retention.APICallLogRetentionDays, retention.TaskEventRetentionDays} {
+		if days == nil {
+			continue
+		}
+		if *days < minLogRetentionDays || *days > maxLogRetentionDays {
+			return ErrValidation
+		}
 	}
 	return nil
 }

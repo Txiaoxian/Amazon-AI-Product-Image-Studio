@@ -113,6 +113,7 @@ func main() {
 	retentionLoop := startRetentionMaintenanceLoop(ctx, newRetentionMaintenanceRunner(settings.NewRepository(db), cleanupService, log, retentionMaintenanceOptions{
 		Interval:   cfg.Worker.RetentionMaintenanceInterval,
 		BatchLimit: cfg.Worker.RetentionMaintenanceBatchLimit,
+		LogCleaner: newDatabaseLogRetentionCleaner(db, log),
 	}))
 	runErr := worker.Run(ctx)
 

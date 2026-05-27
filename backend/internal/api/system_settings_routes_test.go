@@ -73,7 +73,8 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	assertTaskDefaults(t, response, "", "")
 	assertStorageRetention(t, response, nil)
 	assertStorageQuota(t, response, nil, 0)
-	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "logRetentionDays", "logRetention", "allowedMimeTypes")
+	assertLogRetention(t, response, nil, nil, nil)
+	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "allowedMimeTypes")
 
 	var rows int64
 	if err := db.Model(&database.SystemSetting{}).Where("tenant_id = ?", adminSession.tenantID).Count(&rows).Error; err != nil {
@@ -236,6 +237,142 @@ func TestSystemSettingsStorageRetentionPatchClearValidationAndTenantIsolation(t 
 	}
 }
 
+func TestSystemSettingsLogRetentionPatchClearValidationTenantIsolationAndAudit(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+	tenantBSession := seedTenantAdminSession(t, router, db, "tenant-b", "tenant-b-admin", "tenant-b-admin@example.com", "tenant-b-password-123")
+
+	getBefore := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if getBefore.Code != http.StatusOK {
+		t.Fatalf("GET before status = %d, want %d: %s", getBefore.Code, http.StatusOK, getBefore.Body.String())
+	}
+	assertLogRetention(t, getBefore, nil, nil, nil)
+
+	setResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"logRetention": map[string]any{
+			"operationLogRetentionDays": 30,
+			"apiCallLogRetentionDays":   14,
+			"taskEventRetentionDays":    nil,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setResponse.Code != http.StatusOK {
+		t.Fatalf("set logRetention status = %d, want %d: %s", setResponse.Code, http.StatusOK, setResponse.Body.String())
+	}
+	assertLogRetention(t, setResponse, ptrInt(30), ptrInt(14), nil)
+
+	var setting database.SystemSetting
+	if err := db.Where("tenant_id = ? AND `key` = ?", adminSession.tenantID, settings.KeyLogRetention).First(&setting).Error; err != nil {
+		t.Fatalf("load log retention setting: %v", err)
+	}
+	if !strings.Contains(setting.ValueJSON, `"operationLogRetentionDays":30`) || !strings.Contains(setting.ValueJSON, `"apiCallLogRetentionDays":14`) || !strings.Contains(setting.ValueJSON, `"taskEventRetentionDays":null`) {
+		t.Fatalf("log retention value_json = %s, want patched nullable fields", setting.ValueJSON)
+	}
+
+	partialResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"logRetention": map[string]any{"taskEventRetentionDays": 7},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if partialResponse.Code != http.StatusOK {
+		t.Fatalf("partial logRetention status = %d, want %d: %s", partialResponse.Code, http.StatusOK, partialResponse.Body.String())
+	}
+	assertLogRetention(t, partialResponse, ptrInt(30), ptrInt(14), ptrInt(7))
+
+	tenantBGet := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, tenantBSession.cookies, nil)
+	if tenantBGet.Code != http.StatusOK {
+		t.Fatalf("tenant B GET status = %d, want %d: %s", tenantBGet.Code, http.StatusOK, tenantBGet.Body.String())
+	}
+	assertLogRetention(t, tenantBGet, nil, nil, nil)
+
+	clearResponse := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"logRetention": map[string]any{
+			"operationLogRetentionDays": nil,
+			"apiCallLogRetentionDays":   nil,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear logRetention status = %d, want %d: %s", clearResponse.Code, http.StatusOK, clearResponse.Body.String())
+	}
+	assertLogRetention(t, clearResponse, nil, nil, ptrInt(7))
+
+	var logs []database.OperationLog
+	if err := db.Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyLogRetention).Find(&logs).Error; err != nil {
+		t.Fatalf("load logRetention operation logs: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Fatalf("logRetention operation logs = %d, want 3: %#v", len(logs), logs)
+	}
+	for _, log := range logs {
+		metadata := strings.ToLower(log.MetadataJSON)
+		if !strings.Contains(metadata, "log_retention") || !strings.Contains(metadata, "changedfields") {
+			t.Fatalf("operation log missing sanitized log retention metadata: %s", log.MetadataJSON)
+		}
+		for _, forbidden := range []string{"password", "token", "cookie", "authorization", "api_key", "apikey", "secret", "jwt", "base64", "data:image", "value_json", "bucket", "object_key", "minio", "request"} {
+			if strings.Contains(metadata, forbidden) {
+				t.Fatalf("operation log metadata contains %q: %s", forbidden, log.MetadataJSON)
+			}
+		}
+	}
+}
+
+func TestSystemSettingsLogRetentionRejectsInvalidFieldsAndMalformedStoredRows(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
+
+	initial := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"logRetention": map[string]any{"operationLogRetentionDays": 30},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial logRetention PATCH status = %d, want %d: %s", initial.Code, http.StatusOK, initial.Body.String())
+	}
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{name: "zero", body: map[string]any{"logRetention": map[string]any{"operationLogRetentionDays": 0}}},
+		{name: "negative", body: map[string]any{"logRetention": map[string]any{"apiCallLogRetentionDays": -1}}},
+		{name: "non integer", body: map[string]any{"logRetention": map[string]any{"taskEventRetentionDays": 1.5}}},
+		{name: "string", body: map[string]any{"logRetention": map[string]any{"operationLogRetentionDays": "30"}}},
+		{name: "over range", body: map[string]any{"logRetention": map[string]any{"apiCallLogRetentionDays": 3651}}},
+		{name: "unknown nested field", body: map[string]any{"logRetention": map[string]any{"operationLogRetentionDays": 30, "extra": 1}}},
+		{name: "empty object", body: map[string]any{"logRetention": map[string]any{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+			if getResponse.Code != http.StatusOK {
+				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+			}
+			assertLogRetention(t, getResponse, ptrInt(30), nil, nil)
+		})
+	}
+
+	if err := db.Model(&database.SystemSetting{}).
+		Where("tenant_id = ? AND `key` = ?", adminSession.tenantID, settings.KeyLogRetention).
+		Update("value_json", `{"operationLogRetentionDays":0}`).Error; err != nil {
+		t.Fatalf("damage log retention setting: %v", err)
+	}
+	getMalformed := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if getMalformed.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed GET status = %d, want %d: %s", getMalformed.Code, http.StatusUnprocessableEntity, getMalformed.Body.String())
+	}
+	patchMalformed := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"logRetention": map[string]any{"operationLogRetentionDays": 31},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if patchMalformed.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed PATCH status = %d, want %d: %s", patchMalformed.Code, http.StatusUnprocessableEntity, patchMalformed.Body.String())
+	}
+
+	var logs int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ? AND resource_id = ?", adminSession.tenantID, settings.ActionUpdateSystemSettings, settings.KeyLogRetention).Count(&logs).Error; err != nil {
+		t.Fatalf("count logRetention operation logs: %v", err)
+	}
+	if logs != 1 {
+		t.Fatalf("logRetention operation logs = %d, want only initial successful update", logs)
+	}
+}
+
 func TestSystemSettingsStorageRetentionRejectsInvalidAndDeferredFields(t *testing.T) {
 	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 2048, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100})
 
@@ -257,7 +394,6 @@ func TestSystemSettingsStorageRetentionRejectsInvalidAndDeferredFields(t *testin
 		{name: "over range", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 3651}}},
 		{name: "unknown nested field", body: map[string]any{"storageRetention": map[string]any{"deletedAssetRetentionDays": 30, "extra": 1}}},
 		{name: "empty slice", body: map[string]any{"storageRetention": map[string]any{}}},
-		{name: "log retention forbidden", body: map[string]any{"logRetention": map[string]any{"days": 30}}},
 	}
 
 	for _, tc := range cases {
@@ -771,6 +907,27 @@ func assertStorageQuota(t *testing.T, response *httptest.ResponseRecorder, expec
 		assertNumericField(t, quota, "maxBytes", *expectedMaxBytes)
 	}
 	assertNumericField(t, quota, "usedBytes", expectedUsedBytes)
+}
+
+func assertLogRetention(t *testing.T, response *httptest.ResponseRecorder, expectedOperationDays *int, expectedAPICallDays *int, expectedTaskEventDays *int) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	retention := objectField(t, data, "logRetention")
+	assertNullableIntField(t, retention, "operationLogRetentionDays", expectedOperationDays)
+	assertNullableIntField(t, retention, "apiCallLogRetentionDays", expectedAPICallDays)
+	assertNullableIntField(t, retention, "taskEventRetentionDays", expectedTaskEventDays)
+}
+
+func assertNullableIntField(t *testing.T, object map[string]any, field string, expected *int) {
+	t.Helper()
+	if expected == nil {
+		if object[field] != nil {
+			t.Fatalf("%s = %#v, want null", field, object[field])
+		}
+		return
+	}
+	assertNumericField(t, object, field, int64(*expected))
 }
 
 func assertNumericField(t *testing.T, object map[string]any, field string, expected int64) {

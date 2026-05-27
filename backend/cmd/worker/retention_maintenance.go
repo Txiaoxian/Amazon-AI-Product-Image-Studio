@@ -19,11 +19,13 @@ type retentionMaintenanceOptions struct {
 	Interval   time.Duration
 	BatchLimit int
 	Now        func() time.Time
+	LogCleaner logRetentionCleaner
 }
 
 type retentionMaintenanceRunner struct {
 	repo       settings.Repository
 	cleaner    retentionCleaner
+	logCleaner logRetentionCleaner
 	log        *slog.Logger
 	interval   time.Duration
 	batchLimit int
@@ -54,6 +56,7 @@ func newRetentionMaintenanceRunner(repo settings.Repository, cleaner retentionCl
 	return &retentionMaintenanceRunner{
 		repo:       repo,
 		cleaner:    cleaner,
+		logCleaner: options.LogCleaner,
 		log:        log,
 		interval:   options.Interval,
 		batchLimit: options.BatchLimit,
@@ -123,39 +126,80 @@ func (r *retentionMaintenanceRunner) runOnce(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if r == nil || r.cleaner == nil {
+	if r == nil {
 		return nil
 	}
 
-	configs, invalid, err := settings.LoadEnabledStorageRetentions(ctx, r.repo)
-	if err != nil {
-		return err
-	}
-	for _, damaged := range invalid {
-		r.log.Warn("storage retention setting invalid",
-			slog.String("tenant_id", damaged.TenantID),
-			slog.String("error_kind", retentionMaintenanceErrorKind(damaged.Err)),
-		)
-	}
-
-	for _, config := range configs {
-		if err := ctx.Err(); err != nil {
+	if r.cleaner != nil {
+		configs, invalid, err := settings.LoadEnabledStorageRetentions(ctx, r.repo)
+		if err != nil {
 			return err
 		}
-		cutoff := r.now().UTC().Add(-time.Duration(config.DeletedAssetRetentionDays) * 24 * time.Hour)
-		result, err := r.cleaner.PurgeDeletedAssets(ctx, config.TenantID, cutoff, asset.PurgeOptions{BatchLimit: r.batchLimit})
-		if err != nil {
-			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-				return ctx.Err()
-			}
-			r.log.Warn("storage retention cleanup failed",
-				slog.String("tenant_id", config.TenantID),
-				slog.Int("processed", result.Processed),
-				slog.Int("purged", result.Purged),
-				slog.Int("failed", result.Failed),
-				slog.String("error_kind", retentionMaintenanceErrorKind(err)),
+		for _, damaged := range invalid {
+			r.log.Warn("storage retention setting invalid",
+				slog.String("tenant_id", damaged.TenantID),
+				slog.String("error_kind", retentionMaintenanceErrorKind(damaged.Err)),
 			)
-			continue
+		}
+
+		for _, config := range configs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			cutoff := r.now().UTC().Add(-time.Duration(config.DeletedAssetRetentionDays) * 24 * time.Hour)
+			result, err := r.cleaner.PurgeDeletedAssets(ctx, config.TenantID, cutoff, asset.PurgeOptions{BatchLimit: r.batchLimit})
+			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return ctx.Err()
+				}
+				r.log.Warn("storage retention cleanup failed",
+					slog.String("tenant_id", config.TenantID),
+					slog.Int("processed", result.Processed),
+					slog.Int("purged", result.Purged),
+					slog.Int("failed", result.Failed),
+					slog.String("error_kind", retentionMaintenanceErrorKind(err)),
+				)
+				continue
+			}
+		}
+	}
+
+	if r.logCleaner != nil {
+		configs, invalid, err := settings.LoadEnabledLogRetentions(ctx, r.repo)
+		if err != nil {
+			return err
+		}
+		for _, damaged := range invalid {
+			r.log.Warn("log retention setting invalid",
+				slog.String("tenant_id", damaged.TenantID),
+				slog.String("error_kind", retentionMaintenanceErrorKind(damaged.Err)),
+			)
+		}
+
+		for _, config := range configs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			result, err := r.logCleaner.CleanupLogRetention(ctx, config, r.now().UTC(), r.batchLimit)
+			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return ctx.Err()
+				}
+				r.log.Warn("log retention cleanup failed",
+					slog.String("tenant_id", config.TenantID),
+					slog.Int("operation_processed", result.OperationLogs.Processed),
+					slog.Int("operation_deleted", result.OperationLogs.Deleted),
+					slog.Int("operation_failed", result.OperationLogs.Failed),
+					slog.Int("api_call_processed", result.APICallLogs.Processed),
+					slog.Int("api_call_deleted", result.APICallLogs.Deleted),
+					slog.Int("api_call_failed", result.APICallLogs.Failed),
+					slog.Int("task_event_processed", result.TaskEvents.Processed),
+					slog.Int("task_event_deleted", result.TaskEvents.Deleted),
+					slog.Int("task_event_failed", result.TaskEvents.Failed),
+					slog.String("error_kind", retentionMaintenanceErrorKind(err)),
+				)
+				continue
+			}
 		}
 	}
 	return ctx.Err()
@@ -171,7 +215,11 @@ func retentionMaintenanceErrorKind(err error) string {
 		return "context_deadline_exceeded"
 	case errors.Is(err, settings.ErrStoredStorageRetentionInvalid):
 		return "invalid_setting"
+	case errors.Is(err, settings.ErrStoredLogRetentionInvalid):
+		return "invalid_setting"
 	case errors.Is(err, asset.ErrCleanupFailed):
+		return "cleanup_failed"
+	case errors.Is(err, errLogRetentionCleanupFailed):
 		return "cleanup_failed"
 	default:
 		return "internal_error"
