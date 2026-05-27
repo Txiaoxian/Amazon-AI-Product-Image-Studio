@@ -21,6 +21,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/thumbnail"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -79,6 +80,7 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/assets/:assetId/favorite", s.FavoriteAsset)
 	group.DELETE("/assets/:assetId/favorite", s.UnfavoriteAsset)
 	group.GET("/assets/:assetId/download", s.DownloadAsset)
+	group.GET("/assets/:assetId/thumbnail", s.DownloadThumbnail)
 }
 
 func (s *Service) ListAssets(c *gin.Context) {
@@ -238,6 +240,33 @@ func (s *Service) DownloadAsset(c *gin.Context) {
 	})
 }
 
+func (s *Service) DownloadThumbnail(c *gin.Context) {
+	principal, ok := auth.PrincipalFromGin(c)
+	if !ok {
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		return
+	}
+
+	record, object, err := s.downloadThumbnail(c.Request.Context(), principal, c.Param("assetId"), c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	defer object.Body.Close()
+
+	size := object.Size
+	if size <= 0 {
+		size = -1
+	}
+	contentType := strings.TrimSpace(object.ContentType)
+	if contentType == "" {
+		contentType = thumbnail.MIMEType
+	}
+	c.DataFromReader(http.StatusOK, size, contentType, object.Body, map[string]string{
+		"Content-Disposition": mime.FormatMediaType("inline", map[string]string{"filename": "asset-" + record.ID + "-thumbnail." + extensionForMIME(contentType)}),
+	})
+}
+
 func (s *Service) setFavorite(c *gin.Context, favorite bool) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
@@ -319,8 +348,20 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 	if err := s.checkStorageQuota(ctx, scope.ID(), record.SizeBytes); err != nil {
 		return Response{}, err
 	}
+	thumbnailImage, err := thumbnail.Generate(input.Data, input.MimeType)
+	if err != nil {
+		return Response{}, ErrValidation
+	}
+	thumbnailObjectKey := thumbnail.ObjectKey(scope.ID(), projectRecord.ID, record.ID, thumbnailImage.Ext)
+	record.ThumbnailObjectKey = &thumbnailObjectKey
 
 	if err := s.store.PutObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey, bytes.NewReader(input.Data), input.SizeBytes, input.MimeType); err != nil {
+		return Response{}, err
+	}
+	if err := s.store.PutObject(ctx, s.storageConfig.BucketThumbnails, thumbnailObjectKey, bytes.NewReader(thumbnailImage.Data), thumbnailImage.SizeBytes, thumbnailImage.MIMEType); err != nil {
+		if removeErr := s.cleanupUploadedObjects(record); removeErr != nil {
+			s.log.Warn("uploaded asset cleanup failed after thumbnail upload failure", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(removeErr)))
+		}
 		return Response{}, err
 	}
 
@@ -351,7 +392,7 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 		})
 	}); err != nil {
 		s.log.Error("asset metadata persistence failed after object upload", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(err)))
-		if removeErr := s.cleanupUploadedObject(record); removeErr != nil {
+		if removeErr := s.cleanupUploadedObjects(record); removeErr != nil {
 			s.log.Warn("uploaded asset cleanup failed", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(removeErr)))
 		}
 		return Response{}, ErrUploadFailed
@@ -360,10 +401,21 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 	return responseFromRecord(record), nil
 }
 
-func (s *Service) cleanupUploadedObject(record database.ImageAsset) error {
+func (s *Service) cleanupUploadedObjects(record database.ImageAsset) error {
 	ctx, cancel := context.WithTimeout(context.Background(), uploadRollbackCleanupTimeout)
 	defer cancel()
-	return s.store.RemoveObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey)
+	var cleanupErr error
+	if strings.TrimSpace(record.ObjectKey) != "" {
+		if err := s.store.RemoveObject(ctx, s.storageConfig.BucketOriginals, record.ObjectKey); err != nil {
+			cleanupErr = err
+		}
+	}
+	if record.ThumbnailObjectKey != nil && strings.TrimSpace(*record.ThumbnailObjectKey) != "" {
+		if err := s.store.RemoveObject(ctx, s.storageConfig.BucketThumbnails, *record.ThumbnailObjectKey); err != nil && cleanupErr == nil {
+			cleanupErr = err
+		}
+	}
+	return cleanupErr
 }
 
 func (s *Service) getAsset(ctx context.Context, principal auth.Principal, assetID string) (Response, error) {
@@ -547,6 +599,56 @@ func (s *Service) downloadAsset(ctx context.Context, principal auth.Principal, a
 			"filename":  record.Filename,
 			"mimeType":  record.MimeType,
 			"fileSize":  record.SizeBytes,
+		},
+	}); err != nil {
+		_ = object.Body.Close()
+		return database.ImageAsset{}, storage.Object{}, err
+	}
+
+	return record, object, nil
+}
+
+func (s *Service) downloadThumbnail(ctx context.Context, principal auth.Principal, assetID string, ip string, userAgent string) (database.ImageAsset, storage.Object, error) {
+	if s.db == nil {
+		return database.ImageAsset{}, storage.Object{}, database.ErrNilDB
+	}
+	if s.store == nil {
+		return database.ImageAsset{}, storage.Object{}, ErrStorageUnavailable
+	}
+	record, _, err := s.authorizeAsset(ctx, principal, assetID, PermissionDownload)
+	if err != nil {
+		return database.ImageAsset{}, storage.Object{}, err
+	}
+	if record.ThumbnailObjectKey == nil || strings.TrimSpace(*record.ThumbnailObjectKey) == "" {
+		return database.ImageAsset{}, storage.Object{}, ErrNotFound
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return database.ImageAsset{}, storage.Object{}, err
+	}
+
+	object, err := s.store.GetObject(ctx, s.storageConfig.BucketThumbnails, *record.ThumbnailObjectKey)
+	if err != nil {
+		return database.ImageAsset{}, storage.Object{}, err
+	}
+	contentType := strings.TrimSpace(object.ContentType)
+	if contentType == "" {
+		contentType = thumbnail.MIMEType
+	}
+
+	if err := audit.NewRecorder(s.db).Record(ctx, audit.Event{
+		TenantID:     scope.ID(),
+		ActorUserID:  &principal.UserID,
+		Action:       "asset.thumbnail",
+		ResourceType: "asset",
+		ResourceID:   record.ID,
+		IP:           ip,
+		UserAgent:    userAgent,
+		Metadata: map[string]any{
+			"projectId": record.ProjectID,
+			"kind":      record.Kind,
+			"filename":  record.Filename,
+			"mimeType":  contentType,
 		},
 	}); err != nil {
 		_ = object.Body.Close()

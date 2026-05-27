@@ -18,6 +18,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/thumbnail"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/usagecost"
 	"golang.org/x/image/webp"
 	"gorm.io/gorm"
@@ -35,10 +36,12 @@ type validatedOutputImage struct {
 }
 
 type uploadedOutput struct {
-	Index     int
-	AssetID   string
-	ObjectKey string
-	Image     validatedOutputImage
+	Index              int
+	AssetID            string
+	ObjectKey          string
+	ThumbnailObjectKey string
+	Image              validatedOutputImage
+	Thumbnail          thumbnail.Image
 }
 
 func hasAPICall(call APICallResult) bool {
@@ -109,7 +112,19 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		}
 		assetID := idgen.New()
 		objectKey := outputObjectKey(scope.ID(), current.ProjectID, assetID, validated.Ext)
-		pending = append(pending, uploadedOutput{Index: index, AssetID: assetID, ObjectKey: objectKey, Image: validated})
+		thumbnailImage, err := thumbnail.Generate(validated.Data, validated.MIMEType)
+		if err != nil {
+			p.log.Warn("provider output thumbnail generation failed", "task_id", current.ID, "output_index", index)
+			return ErrValidation
+		}
+		pending = append(pending, uploadedOutput{
+			Index:              index,
+			AssetID:            assetID,
+			ObjectKey:          objectKey,
+			ThumbnailObjectKey: thumbnail.ObjectKey(scope.ID(), current.ProjectID, assetID, thumbnailImage.Ext),
+			Image:              validated,
+			Thumbnail:          thumbnailImage,
+		})
 		pendingBytes += validated.SizeBytes
 	}
 	if pendingBytes > 0 {
@@ -119,9 +134,14 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 	}
 	for _, output := range pending {
 		if err := p.store.PutObject(ctx, p.storage.BucketGenerated, output.ObjectKey, bytes.NewReader(output.Image.Data), output.Image.SizeBytes, output.Image.MIMEType); err != nil {
+			p.cleanupUploadedOutputs(ctx, uploaded)
 			return err
 		}
 		uploaded = append(uploaded, output)
+		if err := p.store.PutObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey, bytes.NewReader(output.Thumbnail.Data), output.Thumbnail.SizeBytes, output.Thumbnail.MIMEType); err != nil {
+			p.cleanupUploadedOutputs(ctx, uploaded)
+			return err
+		}
 	}
 
 	var events []database.TaskEvent
@@ -150,23 +170,24 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 				kind = asset.KindEdited
 			}
 			imageAsset := database.ImageAsset{
-				ID:           output.AssetID,
-				TenantID:     scope.ID(),
-				ProjectID:    taskRecord.ProjectID,
-				Kind:         kind,
-				Category:     taskRecord.ImageType,
-				Filename:     outputFilename(kind, output.Index, output.Image.Ext),
-				ObjectKey:    output.ObjectKey,
-				MimeType:     output.Image.MIMEType,
-				SizeBytes:    output.Image.SizeBytes,
-				Width:        output.Image.Width,
-				Height:       output.Image.Height,
-				SHA256:       output.Image.SHA256,
-				IsFavorite:   false,
-				SourceTaskID: &sourceTaskID,
-				CreatedBy:    taskRecord.CreatedBy,
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:                 output.AssetID,
+				TenantID:           scope.ID(),
+				ProjectID:          taskRecord.ProjectID,
+				Kind:               kind,
+				Category:           taskRecord.ImageType,
+				Filename:           outputFilename(kind, output.Index, output.Image.Ext),
+				ObjectKey:          output.ObjectKey,
+				ThumbnailObjectKey: &output.ThumbnailObjectKey,
+				MimeType:           output.Image.MIMEType,
+				SizeBytes:          output.Image.SizeBytes,
+				Width:              output.Image.Width,
+				Height:             output.Image.Height,
+				SHA256:             output.Image.SHA256,
+				IsFavorite:         false,
+				SourceTaskID:       &sourceTaskID,
+				CreatedBy:          taskRecord.CreatedBy,
+				CreatedAt:          now,
+				UpdatedAt:          now,
 			}
 			if err := tx.Create(&imageAsset).Error; err != nil {
 				return err
@@ -185,7 +206,7 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 			event, err := writeTaskEvent(ctx, repo, scope, taskRecord, EventImageOutput, map[string]any{
 				"assetId":       imageAsset.ID,
 				"previewUrl":    "/api/v1/assets/" + imageAsset.ID + "/download",
-				"thumbnailUrl":  "",
+				"thumbnailUrl":  thumbnail.URL(imageAsset.ID),
 				"width":         imageAsset.Width,
 				"height":        imageAsset.Height,
 				"mimeType":      imageAsset.MimeType,
@@ -331,6 +352,11 @@ func (p *WorkerProcessor) cleanupUploadedOutputs(ctx context.Context, outputs []
 		if err := p.store.RemoveObject(ctx, p.storage.BucketGenerated, output.ObjectKey); err != nil {
 			p.log.Warn("generated output cleanup failed", "asset_id", output.AssetID, "error", err.Error())
 		}
+		if strings.TrimSpace(output.ThumbnailObjectKey) != "" {
+			if err := p.store.RemoveObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey); err != nil {
+				p.log.Warn("generated thumbnail cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+			}
+		}
 	}
 }
 
@@ -344,6 +370,11 @@ func (p *WorkerProcessor) cleanupUnpersistedOutputs(ctx context.Context, outputs
 		}
 		if err := p.store.RemoveObject(ctx, p.storage.BucketGenerated, output.ObjectKey); err != nil {
 			p.log.Warn("unpersisted generated output cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+		}
+		if strings.TrimSpace(output.ThumbnailObjectKey) != "" {
+			if err := p.store.RemoveObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey); err != nil {
+				p.log.Warn("unpersisted generated thumbnail cleanup failed", "asset_id", output.AssetID, "error", err.Error())
+			}
 		}
 	}
 }

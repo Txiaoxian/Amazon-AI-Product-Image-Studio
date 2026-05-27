@@ -224,7 +224,7 @@ func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *te
 	pngBytes := workerTinyPNG(t)
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Store:         store,
-		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
 			httpStatus := 200
 			return ExecutionResult{
@@ -279,6 +279,23 @@ func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *te
 	if len(store.objects["generated-assets"]) != 1 {
 		t.Fatalf("generated objects = %#v, want one object in generated bucket", store.objects)
 	}
+	if len(store.objects["thumbnail-assets"]) != 1 {
+		t.Fatalf("thumbnail objects = %#v, want one object in thumbnail bucket", store.objects)
+	}
+	var assetRecord database.ImageAsset
+	if err := db.Where("tenant_id = ? AND source_task_id = ?", "tenant-worker", taskID).First(&assetRecord).Error; err != nil {
+		t.Fatalf("load worker output asset: %v", err)
+	}
+	if assetRecord.ThumbnailObjectKey == nil || !strings.HasSuffix(*assetRecord.ThumbnailObjectKey, "/thumbnail.png") {
+		t.Fatalf("thumbnail object key = %#v, want thumbnail.png key", assetRecord.ThumbnailObjectKey)
+	}
+	payload := workerImageOutputPayload(t, db, taskID)
+	if got := payload["thumbnailUrl"]; got != "/api/v1/assets/"+assetRecord.ID+"/thumbnail" {
+		t.Fatalf("image output thumbnailUrl = %#v", got)
+	}
+	if got := payload["previewUrl"]; got != "/api/v1/assets/"+assetRecord.ID+"/download" {
+		t.Fatalf("image output previewUrl = %#v", got)
+	}
 	assertWorkerRuntimeMetadataSanitized(t, db)
 }
 
@@ -291,7 +308,7 @@ func TestWorkerProcessorPersistsOutputsWithinStorageQuota(t *testing.T) {
 	store := newMemoryObjectStore()
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Store:         store,
-		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
 			return ExecutionResult{
 				Outputs: []GeneratedImageOutput{{
@@ -316,6 +333,40 @@ func TestWorkerProcessorPersistsOutputsWithinStorageQuota(t *testing.T) {
 	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventImageOutput, EventUsageRecorded, EventTaskCompleted})
 	assertTableCount(t, db, &database.ImageAsset{}, 1)
 	assertTableCount(t, db, &database.TaskOutput{}, 1)
+	if len(store.objects["thumbnail-assets"]) != 1 {
+		t.Fatalf("quota success thumbnail objects = %#v, want one thumbnail", store.objects)
+	}
+}
+
+func TestWorkerProcessorCleansGeneratedObjectWhenThumbnailStorageFails(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-thumbnail-storage-failure", Status: StatusQueued})
+	store := newMemoryObjectStore()
+	store.failPutBucket = "thumbnail-assets"
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: workerTinyPNG(t), MIMEType: "image/png"}}}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err == nil {
+		t.Fatal("Process returned nil error for thumbnail storage failure")
+	}
+	if result.Action != claimActionRetry {
+		t.Fatalf("Process action = %v, want retry", result.Action)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	if got := len(store.objects["generated-assets"]); got != 0 {
+		t.Fatalf("thumbnail storage failure left generated objects = %d, want 0", got)
+	}
+	if got := len(store.objects["thumbnail-assets"]); got != 0 {
+		t.Fatalf("thumbnail storage failure stored thumbnails = %d, want 0", got)
+	}
 }
 
 func TestWorkerProcessorPersistsZeroCostForIncompletePricingWithoutFailingTask(t *testing.T) {
@@ -372,7 +423,7 @@ func TestWorkerProcessorFailsOutputsExceedingStorageQuotaWithoutOutputSideEffect
 	store := newMemoryObjectStore()
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Store:         store,
-		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
 			return ExecutionResult{
 				Outputs: []GeneratedImageOutput{
@@ -579,7 +630,7 @@ func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *test
 	}
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Store:         store,
-		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets"},
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
 			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: workerTinyPNG(t), MIMEType: "image/png"}}}
 		}),
@@ -1847,8 +1898,9 @@ func (r staticIPResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, e
 }
 
 type memoryObjectStore struct {
-	objects map[string]map[string][]byte
-	onPut   func()
+	objects       map[string]map[string][]byte
+	failPutBucket string
+	onPut         func()
 }
 
 func newMemoryObjectStore() *memoryObjectStore {
@@ -1856,6 +1908,9 @@ func newMemoryObjectStore() *memoryObjectStore {
 }
 
 func (s *memoryObjectStore) PutObject(_ context.Context, bucket string, key string, body io.Reader, _ int64, _ string) error {
+	if bucket == s.failPutBucket {
+		return storage.ErrUnavailable
+	}
 	if s.objects[bucket] == nil {
 		s.objects[bucket] = map[string][]byte{}
 	}
@@ -2266,6 +2321,19 @@ func assertWorkerEvents(t *testing.T, db *gorm.DB, taskID string, expected []str
 			t.Fatalf("event %d has unstable replay cursor: %#v", index, event)
 		}
 	}
+}
+
+func workerImageOutputPayload(t *testing.T, db *gorm.DB, taskID string) map[string]any {
+	t.Helper()
+	var event database.TaskEvent
+	if err := db.Where("tenant_id = ? AND task_id = ? AND event_type = ?", "tenant-worker", taskID, EventImageOutput).First(&event).Error; err != nil {
+		t.Fatalf("load image output event: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(event.EventPayloadJSON), &payload); err != nil {
+		t.Fatalf("decode image output payload: %v", err)
+	}
+	return payload
 }
 
 func assertWorkerNoOutputsOrUsage(t *testing.T, db *gorm.DB) {

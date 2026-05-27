@@ -23,18 +23,32 @@ func TestTaskHistoryRoutesListGeneratedAndEditedPairsWithFilteringAndSafety(t *t
 	seedTaskHistoryRecord(t, db, adminSession.tenantID, projectID, adminSession.userID, "history-task-deleted", "history-asset-deleted", assetpkg.KindGenerated, now.Add(4*time.Minute), true)
 	seedTaskHistoryAsset(t, db, adminSession.tenantID, projectID, adminSession.userID, "history-asset-orphan", assetpkg.KindGenerated, now.Add(5*time.Minute), false)
 	seedTaskHistoryAPICallLog(t, db, adminSession.tenantID, "history-task-generated", "sk-history-secret")
+	generatedThumbnailKey := "minio-secret-thumbnail-key/history-asset-generated"
+	if err := db.Model(&database.ImageAsset{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, "history-asset-generated").
+		Update("thumbnail_object_key", generatedThumbnailKey).Error; err != nil {
+		t.Fatalf("seed generated thumbnail key: %v", err)
+	}
 
 	response := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history", nil, adminSession.cookies, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("history list status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	assertResponseExcludes(t, response.Body.String(), "history-asset-reference", "history-asset-deleted", "history-asset-orphan", "minio-secret-object-key", "objectKey", "thumbnailObjectKey", "sk-history-secret", "apiCall", "redactedRequest", "redactedResponse", "authorization", "cookie", "base64")
+	assertResponseExcludes(t, response.Body.String(), "history-asset-reference", "history-asset-deleted", "history-asset-orphan", "minio-secret-object-key", "minio-secret-thumbnail-key", "objectKey", "thumbnailObjectKey", "sk-history-secret", "apiCall", "redactedRequest", "redactedResponse", "authorization", "cookie", "base64")
 
 	data := decodeData(t, response)
 	assertPageMeta(t, data, 2, 1, 20)
 	records := recordsField(t, data)
 	assertHistoryRecord(t, records[0].(map[string]any), "history-asset-generated", assetpkg.KindGenerated, "history-task-generated")
 	assertHistoryRecord(t, records[1].(map[string]any), "history-asset-edited", assetpkg.KindEdited, "history-task-edited")
+	generatedAsset := objectField(t, records[0].(map[string]any), "asset")
+	if got := stringField(t, generatedAsset, "thumbnailUrl"); got != "/api/v1/assets/history-asset-generated/thumbnail" {
+		t.Fatalf("generated history thumbnailUrl = %q", got)
+	}
+	editedAsset := objectField(t, records[1].(map[string]any), "asset")
+	if got := stringField(t, editedAsset, "thumbnailUrl"); got != "" {
+		t.Fatalf("edited history thumbnailUrl = %q, want empty when thumbnail key is missing", got)
+	}
 }
 
 func TestTaskHistoryRoutesEnforceTenantProjectAndRBACAuthorization(t *testing.T) {
