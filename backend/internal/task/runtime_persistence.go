@@ -128,10 +128,21 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		})
 		pendingBytes += validated.SizeBytes
 	}
+	var reservation settings.StorageQuotaReservation
+	reservationFinalized := false
 	if pendingBytes > 0 {
-		if err := settings.CheckStorageQuota(ctx, settings.NewRepository(p.db), scope, pendingBytes); err != nil {
+		var err error
+		reservation, err = settings.ReserveStorageQuota(ctx, settings.NewRepository(p.db), scope, pendingBytes)
+		if err != nil {
 			return err
 		}
+		defer func() {
+			if !reservationFinalized {
+				if err := settings.ReleaseStorageQuotaReservation(context.Background(), settings.NewRepository(p.db), scope, reservation); err != nil {
+					p.log.Warn("storage quota reservation release failed", "task_id", current.ID, "error_kind", safeWorkerCleanupErrorKind(err))
+				}
+			}
+		}()
 	}
 	for _, output := range pending {
 		if err := p.store.PutObject(ctx, p.storage.BucketGenerated, output.ObjectKey, bytes.NewReader(output.Image.Data), output.Image.SizeBytes, output.Image.MIMEType); err != nil {
@@ -147,6 +158,7 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 
 	var events []database.TaskEvent
 	persistedObjects := map[string]bool{}
+	var finalizedBytes int64
 	err = p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := p.repo.withDB(tx)
 		taskRecord, err := repo.FindTask(ctx, scope, current.ID)
@@ -154,6 +166,9 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 			return err
 		}
 		if taskRecord.Status != StatusRunning {
+			if pendingBytes > 0 {
+				return settings.FinalizeStorageQuotaReservation(ctx, settings.NewRepository(tx), scope, reservation, 0)
+			}
 			return nil
 		}
 		now := p.now()
@@ -203,6 +218,7 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 			}).Error; err != nil {
 				return err
 			}
+			finalizedBytes += imageAsset.SizeBytes
 			persistedObjects[output.ObjectKey] = true
 			event, err := writeTaskEvent(ctx, repo, scope, taskRecord, EventImageOutput, map[string]any{
 				"assetId":       imageAsset.ID,
@@ -221,6 +237,11 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 				return err
 			}
 			events = append(events, event)
+		}
+		if pendingBytes > 0 {
+			if err := settings.FinalizeStorageQuotaReservation(ctx, settings.NewRepository(tx), scope, reservation, finalizedBytes); err != nil {
+				return err
+			}
 		}
 		usage := result.Usage
 		if usage.ImageCount == 0 && len(result.Outputs) > 0 {
@@ -252,6 +273,7 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		p.cleanupUploadedOutputs(ctx, uploaded)
 		return err
 	}
+	reservationFinalized = true
 	p.cleanupUnpersistedOutputs(ctx, uploaded, persistedObjects)
 	p.publishEvents(ctx, events)
 	return nil

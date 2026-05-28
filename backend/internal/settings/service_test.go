@@ -245,6 +245,235 @@ func TestCheckStorageQuotaAllowsUnlimitedAndRejectsExceeded(t *testing.T) {
 	}
 }
 
+func TestStorageQuotaReservationLifecycleFinalizesAndReleasesCounter(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-a", KeyStorageQuota, `{"maxBytes":150}`, now)
+	seedSettingsAsset(t, db, "tenant-a", "asset-active", 20, nil, nil, now)
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	reservation, err := ReserveStorageQuota(context.Background(), repo, scope, 30)
+	if err != nil {
+		t.Fatalf("ReserveStorageQuota: %v", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 20, 30)
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, reservation, 30); err != nil {
+		t.Fatalf("FinalizeStorageQuotaReservation: %v", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 50, 0)
+	used, err := repo.StorageUsedBytes(context.Background(), scope)
+	if err != nil {
+		t.Fatalf("StorageUsedBytes: %v", err)
+	}
+	if used != 50 {
+		t.Fatalf("used bytes = %d, want 50", used)
+	}
+
+	released, err := ReserveStorageQuota(context.Background(), repo, scope, 40)
+	if err != nil {
+		t.Fatalf("second ReserveStorageQuota: %v", err)
+	}
+	if err := ReleaseStorageQuotaReservation(context.Background(), repo, scope, released); err != nil {
+		t.Fatalf("ReleaseStorageQuotaReservation: %v", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 50, 0)
+}
+
+func TestStorageQuotaFinalizeFailsClosedForReleasedReservationAndIsIdempotentForMatchingFinalized(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-a", KeyStorageQuota, `{"maxBytes":150}`, now)
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	finalized, err := ReserveStorageQuota(context.Background(), repo, scope, 30)
+	if err != nil {
+		t.Fatalf("reserve finalized candidate: %v", err)
+	}
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, finalized, 30); err != nil {
+		t.Fatalf("finalize reservation: %v", err)
+	}
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, finalized, 30); err != nil {
+		t.Fatalf("idempotent finalize error = %v, want nil", err)
+	}
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, finalized, 20); !errors.Is(err, ErrStorageQuotaReservationInvalid) {
+		t.Fatalf("mismatched idempotent finalize error = %v, want ErrStorageQuotaReservationInvalid", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 30, 0)
+
+	released, err := ReserveStorageQuota(context.Background(), repo, scope, 40)
+	if err != nil {
+		t.Fatalf("reserve released candidate: %v", err)
+	}
+	if err := ReleaseStorageQuotaReservation(context.Background(), repo, scope, released); err != nil {
+		t.Fatalf("release reservation: %v", err)
+	}
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, released, 40); !errors.Is(err, ErrStorageQuotaReservationInvalid) {
+		t.Fatalf("released finalize error = %v, want ErrStorageQuotaReservationInvalid", err)
+	}
+	if err := FinalizeStorageQuotaReservation(context.Background(), repo, scope, released, 0); err != nil {
+		t.Fatalf("idempotent released finalize zero error = %v, want nil", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 30, 0)
+}
+
+func TestStorageQuotaReservationCountsReservedBytesForOverlappingUploads(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-a", KeyStorageQuota, `{"maxBytes":100}`, now)
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	first, err := ReserveStorageQuota(context.Background(), repo, scope, 60)
+	if err != nil {
+		t.Fatalf("first ReserveStorageQuota: %v", err)
+	}
+	if _, err := ReserveStorageQuota(context.Background(), repo, scope, 41); !errors.Is(err, ErrStorageQuotaExceeded) {
+		t.Fatalf("second ReserveStorageQuota error = %v, want ErrStorageQuotaExceeded", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 0, 60)
+	if err := ReleaseStorageQuotaReservation(context.Background(), repo, scope, first); err != nil {
+		t.Fatalf("release first reservation: %v", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 0, 0)
+}
+
+func TestStorageQuotaReservationConcurrentUploadsAllowOnlyOneWhenCombinedExceedsQuota(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-a", KeyStorageQuota, `{"maxBytes":100}`, now)
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	reservations := make(chan StorageQuotaReservation, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			reservation, err := ReserveStorageQuota(context.Background(), repo, scope, 60)
+			if err == nil {
+				reservations <- reservation
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+
+	var success int
+	var exceeded int
+	for i := 0; i < 2; i++ {
+		err := <-errs
+		switch {
+		case err == nil:
+			success++
+		case errors.Is(err, ErrStorageQuotaExceeded):
+			exceeded++
+		default:
+			t.Fatalf("concurrent reserve error = %v", err)
+		}
+	}
+	if success != 1 || exceeded != 1 {
+		t.Fatalf("concurrent reserve success/exceeded = %d/%d, want 1/1", success, exceeded)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 0, 60)
+	close(reservations)
+	for reservation := range reservations {
+		if err := ReleaseStorageQuotaReservation(context.Background(), repo, scope, reservation); err != nil {
+			t.Fatalf("release successful reservation: %v", err)
+		}
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 0, 0)
+}
+
+func TestStorageQuotaMalformedCounterFailsClosed(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsRow(t, db, "tenant-a", KeyStorageQuota, `{"maxBytes":100}`, now)
+	if err := db.Create(&database.StorageQuotaCounter{
+		ID:            "counter-malformed",
+		TenantID:      "tenant-a",
+		UsedBytes:     -1,
+		ReservedBytes: 0,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error; err != nil {
+		t.Fatalf("seed malformed counter: %v", err)
+	}
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	if _, err := repo.StorageUsedBytes(context.Background(), scope); !errors.Is(err, ErrStorageQuotaCounterInvalid) {
+		t.Fatalf("StorageUsedBytes error = %v, want ErrStorageQuotaCounterInvalid", err)
+	}
+	if _, err := ReserveStorageQuota(context.Background(), repo, scope, 1); !errors.Is(err, ErrStorageQuotaCounterInvalid) {
+		t.Fatalf("ReserveStorageQuota error = %v, want ErrStorageQuotaCounterInvalid", err)
+	}
+}
+
+func TestReconcileStorageQuotaCounterUsesMetadataTruthAndReleasesStaleReservations(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	purgedAt := now
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsAsset(t, db, "tenant-a", "asset-active", 100, nil, nil, now)
+	seedSettingsAsset(t, db, "tenant-a", "asset-soft", 50, &now, nil, now)
+	seedSettingsAsset(t, db, "tenant-a", "asset-purged", 200, &now, &purgedAt, now)
+	if err := db.Create(&database.StorageQuotaCounter{
+		ID:            "counter-stale",
+		TenantID:      "tenant-a",
+		UsedBytes:     1,
+		ReservedBytes: 70,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error; err != nil {
+		t.Fatalf("seed stale counter: %v", err)
+	}
+	seedSettingsReservation(t, db, "stale-reservation", "tenant-a", 30, storageQuotaReservationStatusReserved, time.Now().UTC().Add(-time.Hour), now)
+	seedSettingsReservation(t, db, "active-reservation", "tenant-a", 40, storageQuotaReservationStatusReserved, time.Now().UTC().Add(time.Hour), now)
+	scope, err := tenant.NewScope("tenant-a")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	if err := ReconcileStorageQuotaCounter(context.Background(), repo, scope); err != nil {
+		t.Fatalf("ReconcileStorageQuotaCounter: %v", err)
+	}
+	assertSettingsQuotaCounter(t, db, "tenant-a", 150, 40)
+	var status string
+	if err := db.Model(&database.StorageQuotaReservation{}).
+		Select("status").
+		Where("tenant_id = ? AND id = ?", "tenant-a", "stale-reservation").
+		Scan(&status).Error; err != nil {
+		t.Fatalf("load stale reservation status: %v", err)
+	}
+	if status != storageQuotaReservationStatusReleased {
+		t.Fatalf("stale reservation status = %q, want RELEASED", status)
+	}
+}
+
 func TestLoadStorageRetentionRejectsMalformedStoredValues(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -384,7 +613,7 @@ func newSettingsTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("access settings sqlite database: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&database.Tenant{}, &database.SystemSetting{}, &database.ImageAsset{}, &database.AIProvider{}, &database.AIModel{}); err != nil {
+	if err := db.AutoMigrate(&database.Tenant{}, &database.SystemSetting{}, &database.StorageQuotaCounter{}, &database.StorageQuotaReservation{}, &database.ImageAsset{}, &database.AIProvider{}, &database.AIModel{}); err != nil {
 		t.Fatalf("migrate settings test schema: %v", err)
 	}
 	return db
@@ -442,6 +671,35 @@ func seedSettingsRow(t *testing.T, db *gorm.DB, tenantID string, key string, val
 		UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("seed setting %s/%s: %v", tenantID, key, err)
+	}
+}
+
+func seedSettingsReservation(t *testing.T, db *gorm.DB, id string, tenantID string, bytes int64, status string, expiresAt time.Time, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.StorageQuotaReservation{
+		ID:        id,
+		TenantID:  tenantID,
+		Bytes:     bytes,
+		Status:    status,
+		ExpiresAt: expiresAt,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed reservation %s: %v", id, err)
+	}
+}
+
+func assertSettingsQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	var counter database.StorageQuotaCounter
+	if err := db.Model(&database.StorageQuotaCounter{}).
+		Select("tenant_id, used_bytes, reserved_bytes").
+		Where("tenant_id = ?", tenantID).
+		First(&counter).Error; err != nil {
+		t.Fatalf("load quota counter: %v", err)
+	}
+	if counter.UsedBytes != usedBytes || counter.ReservedBytes != reservedBytes {
+		t.Fatalf("quota counter used/reserved = %d/%d, want %d/%d", counter.UsedBytes, counter.ReservedBytes, usedBytes, reservedBytes)
 	}
 }
 

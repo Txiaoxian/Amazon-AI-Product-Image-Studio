@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
@@ -337,19 +338,63 @@ func TestWorkerProcessorPersistsOutputsWithinStorageQuota(t *testing.T) {
 	if len(store.objects["thumbnail-assets"]) != 1 {
 		t.Fatalf("quota success thumbnail objects = %#v, want one thumbnail", store.objects)
 	}
+	assertWorkerQuotaCounter(t, db, int64(len(pngBytes)), 0)
+}
+
+func TestWorkerProcessorPersistsMultipleOutputsWithinStorageQuota(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-quota-multi-output-success", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2)
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{
+				Outputs: []GeneratedImageOutput{
+					{Data: pngBytes, MIMEType: "image/png"},
+					{Data: pngBytes, MIMEType: "image/png"},
+				},
+				Usage: UsageResult{ImageCount: 2},
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 2)
+	assertTableCount(t, db, &database.TaskOutput{}, 2)
+	assertTableCount(t, db, &database.UsageRecord{}, 1)
+	if len(store.objects["generated-assets"]) != 2 || len(store.objects["thumbnail-assets"]) != 2 {
+		t.Fatalf("multi-output stored objects = %#v, want two generated and two thumbnails", store.objects)
+	}
+	assertWorkerQuotaCounter(t, db, int64(len(pngBytes))*2, 0)
 }
 
 func TestWorkerProcessorCleansGeneratedObjectWhenThumbnailStorageFails(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
 	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-thumbnail-storage-failure", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2)
 	store := newMemoryObjectStore()
 	store.failPutBucket = "thumbnail-assets"
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Store:         store,
 		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
-			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: workerTinyPNG(t), MIMEType: "image/png"}}}
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: pngBytes, MIMEType: "image/png"}}}
 		}),
 	})
 
@@ -368,6 +413,86 @@ func TestWorkerProcessorCleansGeneratedObjectWhenThumbnailStorageFails(t *testin
 	if got := len(store.objects["thumbnail-assets"]); got != 0 {
 		t.Fatalf("thumbnail storage failure stored thumbnails = %d, want 0", got)
 	}
+	assertWorkerQuotaCounter(t, db, 0, 0)
+}
+
+func TestWorkerProcessorReleasesStorageQuotaWhenOutputMetadataTransactionFails(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-output-db-failure", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2)
+	if err := db.Callback().Create().Before("gorm:create").Register("worker_test_fail_image_asset_create", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Table == "image_assets" {
+			tx.AddError(errors.New("image asset insert failed"))
+		}
+	}); err != nil {
+		t.Fatalf("register image asset create failure callback: %v", err)
+	}
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: pngBytes, MIMEType: "image/png"}}}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err == nil {
+		t.Fatal("Process returned nil error for output metadata transaction failure")
+	}
+	if result.Action != claimActionRetry {
+		t.Fatalf("Process action = %v, want retry", result.Action)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	if got := len(store.objects["generated-assets"]) + len(store.objects["thumbnail-assets"]); got != 0 {
+		t.Fatalf("metadata failure left output objects = %d, want 0", got)
+	}
+	assertWorkerQuotaCounter(t, db, 0, 0)
+}
+
+func TestWorkerProcessorFailsClosedWhenOutputReservationReleasedBeforeFinalize(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-output-released-reservation", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2)
+	store := newMemoryObjectStore()
+	var once sync.Once
+	store.onPut = func() {
+		once.Do(func() {
+			releaseReservedWorkerQuotaRowsForTest(t, db)
+		})
+	}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: pngBytes, MIMEType: "image/png"}}}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorCode != "TASK_CONFIGURATION_INVALID" || record.ErrorMessage != "Task configuration is no longer available." {
+		t.Fatalf("failed task = %#v, want sanitized reservation failure", record)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskFailed})
+	assertTableCount(t, db, &database.ImageAsset{}, 0)
+	assertTableCount(t, db, &database.TaskOutput{}, 0)
+	if got := len(store.objects["generated-assets"]) + len(store.objects["thumbnail-assets"]); got != 0 {
+		t.Fatalf("released reservation failure left output objects = %d, want 0", got)
+	}
+	assertWorkerQuotaCounter(t, db, 0, 0)
+	assertNoWorkerPersistedText(t, db, "tenants/")
 }
 
 func TestWorkerProcessorCleanupLogsSanitizedErrorKind(t *testing.T) {
@@ -480,7 +605,76 @@ func TestWorkerProcessorFailsOutputsExceedingStorageQuotaWithoutOutputSideEffect
 	if got := len(store.objects["generated-assets"]); got != 0 {
 		t.Fatalf("quota failed worker stored generated objects = %d, want 0", got)
 	}
+	assertWorkerQuotaCounter(t, db, 0, 0)
 	assertNoWorkerPersistedText(t, db, "tenants/")
+}
+
+func TestWorkerProcessorSkipsAlreadyPersistedOutputWithoutStorageQuotaReservation(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-output-already-persisted", Status: StatusRunning})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, 1)
+	now := time.Now().UTC()
+	if err := db.Create(&database.ImageAsset{
+		ID:        "asset-existing-output",
+		TenantID:  "tenant-worker",
+		ProjectID: "project-worker",
+		Kind:      asset.KindGenerated,
+		Filename:  "existing.png",
+		ObjectKey: "existing-output-object",
+		MimeType:  "image/png",
+		SizeBytes: int64(len(pngBytes)),
+		Width:     1,
+		Height:    1,
+		SHA256:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CreatedBy: "user-worker",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed existing output asset: %v", err)
+	}
+	if err := db.Create(&database.TaskOutput{
+		ID:          "task-output-existing",
+		TenantID:    "tenant-worker",
+		TaskID:      taskID,
+		AssetID:     "asset-existing-output",
+		OutputIndex: 0,
+		CreatedAt:   now,
+	}).Error; err != nil {
+		t.Fatalf("seed existing task output: %v", err)
+	}
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+	})
+	var modelRecord database.AIModel
+	if err := db.Where("tenant_id = ? AND id = ?", "tenant-worker", "model-worker").First(&modelRecord).Error; err != nil {
+		t.Fatalf("load model: %v", err)
+	}
+	scope, err := tenant.NewScope("tenant-worker")
+	if err != nil {
+		t.Fatalf("tenant scope: %v", err)
+	}
+
+	if err := processor.persistSuccessfulResult(context.Background(), scope, taskID, modelRecord, ExecutionResult{
+		Outputs: []GeneratedImageOutput{{Data: pngBytes, MIMEType: "image/png"}},
+	}); err != nil {
+		t.Fatalf("persistSuccessfulResult: %v", err)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 1)
+	assertTableCount(t, db, &database.TaskOutput{}, 1)
+	if got := len(store.objects["generated-assets"]) + len(store.objects["thumbnail-assets"]); got != 0 {
+		t.Fatalf("already persisted output stored objects = %d, want 0", got)
+	}
+	var counters int64
+	if err := db.Model(&database.StorageQuotaCounter{}).Where("tenant_id = ?", "tenant-worker").Count(&counters).Error; err != nil {
+		t.Fatalf("count quota counters: %v", err)
+	}
+	if counters != 0 {
+		t.Fatalf("already persisted output created %d quota counters, want 0", counters)
+	}
 }
 
 func TestWorkerProcessorFailureRecordsSanitizedAPICallWithoutAssets(t *testing.T) {
@@ -641,6 +835,8 @@ func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *test
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
 	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-cancel-after-upload", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	seedWorkerStorageQuota(t, db, int64(len(pngBytes))*2)
 	store := newMemoryObjectStore()
 	store.onPut = func() {
 		now := time.Now().UTC()
@@ -659,7 +855,7 @@ func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *test
 		Store:         store,
 		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
 		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
-			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: workerTinyPNG(t), MIMEType: "image/png"}}}
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{Data: pngBytes, MIMEType: "image/png"}}}
 		}),
 	})
 
@@ -675,6 +871,7 @@ func TestWorkerProcessorDropsProviderOutputsWhenTaskCancelledAfterUpload(t *test
 	if len(store.objects["generated-assets"]) != 0 {
 		t.Fatalf("unpersisted generated object was not cleaned up: %#v", store.objects)
 	}
+	assertWorkerQuotaCounter(t, db, 0, 0)
 }
 
 func TestWorkerProcessorHonorsCancellationBeforeCompletion(t *testing.T) {
@@ -2112,6 +2309,26 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 				updated_at TIMESTAMP NOT NULL,
 				UNIQUE (tenant_id, key)
 			)`,
+		`CREATE TABLE storage_quota_counters (
+				id TEXT PRIMARY KEY,
+				tenant_id TEXT NOT NULL,
+				used_bytes INTEGER NOT NULL,
+				reserved_bytes INTEGER NOT NULL,
+				reconciled_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL,
+				UNIQUE (tenant_id)
+			)`,
+		`CREATE TABLE storage_quota_reservations (
+				id TEXT PRIMARY KEY,
+				tenant_id TEXT NOT NULL,
+				bytes INTEGER NOT NULL,
+				finalized_bytes INTEGER NOT NULL,
+				status TEXT NOT NULL,
+				expires_at TIMESTAMP NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
 		`CREATE TABLE generation_tasks (
 		id TEXT PRIMARY KEY,
 		tenant_id TEXT NOT NULL,
@@ -2468,6 +2685,43 @@ func assertTableCount(t *testing.T, db *gorm.DB, model any, expected int64) {
 	}
 	if count != expected {
 		t.Fatalf("table count = %d, want %d", count, expected)
+	}
+}
+
+func assertWorkerQuotaCounter(t *testing.T, db *gorm.DB, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	var counter database.StorageQuotaCounter
+	if err := db.Model(&database.StorageQuotaCounter{}).
+		Select("tenant_id, used_bytes, reserved_bytes").
+		Where("tenant_id = ?", "tenant-worker").
+		First(&counter).Error; err != nil {
+		t.Fatalf("load worker quota counter: %v", err)
+	}
+	if counter.UsedBytes != usedBytes || counter.ReservedBytes != reservedBytes {
+		t.Fatalf("worker quota counter used/reserved = %d/%d, want %d/%d", counter.UsedBytes, counter.ReservedBytes, usedBytes, reservedBytes)
+	}
+}
+
+func releaseReservedWorkerQuotaRowsForTest(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.StorageQuotaReservation{}).
+			Where("tenant_id = ? AND status = ?", "tenant-worker", "RESERVED").
+			Updates(map[string]any{
+				"status":     "RELEASED",
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&database.StorageQuotaCounter{}).
+			Where("tenant_id = ?", "tenant-worker").
+			Updates(map[string]any{
+				"reserved_bytes": 0,
+				"updated_at":     now,
+			}).Error
+	}); err != nil {
+		t.Fatalf("release reserved worker quota rows: %v", err)
 	}
 }
 

@@ -81,6 +81,7 @@ func TestInspectStorageOrphansCleanupIsBatchLimitedAndRetrySafe(t *testing.T) {
 	store.add("originals-test", deletedKey, old)
 	store.add("originals-test", missingKey, old)
 	store.add("originals-test", failedKey, old)
+	seedCleanupQuotaCounter(t, db, "tenant-a", 7, 3, now)
 	store.removeErrs["originals-test/"+missingKey] = storage.ErrNotFound
 	store.removeErrs["originals-test/"+failedKey] = storage.ErrUnavailable
 	service := newOrphanTestService(db, store, storageConfig, now)
@@ -106,6 +107,7 @@ func TestInspectStorageOrphansCleanupIsBatchLimitedAndRetrySafe(t *testing.T) {
 	if !store.exists("originals-test", failedKey) {
 		t.Fatal("unscanned object should remain for a later batch")
 	}
+	assertCleanupQuotaCounter(t, db, "tenant-a", 7, 3)
 
 	response, err = service.inspectStorageOrphans(context.Background(), auth.Principal{TenantID: "tenant-a", UserID: "admin-a"}, orphanOperationOptions{
 		DryRun:           false,
@@ -121,6 +123,7 @@ func TestInspectStorageOrphansCleanupIsBatchLimitedAndRetrySafe(t *testing.T) {
 	if !store.exists("originals-test", failedKey) {
 		t.Fatal("failed delete should remain retryable")
 	}
+	assertCleanupQuotaCounter(t, db, "tenant-a", 7, 3)
 }
 
 func TestInspectStorageOrphansDefensivelyCapsOverLimitListings(t *testing.T) {
@@ -229,6 +232,22 @@ func newOrphanFakeStore() *orphanFakeStore {
 	return &orphanFakeStore{
 		objects:    map[string]storage.ListedObject{},
 		removeErrs: map[string]error{},
+	}
+}
+
+func seedCleanupQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64, now time.Time) {
+	t.Helper()
+	if err := db.Exec(`
+INSERT INTO storage_quota_counters (id, tenant_id, used_bytes, reserved_bytes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)`,
+		"counter-"+tenantID,
+		tenantID,
+		usedBytes,
+		reservedBytes,
+		now,
+		now,
+	).Error; err != nil {
+		t.Fatalf("seed cleanup quota counter: %v", err)
 	}
 }
 

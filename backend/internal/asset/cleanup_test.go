@@ -55,6 +55,7 @@ func TestCleanupServicePurgeDeletedAssetsScopesCutoffBatchAndIdempotency(t *test
 	assertPurged(t, db, "tenant-a", "active", false)
 	assertPurged(t, db, "tenant-a", "new-delete", false)
 	assertPurged(t, db, "tenant-b", "tenant-b-old", false)
+	assertCleanupQuotaCounter(t, db, "tenant-a", 3, 0)
 
 	result, err = service.PurgeDeletedAssets(context.Background(), "tenant-a", cutoff, PurgeOptions{BatchLimit: 2})
 	if err != nil {
@@ -70,6 +71,7 @@ func TestCleanupServicePurgeDeletedAssetsScopesCutoffBatchAndIdempotency(t *test
 		{bucket: "generated-test", key: "original-old-edited"},
 	})
 	assertPurged(t, db, "tenant-a", "old-edited", true)
+	assertCleanupQuotaCounter(t, db, "tenant-a", 2, 0)
 
 	result, err = service.PurgeDeletedAssets(context.Background(), "tenant-a", cutoff, PurgeOptions{BatchLimit: 2})
 	if err != nil {
@@ -207,6 +209,31 @@ CREATE TABLE image_assets (
 )`).Error; err != nil {
 		t.Fatalf("create cleanup image_assets schema: %v", err)
 	}
+	if err := db.Exec(`
+CREATE TABLE storage_quota_counters (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL UNIQUE,
+	used_bytes INTEGER NOT NULL,
+	reserved_bytes INTEGER NOT NULL,
+	reconciled_at TIMESTAMP NULL,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+)`).Error; err != nil {
+		t.Fatalf("create cleanup storage_quota_counters schema: %v", err)
+	}
+	if err := db.Exec(`
+CREATE TABLE storage_quota_reservations (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL,
+	bytes INTEGER NOT NULL,
+	finalized_bytes INTEGER NOT NULL,
+	status TEXT NOT NULL,
+	expires_at TIMESTAMP NOT NULL,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+)`).Error; err != nil {
+		t.Fatalf("create cleanup storage_quota_reservations schema: %v", err)
+	}
 	return db
 }
 
@@ -253,6 +280,23 @@ func assertPurged(t *testing.T, db *gorm.DB, tenantID string, assetID string, wa
 	}
 	if purgedAt.Valid != want {
 		t.Fatalf("purged_at set for %s/%s = %v, want %v", tenantID, assetID, purgedAt.Valid, want)
+	}
+}
+
+func assertCleanupQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	var counter struct {
+		UsedBytes     int64
+		ReservedBytes int64
+	}
+	if err := db.Table("storage_quota_counters").
+		Select("used_bytes, reserved_bytes").
+		Where("tenant_id = ?", tenantID).
+		Scan(&counter).Error; err != nil {
+		t.Fatalf("load cleanup quota counter: %v", err)
+	}
+	if counter.UsedBytes != usedBytes || counter.ReservedBytes != reservedBytes {
+		t.Fatalf("quota counter used/reserved = %d/%d, want %d/%d", counter.UsedBytes, counter.ReservedBytes, usedBytes, reservedBytes)
 	}
 }
 

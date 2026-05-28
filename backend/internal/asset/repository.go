@@ -21,6 +21,7 @@ type PurgeCandidate struct {
 	Kind               string
 	ObjectKey          string
 	ThumbnailObjectKey *string
+	SizeBytes          int64
 	DeletedAt          time.Time
 }
 
@@ -170,7 +171,7 @@ func (r Repository) ListPurgeCandidates(ctx context.Context, scope tenant.Scope,
 
 	var records []PurgeCandidate
 	err = db.Table("image_assets").
-		Select("id, tenant_id, kind, object_key, thumbnail_object_key, deleted_at").
+		Select("id, tenant_id, kind, object_key, thumbnail_object_key, size_bytes, deleted_at").
 		Where("tenant_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL", scope.ID(), cutoff.UTC()).
 		Order("deleted_at ASC, id ASC").
 		Limit(limit).
@@ -215,6 +216,9 @@ func (r Repository) MarkAssetPurged(ctx context.Context, scope tenant.Scope, ass
 		})
 	if result.Error != nil {
 		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

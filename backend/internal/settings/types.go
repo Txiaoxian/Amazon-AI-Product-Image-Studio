@@ -21,14 +21,16 @@ const (
 )
 
 var (
-	ErrValidation                    = errors.New("invalid system settings request")
-	ErrStoredTaskDefaultsInvalid     = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
-	ErrStoredTaskConcurrencyInvalid  = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
-	ErrStoredStorageRetentionInvalid = fmt.Errorf("%w: invalid stored storage retention", ErrValidation)
-	ErrStoredStorageQuotaInvalid     = fmt.Errorf("%w: invalid stored storage quota", ErrValidation)
-	ErrStoredLogRetentionInvalid     = fmt.Errorf("%w: invalid stored log retention", ErrValidation)
-	ErrStorageQuotaExceeded          = errors.New("storage quota exceeded")
-	ErrForbidden                     = errors.New("system settings access forbidden")
+	ErrValidation                     = errors.New("invalid system settings request")
+	ErrStoredTaskDefaultsInvalid      = fmt.Errorf("%w: invalid stored task defaults", ErrValidation)
+	ErrStoredTaskConcurrencyInvalid   = fmt.Errorf("%w: invalid stored task concurrency", ErrValidation)
+	ErrStoredStorageRetentionInvalid  = fmt.Errorf("%w: invalid stored storage retention", ErrValidation)
+	ErrStoredStorageQuotaInvalid      = fmt.Errorf("%w: invalid stored storage quota", ErrValidation)
+	ErrStoredLogRetentionInvalid      = fmt.Errorf("%w: invalid stored log retention", ErrValidation)
+	ErrStorageQuotaCounterInvalid     = fmt.Errorf("%w: invalid storage quota counter", ErrValidation)
+	ErrStorageQuotaReservationInvalid = fmt.Errorf("%w: invalid storage quota reservation", ErrValidation)
+	ErrStorageQuotaExceeded           = errors.New("storage quota exceeded")
+	ErrForbidden                      = errors.New("system settings access forbidden")
 )
 
 type Response struct {

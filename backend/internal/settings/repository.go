@@ -2,7 +2,6 @@ package settings
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -63,24 +62,7 @@ func (r Repository) FindByKey(ctx context.Context, scope tenant.Scope, key strin
 }
 
 func (r Repository) StorageUsedBytes(ctx context.Context, scope tenant.Scope) (int64, error) {
-	db, err := r.base(ctx, scope)
-	if err != nil {
-		return 0, err
-	}
-
-	var total sql.NullInt64
-	err = db.Unscoped().
-		Model(&database.ImageAsset{}).
-		Select("COALESCE(SUM(size_bytes), 0)").
-		Where("tenant_id = ? AND purged_at IS NULL", scope.ID()).
-		Scan(&total).Error
-	if err != nil {
-		return 0, err
-	}
-	if !total.Valid {
-		return 0, nil
-	}
-	return total.Int64, nil
+	return storageQuotaCounterUsedBytes(ctx, r, scope)
 }
 
 func (r Repository) ListByKeyForActiveTenants(ctx context.Context, key string) ([]database.SystemSetting, error) {

@@ -121,6 +121,35 @@ func (SystemSetting) TableName() string {
 	return "system_settings"
 }
 
+type StorageQuotaCounter struct {
+	ID            string     `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_storage_quota_counters_tenant_id,priority:2"`
+	TenantID      string     `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_storage_quota_counters_tenant,priority:1;uniqueIndex:uk_storage_quota_counters_tenant_id,priority:1"`
+	UsedBytes     int64      `gorm:"type:bigint unsigned;not null"`
+	ReservedBytes int64      `gorm:"type:bigint unsigned;not null"`
+	ReconciledAt  *time.Time `gorm:"type:datetime(3)"`
+	CreatedAt     time.Time  `gorm:"type:datetime(3);not null"`
+	UpdatedAt     time.Time  `gorm:"type:datetime(3);not null"`
+}
+
+func (StorageQuotaCounter) TableName() string {
+	return "storage_quota_counters"
+}
+
+type StorageQuotaReservation struct {
+	ID             string    `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_storage_quota_reservations_tenant_id,priority:2"`
+	TenantID       string    `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_storage_quota_reservations_tenant_id,priority:1;index:idx_storage_quota_reservations_tenant_status,priority:1;index:idx_storage_quota_reservations_tenant_expires,priority:1"`
+	Bytes          int64     `gorm:"type:bigint unsigned;not null"`
+	FinalizedBytes int64     `gorm:"type:bigint unsigned;not null"`
+	Status         string    `gorm:"type:varchar(32);not null;index:idx_storage_quota_reservations_tenant_status,priority:2"`
+	ExpiresAt      time.Time `gorm:"type:datetime(3);not null;index:idx_storage_quota_reservations_tenant_expires,priority:2"`
+	CreatedAt      time.Time `gorm:"type:datetime(3);not null"`
+	UpdatedAt      time.Time `gorm:"type:datetime(3);not null"`
+}
+
+func (StorageQuotaReservation) TableName() string {
+	return "storage_quota_reservations"
+}
+
 type Project struct {
 	ID        string         `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_projects_tenant_id,priority:2"`
 	TenantID  string         `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_projects_tenant_id,priority:1;index:idx_projects_tenant_status_created,priority:1;index:idx_projects_tenant_asin,priority:1;index:idx_projects_tenant_deleted,priority:1"`
