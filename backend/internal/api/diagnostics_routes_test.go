@@ -234,6 +234,117 @@ func TestAdminDiagnosticsSummaryQueueUnavailable(t *testing.T) {
 	if stringField(t, queueSection, "status") != "unavailable" {
 		t.Fatalf("queue status = %q, want unavailable", stringField(t, queueSection, "status"))
 	}
+	if stringField(t, queueSection, "reason") != "queue_unavailable" {
+		t.Fatalf("queue reason = %q, want queue_unavailable", stringField(t, queueSection, "reason"))
+	}
+}
+
+func TestAdminDiagnosticsSummaryProviderTotalNotTruncatedByLimit(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// Seed 3 providers with varying call counts
+	seedDiagnosticsAPICallLog(t, db, adminSession.tenantID, "api-prov-a-1", "provider-a", "SUCCESS")
+	seedDiagnosticsAPICallLog(t, db, adminSession.tenantID, "api-prov-a-2", "provider-a", "FAILURE")
+	seedDiagnosticsAPICallLog(t, db, adminSession.tenantID, "api-prov-b-1", "provider-b", "SUCCESS")
+	seedDiagnosticsAPICallLog(t, db, adminSession.tenantID, "api-prov-c-1", "provider-c", "FAILURE")
+
+	// Query with limit=1 — byProvider should have 1 entry, but top-level totals should reflect all 4 calls
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary?limit=1", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	data := decodeData(t, response)
+	providers := objectField(t, data, "providers")
+	assertFloatField(t, providers, "totalCalls", 4)
+	assertFloatField(t, providers, "failureCount", 2)
+
+	byProvider, ok := providers["byProvider"].([]any)
+	if !ok {
+		t.Fatalf("byProvider is not an array: %#v", providers["byProvider"])
+	}
+	if len(byProvider) != 1 {
+		t.Fatalf("byProvider len = %d, want 1 (limit=1)", len(byProvider))
+	}
+}
+
+func TestAdminDiagnosticsSummaryMaintenanceErrorsFieldBlocked(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// Seed maintenance log with errors field containing sensitive data
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-errors", "storage.orphan_cleanup",
+		`{"errors":["Authorization: Bearer sk-secret-12345 objectKey: tenant/project/abc.jpg"],"scanned":10,"deleted":2}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"sk-secret-12345",
+		"abc.jpg",
+		"Bearer",
+	)
+	// Verify scanned/deleted are still present
+	if !strings.Contains(body, `"scanned"`) {
+		t.Fatal("scanned should still be present")
+	}
+}
+
+func TestAdminDiagnosticsSummaryMaintenanceNestedUnsafeKeyBlocked(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// Seed maintenance log with nested map under non-whitelisted key
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-nested", "storage.orphan_cleanup",
+		`{"Authorization":{"token":"Bearer secret"},"nested":{"processed":10,"bucketName":"inner-bucket"},"scanned":5}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"inner-bucket",
+		"nested",
+		"Bearer",
+		"Authorization",
+	)
+}
+
+func TestAdminDiagnosticsSummaryMaintenanceStringSanitization(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// Seed with status values that contain sensitive markers
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-str-sens", "storage.orphan_cleanup",
+		`{"status":"completed","completedAt":"http://minio:9000/leaked-url"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"minio:9000",
+		"leaked-url",
+	)
+	if !strings.Contains(body, `"redacted"`) {
+		t.Fatal("sensitive string should be replaced with 'redacted'")
+	}
 }
 
 func TestAdminDiagnosticsSummaryInvalidWindowHours(t *testing.T) {

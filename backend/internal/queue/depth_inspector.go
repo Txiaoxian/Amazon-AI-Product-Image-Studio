@@ -13,6 +13,7 @@ import (
 // task payload bodies.
 type QueueDepth struct {
 	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
 	Pending    int64  `json:"pending"`
 	Processing int64  `json:"processing"`
 	Delayed    int64  `json:"delayed"`
@@ -67,7 +68,7 @@ func NewRedisQueueDepthInspectorWithClient(client redis.Cmdable, cfg config.Queu
 // sanitized reason code instead of leaking connection strings or raw errors.
 func (i *RedisQueueDepthInspector) Inspect(ctx context.Context) QueueDepth {
 	if i == nil || i.client == nil || strings.TrimSpace(i.queue) == "" {
-		return QueueDepth{Status: "unavailable"}
+		return unavailableQueueDepth()
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -100,7 +101,7 @@ func (i *RedisQueueDepthInspector) Inspect(ctx context.Context) QueueDepth {
 }
 
 func unavailableQueueDepth() QueueDepth {
-	return QueueDepth{Status: "unavailable"}
+	return QueueDepth{Status: "unavailable", Reason: "queue_unavailable"}
 }
 
 // NilQueueDepthInspector always returns an unavailable queue depth.
@@ -109,5 +110,5 @@ type NilQueueDepthInspector struct{}
 
 // Inspect always returns status="unavailable".
 func (NilQueueDepthInspector) Inspect(_ context.Context) QueueDepth {
-	return QueueDepth{Status: "unavailable"}
+	return unavailableQueueDepth()
 }

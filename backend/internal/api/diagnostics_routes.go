@@ -238,9 +238,9 @@ func parseDiagnosticsParams(c *gin.Context) (windowHours int, limit int, err err
 }
 
 // queryProviderFailureRates aggregates API call success/failure counts
-// from api_call_logs within the time window. Only returns providerId and
-// aggregate counts. Does not expose request/response payloads, error
-// messages, or raw log metadata.
+// from api_call_logs within the time window. The top-level totals reflect
+// the full tenant window (not limited), while byProvider is capped by limit.
+// Does not expose request/response payloads, error messages, or raw metadata.
 func (s *adminDiagnosticsService) queryProviderFailureRates(ctx context.Context, scope tenant.Scope, windowHours int, limit int) (diagnosticsProviderSection, error) {
 	if s.db == nil {
 		return diagnosticsProviderSection{}, database.ErrNilDB
@@ -248,6 +248,21 @@ func (s *adminDiagnosticsService) queryProviderFailureRates(ctx context.Context,
 
 	windowStart := time.Now().UTC().Add(-time.Duration(windowHours) * time.Hour)
 
+	// Query 1: tenant-wide totals for the window (no limit).
+	type totalRow struct {
+		TotalCalls   int64 `gorm:"column:total_calls"`
+		FailureCount int64 `gorm:"column:failure_count"`
+	}
+	var totals totalRow
+	if err := s.db.WithContext(ctx).
+		Model(&database.APICallLog{}).
+		Select("COUNT(*) AS total_calls, SUM(CASE WHEN status = 'FAILURE' THEN 1 ELSE 0 END) AS failure_count").
+		Where("tenant_id = ? AND created_at >= ?", scope.ID(), windowStart).
+		Scan(&totals).Error; err != nil {
+		return diagnosticsProviderSection{}, err
+	}
+
+	// Query 2: per-provider breakdown (limited).
 	type providerRow struct {
 		ProviderID   string `gorm:"column:provider_id"`
 		TotalCalls   int64  `gorm:"column:total_calls"`
@@ -265,7 +280,6 @@ func (s *adminDiagnosticsService) queryProviderFailureRates(ctx context.Context,
 		return diagnosticsProviderSection{}, err
 	}
 
-	var totalCalls, totalFailures int64
 	byProvider := make([]diagnosticsProviderAggregate, 0, len(rows))
 	for _, row := range rows {
 		successCount := row.TotalCalls - row.FailureCount
@@ -276,16 +290,14 @@ func (s *adminDiagnosticsService) queryProviderFailureRates(ctx context.Context,
 			FailureCount: row.FailureCount,
 			FailureRate:  safeFailureRate(row.FailureCount, row.TotalCalls),
 		})
-		totalCalls += row.TotalCalls
-		totalFailures += row.FailureCount
 	}
 
 	return diagnosticsProviderSection{
 		WindowHours:  windowHours,
-		TotalCalls:   totalCalls,
-		SuccessCount: totalCalls - totalFailures,
-		FailureCount: totalFailures,
-		FailureRate:  safeFailureRate(totalFailures, totalCalls),
+		TotalCalls:   totals.TotalCalls,
+		SuccessCount: totals.TotalCalls - totals.FailureCount,
+		FailureCount: totals.FailureCount,
+		FailureRate:  safeFailureRate(totals.FailureCount, totals.TotalCalls),
 		ByProvider:   byProvider,
 	}, nil
 }
@@ -333,24 +345,6 @@ func (s *adminDiagnosticsService) queryStorageUsage(ctx context.Context, scope t
 	}, nil
 }
 
-// Whitelisted maintenance metadata fields for safe diagnostics output.
-// Only aggregate counts and status indicators are allowed.
-var maintenanceMetadataSafeFields = map[string]bool{
-	"processed":      true,
-	"deleted":        true,
-	"failed":         true,
-	"candidates":     true,
-	"scanned":        true,
-	"status":         true,
-	"completedAt":    true,
-	"totalProcessed": true,
-	"totalDeleted":   true,
-	"totalFailed":    true,
-	"skipped":        true,
-	"errors":         true,
-	"dryRun":         true,
-}
-
 // maintenanceActions are the operation log actions considered maintenance.
 var maintenanceActions = []string{
 	"storage.orphan_cleanup",
@@ -393,8 +387,8 @@ func (s *adminDiagnosticsService) queryMaintenanceResults(ctx context.Context, s
 }
 
 // sanitizeMaintenanceMetadata extracts only whitelisted safe fields from
-// maintenance operation metadata. Nested objects are recursively filtered.
-// Only scalar values (string, number, bool) and nested safe maps survive.
+// maintenance operation metadata. Only numeric, boolean, and safe status
+// string values survive. Arrays and nested maps are dropped entirely.
 func sanitizeMaintenanceMetadata(metadataJSON string) map[string]any {
 	raw := strings.TrimSpace(metadataJSON)
 	if raw == "" {
@@ -409,34 +403,96 @@ func sanitizeMaintenanceMetadata(metadataJSON string) map[string]any {
 	return filterSafeFields(decoded)
 }
 
+// Whitelisted maintenance metadata fields for safe diagnostics output.
+// Only aggregate counts, boolean flags, and status indicators are allowed.
+// The "errors" field is intentionally excluded because historical operation
+// logs may contain unsanitized error strings with object keys, Authorization
+// headers, or other sensitive content.
+var maintenanceMetadataSafeFields = map[string]bool{
+	"processed":      true,
+	"deleted":        true,
+	"failed":         true,
+	"candidates":     true,
+	"scanned":        true,
+	"status":         true,
+	"completedAt":    true,
+	"totalProcessed": true,
+	"totalDeleted":   true,
+	"totalFailed":    true,
+	"skipped":        true,
+	"dryRun":         true,
+}
+
+// maintenanceMetadataSafeStatusValues are the allowed string values for
+// whitelisted maintenance metadata fields. Any string not in this set
+// is replaced with "redacted" to prevent leaking arbitrary content.
+var maintenanceMetadataSafeStatusValues = map[string]bool{
+	"completed": true, "failed": true, "skipped": true,
+	"success": true, "error": true, "partial": true,
+	"running": true, "pending": true, "dry_run": true,
+}
+
+// maintenanceMetadataMaxStringLen is the max rune length for status strings.
+const maintenanceMetadataMaxStringLen = 64
+
+// maintenanceSensitiveMarkers are substrings that must never appear in
+// maintenance diagnostics output. If a string value contains any of these
+// markers, it is replaced with "redacted".
+var maintenanceSensitiveMarkers = []string{
+	"bearer", "token", "authorization", "cookie", "jwt",
+	"api_key", "apikey", "secret", "password",
+	"minio", "s3://", "http://", "https://",
+	"object_key", "objectkey", "bucket",
+}
+
+// filterSafeFields extracts only whitelisted keys with safe value types.
+// - Only keys in maintenanceMetadataSafeFields are kept.
+// - Non-whitelisted keys are completely dropped (no nested recursion
+//   through unsafe keys, which would leak the key name itself).
+// - Allowed value types: float64 (JSON number), bool, nil.
+// - String values must pass sensitive-marker check and length cap.
+// - Arrays and all other types are dropped.
 func filterSafeFields(data map[string]any) map[string]any {
 	safe := make(map[string]any)
 	for key, value := range data {
 		if !maintenanceMetadataSafeFields[key] {
-			// Check if value is a nested map that might contain safe fields
-			if nested, ok := value.(map[string]any); ok {
-				filtered := filterSafeFields(nested)
-				if len(filtered) > 0 {
-					safe[key] = filtered
-				}
-			}
 			continue
 		}
-		// Allow scalar values and safe nested maps
 		switch v := value.(type) {
-		case string, float64, bool, nil:
+		case float64:
 			safe[key] = v
-		case map[string]any:
-			filtered := filterSafeFields(v)
-			if len(filtered) > 0 {
-				safe[key] = filtered
-			}
+		case bool:
+			safe[key] = v
+		case nil:
+			safe[key] = v
+		case string:
+			safe[key] = sanitizeMaintenanceString(v)
 		default:
-			// Allow JSON number types
-			safe[key] = v
+			// Arrays, nested maps, and unknown types are dropped.
+			// This prevents leaking array contents like object keys
+			// or error messages.
 		}
 	}
 	return safe
+}
+
+// sanitizeMaintenanceString validates a string value from maintenance
+// metadata. Returns the original if it is a known safe status value,
+// otherwise checks length and sensitive markers.
+func sanitizeMaintenanceString(s string) string {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if maintenanceMetadataSafeStatusValues[lower] {
+		return lower
+	}
+	if len([]rune(s)) > maintenanceMetadataMaxStringLen {
+		return "redacted"
+	}
+	for _, marker := range maintenanceSensitiveMarkers {
+		if strings.Contains(lower, marker) {
+			return "redacted"
+		}
+	}
+	return s
 }
 
 // safeFailureRate returns the failure rate as a float64 rounded to 4 decimal

@@ -57,6 +57,9 @@ func TestRedisQueueDepthInspector_Available(t *testing.T) {
 	if depth.Status != "available" {
 		t.Fatalf("status = %q, want available", depth.Status)
 	}
+	if depth.Reason != "" {
+		t.Errorf("reason = %q, want empty for available", depth.Reason)
+	}
 	if depth.Pending != 5 {
 		t.Errorf("pending = %d, want 5", depth.Pending)
 	}
@@ -88,6 +91,9 @@ func TestRedisQueueDepthInspector_RedisError(t *testing.T) {
 	if depth.Status != "unavailable" {
 		t.Fatalf("status = %q, want unavailable", depth.Status)
 	}
+	if depth.Reason != "queue_unavailable" {
+		t.Fatalf("reason = %q, want queue_unavailable", depth.Reason)
+	}
 	if depth.Pending != 0 || depth.Processing != 0 || depth.Delayed != 0 || depth.Dead != 0 {
 		t.Errorf("non-zero counts on unavailable: %+v", depth)
 	}
@@ -102,6 +108,9 @@ func TestRedisQueueDepthInspector_NilClient(t *testing.T) {
 	if depth.Status != "unavailable" {
 		t.Fatalf("status = %q, want unavailable", depth.Status)
 	}
+	if depth.Reason != "queue_unavailable" {
+		t.Fatalf("reason = %q, want queue_unavailable", depth.Reason)
+	}
 }
 
 func TestRedisQueueDepthInspector_NilInspector(t *testing.T) {
@@ -109,6 +118,9 @@ func TestRedisQueueDepthInspector_NilInspector(t *testing.T) {
 	depth := inspector.Inspect(context.Background())
 	if depth.Status != "unavailable" {
 		t.Fatalf("status = %q, want unavailable", depth.Status)
+	}
+	if depth.Reason != "queue_unavailable" {
+		t.Fatalf("reason = %q, want queue_unavailable", depth.Reason)
 	}
 }
 
@@ -120,6 +132,9 @@ func TestRedisQueueDepthInspector_EmptyQueueName(t *testing.T) {
 	depth := inspector.Inspect(context.Background())
 	if depth.Status != "unavailable" {
 		t.Fatalf("status = %q, want unavailable", depth.Status)
+	}
+	if depth.Reason != "queue_unavailable" {
+		t.Fatalf("reason = %q, want queue_unavailable", depth.Reason)
 	}
 }
 
@@ -152,6 +167,9 @@ func TestNilQueueDepthInspector(t *testing.T) {
 	depth := inspector.Inspect(context.Background())
 	if depth.Status != "unavailable" {
 		t.Fatalf("status = %q, want unavailable", depth.Status)
+	}
+	if depth.Reason != "queue_unavailable" {
+		t.Fatalf("reason = %q, want queue_unavailable", depth.Reason)
 	}
 }
 
