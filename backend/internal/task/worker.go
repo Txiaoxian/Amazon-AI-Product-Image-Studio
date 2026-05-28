@@ -448,7 +448,7 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 			}
 			return ProcessResult{Action: claimActionAck}, nil
 		}
-		if errors.Is(err, settings.ErrStoredStorageQuotaInvalid) {
+		if errors.Is(err, settings.ErrStoredStorageQuotaInvalid) || errors.Is(err, settings.ErrStorageQuotaCounterInvalid) || errors.Is(err, settings.ErrStorageQuotaReservationInvalid) {
 			if failErr := p.failRunningTask(ctx, scope, running.ID, ExecutionResult{ErrorCode: "TASK_CONFIGURATION_INVALID", ErrorMessage: "Task configuration is no longer available."}); failErr != nil {
 				return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr
 			}

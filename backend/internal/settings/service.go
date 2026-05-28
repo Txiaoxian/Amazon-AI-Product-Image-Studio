@@ -328,21 +328,11 @@ func CheckStorageQuota(ctx context.Context, repo Repository, scope tenant.Scope,
 	if pendingBytes < 0 {
 		return ErrValidation
 	}
-	quota, err := LoadStorageQuota(ctx, repo, scope)
+	reservation, err := ReserveStorageQuota(ctx, repo, scope, pendingBytes)
 	if err != nil {
 		return err
 	}
-	if quota.MaxBytes == nil {
-		return nil
-	}
-	usedBytes, err := repo.StorageUsedBytes(ctx, scope)
-	if err != nil {
-		return err
-	}
-	if usedBytes > *quota.MaxBytes || pendingBytes > *quota.MaxBytes-usedBytes {
-		return ErrStorageQuotaExceeded
-	}
-	return nil
+	return ReleaseStorageQuotaReservation(ctx, repo, scope, reservation)
 }
 
 func (s *Service) CheckStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error {
@@ -351,6 +341,30 @@ func (s *Service) CheckStorageQuota(ctx context.Context, tenantID string, pendin
 		return err
 	}
 	return CheckStorageQuota(ctx, s.repo, scope, pendingBytes)
+}
+
+func (s *Service) ReserveStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) (StorageQuotaReservation, error) {
+	scope, err := tenant.NewScope(tenantID)
+	if err != nil {
+		return StorageQuotaReservation{}, err
+	}
+	return ReserveStorageQuota(ctx, s.repo, scope, pendingBytes)
+}
+
+func (s *Service) FinalizeStorageQuotaReservation(ctx context.Context, tenantID string, reservation StorageQuotaReservation, finalizedBytes int64) error {
+	scope, err := tenant.NewScope(tenantID)
+	if err != nil {
+		return err
+	}
+	return FinalizeStorageQuotaReservation(ctx, s.repo, scope, reservation, finalizedBytes)
+}
+
+func (s *Service) ReleaseStorageQuotaReservation(ctx context.Context, tenantID string, reservation StorageQuotaReservation) error {
+	scope, err := tenant.NewScope(tenantID)
+	if err != nil {
+		return err
+	}
+	return ReleaseStorageQuotaReservation(ctx, s.repo, scope, reservation)
 }
 
 func LoadEnabledStorageRetentions(ctx context.Context, repo Repository) ([]EnabledStorageRetention, []InvalidStorageRetention, error) {

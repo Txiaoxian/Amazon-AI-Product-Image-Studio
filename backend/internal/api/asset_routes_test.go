@@ -238,6 +238,22 @@ func TestAssetUploadEnforcesTenantStorageQuotaAndDoesNotLeakObject(t *testing.T)
 	if uploadLogs != 0 {
 		t.Fatalf("quota failed upload wrote %d success logs, want 0", uploadLogs)
 	}
+	assertQuotaCounter(t, db, adminSession.tenantID, 30, 0)
+
+	setWithinQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": int64(len(imageBytes)) + 30},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setWithinQuota.Code != http.StatusOK {
+		t.Fatalf("set within quota storageQuota status = %d, want %d: %s", setWithinQuota.Code, http.StatusOK, setWithinQuota.Body.String())
+	}
+	withinQuota := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "asset-within.png", "image/png", imageBytes, nil, adminSession.cookies, adminSession.csrfHeader())
+	if withinQuota.Code != http.StatusCreated {
+		t.Fatalf("within quota upload status = %d, want %d: %s", withinQuota.Code, http.StatusCreated, withinQuota.Body.String())
+	}
+	if store.count() != 2 {
+		t.Fatalf("within quota upload stored objects = %d, want 2", store.count())
+	}
+	assertQuotaCounter(t, db, adminSession.tenantID, 30+int64(len(imageBytes)), 0)
 
 	clearQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
 		"storageQuota": map[string]any{"maxBytes": nil},
@@ -249,9 +265,10 @@ func TestAssetUploadEnforcesTenantStorageQuotaAndDoesNotLeakObject(t *testing.T)
 	if success.Code != http.StatusCreated {
 		t.Fatalf("upload after clearing quota status = %d, want %d: %s", success.Code, http.StatusCreated, success.Body.String())
 	}
-	if store.count() != 2 {
-		t.Fatalf("upload after clearing quota stored objects = %d, want 2", store.count())
+	if store.count() != 4 {
+		t.Fatalf("upload after clearing quota stored objects = %d, want 4", store.count())
 	}
+	assertQuotaCounter(t, db, adminSession.tenantID, 30+int64(len(imageBytes))*2, 0)
 }
 
 func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
@@ -470,6 +487,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 	t.Run("database failure deletes uploaded object", func(t *testing.T) {
 		router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
 		projectID := createAssetTestProject(t, router, adminSession, "Database Failure Project")
+		seedQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 		if err := db.Exec("DROP TABLE image_assets").Error; err != nil {
 			t.Fatalf("drop image_assets: %v", err)
 		}
@@ -925,6 +943,35 @@ func assertNoAssetRows(t *testing.T, db *gorm.DB, tenantID string) {
 	}
 	if count != 0 {
 		t.Fatalf("asset rows = %d, want 0", count)
+	}
+}
+
+func seedQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.StorageQuotaCounter{
+		ID:            "quota-counter-" + tenantID,
+		TenantID:      tenantID,
+		UsedBytes:     usedBytes,
+		ReservedBytes: reservedBytes,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error; err != nil {
+		t.Fatalf("seed quota counter: %v", err)
+	}
+}
+
+func assertQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	var counter database.StorageQuotaCounter
+	if err := db.Model(&database.StorageQuotaCounter{}).
+		Select("tenant_id, used_bytes, reserved_bytes").
+		Where("tenant_id = ?", tenantID).
+		First(&counter).Error; err != nil {
+		t.Fatalf("load quota counter: %v", err)
+	}
+	if counter.UsedBytes != usedBytes || counter.ReservedBytes != reservedBytes {
+		t.Fatalf("quota counter used/reserved = %d/%d, want %d/%d", counter.UsedBytes, counter.ReservedBytes, usedBytes, reservedBytes)
 	}
 }
 

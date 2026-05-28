@@ -42,7 +42,9 @@ const uploadRollbackCleanupTimeout = 5 * time.Second
 
 type uploadPolicyResolver interface {
 	EffectiveUploadConfig(ctx context.Context, tenantID string) (config.UploadConfig, error)
-	CheckStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error
+	ReserveStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) (settings.StorageQuotaReservation, error)
+	FinalizeStorageQuotaReservation(ctx context.Context, tenantID string, reservation settings.StorageQuotaReservation, finalizedBytes int64) error
+	ReleaseStorageQuotaReservation(ctx context.Context, tenantID string, reservation settings.StorageQuotaReservation) error
 }
 
 type updateRequest struct {
@@ -348,9 +350,19 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 	}
 	record.ObjectKey = objectKey(scope.ID(), projectRecord.ID, record.ID, input.Ext)
 
-	if err := s.checkStorageQuota(ctx, scope.ID(), record.SizeBytes); err != nil {
+	reservation, err := s.reserveStorageQuota(ctx, scope.ID(), record.SizeBytes)
+	if err != nil {
 		return Response{}, err
 	}
+	reservationFinalized := false
+	defer func() {
+		if !reservationFinalized {
+			if err := s.releaseStorageQuota(context.Background(), scope.ID(), reservation); err != nil {
+				s.log.Warn("storage quota reservation release failed", slog.String("asset_id", record.ID), slog.String("error_kind", safeCleanupErrorKind(err)))
+			}
+		}
+	}()
+
 	thumbnailImage, err := thumbnail.Generate(input.Data, input.MimeType)
 	if err != nil {
 		return Response{}, ErrValidation
@@ -371,6 +383,9 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
 		if err := repo.CreateAsset(ctx, scope, &record); err != nil {
+			return err
+		}
+		if err := settings.FinalizeStorageQuotaReservation(ctx, settings.NewRepository(tx), scope, reservation, record.SizeBytes); err != nil {
 			return err
 		}
 		return audit.NewRecorder(tx).Record(ctx, audit.Event{
@@ -400,6 +415,7 @@ func (s *Service) uploadAsset(ctx context.Context, principal auth.Principal, pro
 		}
 		return Response{}, ErrUploadFailed
 	}
+	reservationFinalized = true
 
 	return responseFromRecord(record), nil
 }
@@ -684,11 +700,18 @@ func (s *Service) effectiveUploadConfig(ctx context.Context, tenantID string) (c
 	return s.policyResolver.EffectiveUploadConfig(ctx, tenantID)
 }
 
-func (s *Service) checkStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) error {
+func (s *Service) reserveStorageQuota(ctx context.Context, tenantID string, pendingBytes int64) (settings.StorageQuotaReservation, error) {
+	if s.policyResolver == nil {
+		return settings.StorageQuotaReservation{}, nil
+	}
+	return s.policyResolver.ReserveStorageQuota(ctx, tenantID, pendingBytes)
+}
+
+func (s *Service) releaseStorageQuota(ctx context.Context, tenantID string, reservation settings.StorageQuotaReservation) error {
 	if s.policyResolver == nil {
 		return nil
 	}
-	return s.policyResolver.CheckStorageQuota(ctx, tenantID, pendingBytes)
+	return s.policyResolver.ReleaseStorageQuotaReservation(ctx, tenantID, reservation)
 }
 
 func parseListQuery(c *gin.Context) (ListQuery, error) {

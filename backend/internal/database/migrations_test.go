@@ -236,6 +236,35 @@ func TestImageAssetModelIncludesNullablePurgedAt(t *testing.T) {
 	}
 }
 
+func TestStorageQuotaReservationMigrationIsTenantScopedAndInternal(t *testing.T) {
+	statements := findMigrationStatements(t, "202605270001_storage_quota_reservations")
+	joined := strings.Join(statements, "\n")
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS storage_quota_counters",
+		"tenant_id VARCHAR(36) NOT NULL",
+		"used_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"reserved_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"UNIQUE KEY uk_storage_quota_counters_tenant (tenant_id)",
+		"CONSTRAINT fk_storage_quota_counters_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)",
+		"CREATE TABLE IF NOT EXISTS storage_quota_reservations",
+		"finalized_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0",
+		"KEY idx_storage_quota_reservations_tenant_status (tenant_id, status)",
+		"KEY idx_storage_quota_reservations_tenant_expires (tenant_id, expires_at)",
+		"CONSTRAINT fk_storage_quota_reservations_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)",
+		"image_assets remains reconciliation truth",
+		"never expose IDs in API responses or audit metadata",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("storage quota reservation migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM image_assets", "bucket", "object_key", "minio"} {
+		if strings.Contains(strings.ToLower(joined), strings.ToLower(forbidden)) {
+			t.Fatalf("storage quota reservation migration must not include %q", forbidden)
+		}
+	}
+}
+
 func TestSystemSettingsMigrationIsTenantScopedGenericJSON(t *testing.T) {
 	statement := findCreateTableStatement(t, "system_settings")
 	for _, required := range []string{

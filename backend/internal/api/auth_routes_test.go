@@ -459,6 +459,26 @@ var authRouteTestSchema = []string{
 		updated_at TIMESTAMP NOT NULL,
 		UNIQUE (tenant_id, key)
 	)`,
+	`CREATE TABLE storage_quota_counters (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		used_bytes INTEGER NOT NULL,
+		reserved_bytes INTEGER NOT NULL,
+		reconciled_at TIMESTAMP NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		UNIQUE (tenant_id)
+	)`,
+	`CREATE TABLE storage_quota_reservations (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		bytes INTEGER NOT NULL,
+		finalized_bytes INTEGER NOT NULL,
+		status TEXT NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`,
 }
 
 func authRouteTestConfig(appEnv string) config.Config {

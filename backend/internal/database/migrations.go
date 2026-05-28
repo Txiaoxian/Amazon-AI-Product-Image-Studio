@@ -539,4 +539,40 @@ CREATE TABLE IF NOT EXISTS system_settings (
 			`CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (tenant_id, deleted_at, purged_at)`,
 		},
 	},
+	{
+		ID:   "202605270001_storage_quota_reservations",
+		Name: "create tenant scoped storage quota counter and reservation tables",
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS storage_quota_counters (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  used_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  reserved_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  reconciled_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_storage_quota_counters_tenant (tenant_id),
+  UNIQUE KEY uk_storage_quota_counters_tenant_id (tenant_id, id),
+  CONSTRAINT fk_storage_quota_counters_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tenant storage quota used and reserved byte counters; image_assets remains reconciliation truth'
+`,
+			`
+CREATE TABLE IF NOT EXISTS storage_quota_reservations (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  bytes BIGINT UNSIGNED NOT NULL,
+  finalized_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL,
+  expires_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_storage_quota_reservations_tenant_id (tenant_id, id),
+  KEY idx_storage_quota_reservations_tenant_status (tenant_id, status),
+  KEY idx_storage_quota_reservations_tenant_expires (tenant_id, expires_at),
+  CONSTRAINT fk_storage_quota_reservations_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Internal storage quota reservations; never expose IDs in API responses or audit metadata'
+`,
+		},
+	},
 }

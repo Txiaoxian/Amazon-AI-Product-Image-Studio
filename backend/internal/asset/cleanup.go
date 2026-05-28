@@ -8,6 +8,7 @@ import (
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
@@ -99,7 +100,17 @@ func (s *CleanupService) purgeCandidate(ctx context.Context, scope tenant.Scope,
 			return err
 		}
 	}
-	return s.repo.MarkAssetPurged(ctx, scope, record.ID, s.now())
+	now := s.now()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		if _, err := settings.NewRepository(tx).StorageUsedBytes(ctx, scope); err != nil {
+			return err
+		}
+		if err := repo.MarkAssetPurged(ctx, scope, record.ID, now); err != nil {
+			return err
+		}
+		return settings.DecrementStorageQuotaUsedBytes(ctx, settings.NewRepository(tx), scope, record.SizeBytes)
+	})
 }
 
 func removeObjectIfPresent(ctx context.Context, store storage.ObjectStore, bucket string, key string) error {
