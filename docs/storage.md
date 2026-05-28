@@ -159,21 +159,22 @@ P13 retention runtime rules:
 - Storage quota accounting/enforcement is active in the backend. Frontend may display or edit quota only through the system-settings API and only for tenant admins with `system:settings:manage`.
 - Log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.
 
-P13 storage quota rules:
+P13/P17 storage quota rules:
 
 - `storageQuota.maxBytes` is nullable. `null` means no tenant storage quota is enforced.
-- `storageQuota.usedBytes` is read-only and must be computed from tenant-scoped `image_assets` metadata, counting records whose bytes still exist in MinIO. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
+- `storageQuota.usedBytes` is read-only and reflects the tenant-scoped quota counter after initialization or reconciliation from `image_assets` metadata. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
 - Quota enforcement must run before creating new reference upload assets and before Worker persists generated/edited output assets. Exceeding quota must fail without successful asset metadata, successful task output events, or leaked object keys.
-- Quota accounting must not use MinIO bucket listing as its source of truth in this phase. MySQL metadata remains the authoritative accounting source.
-- Current limitation before `P17-BE-STORAGE-QUOTA-RESERVATION`: quota checks are optimistic and do not yet reserve bytes under concurrent writers.
+- Quota accounting must not use MinIO bucket listing as its source of truth. MySQL metadata remains the authoritative reconciliation source.
+- P17 strict reservation/counter behavior is active for reference uploads and Worker generated/edited outputs, so concurrent writers cannot independently pass an optimistic metadata-sum check and exceed `storageQuota.maxBytes`.
 
-P17 storage quota reservation target:
+P17 storage quota reservation result:
 
-- Add tenant-scoped strict reservation/counter behavior for all asset-creating write paths.
-- Reserve original image bytes before MinIO writes for reference uploads and Worker generated/edited outputs.
-- Finalize reservations atomically with `image_assets` / `task_outputs` metadata creation, so successful rows and quota counters cannot diverge under normal operation.
-- Release reservations on validation, storage, DB transaction, cancellation, timeout, duplicate-output, or cleanup failure paths.
-- Reconcile quota counters from MySQL metadata because MySQL remains the authoritative source for expected object ownership. MinIO listing must not become quota truth.
-- Soft delete must not decrement used bytes. Physical purge after retention cleanup must decrement or reconcile used bytes only when objects are no longer expected to exist.
-- `storageQuota.usedBytes` should reflect the authoritative counter after reconciliation, and must remain read-only in the API/UI.
+- Tenant-scoped `storage_quota_counters` and `storage_quota_reservations` exist for strict reservation/finalization/release.
+- Reference uploads and Worker generated/edited outputs reserve original image bytes before MinIO writes.
+- Successful metadata transactions finalize reservations with `image_assets` / `task_outputs` creation, so successful rows and quota counters stay aligned under normal operation.
+- Validation, storage, DB transaction, duplicate-output, cancellation, timeout, and cleanup failure paths release or avoid reservations and do not leave successful asset/task-output side effects.
+- Reconciliation rebuilds quota counters from MySQL metadata because MySQL remains the authoritative source for expected object ownership. MinIO listing must not become quota truth.
+- Soft delete does not decrement used bytes. Physical purge after retention cleanup decrements or reconciles used bytes only when objects are no longer expected to exist.
+- `storageQuota.usedBytes` reflects the authoritative counter after initialization/reconciliation and remains read-only in the API/UI.
+- Released, stale, malformed, or mismatched reservations fail closed without creating successful asset metadata.
 - Responses, logs, audit metadata, and task events must not expose internal reservation IDs, object keys, bucket names, MinIO URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.

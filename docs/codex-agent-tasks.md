@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16` 和 `P17-BE-ORPHAN-CLEANUP` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup 已合并。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP` 和 `P17-BE-STORAGE-QUOTA-RESERVATION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup 与 strict storage quota reservation 已合并。
 
 已完成的平台基础：
 
@@ -109,8 +109,8 @@
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
 - P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION` 和 `P16-BE-THUMBNAIL-POLICY`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`；新 reference upload 和 Worker 输出资产会生成 MinIO thumbnail object 并通过后端鉴权访问。
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
-- P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit，不允许仅凭 bucket listing 删除对象。
-- 下一切片：`P17-BE-STORAGE-QUOTA-RESERVATION`。需要为 reference upload 和 Worker output 增加严格 quota reservation/counter 与 reconciliation，解决并发写入下的 optimistic quota race。
+- P17 已完成切片：`P17-BE-ORPHAN-CLEANUP` 和 `P17-BE-STORAGE-QUOTA-RESERVATION`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race。
+- 下一切片：`P17-BE-OBSERVABILITY-METRICS`。需要增加 admin-only JSON diagnostics，聚合 queue depth、running/failed tasks、Provider failure rate、storage usage 和 maintenance job result，提升上线运维可见性。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -499,7 +499,7 @@ git diff --check
   - `docker compose -f deploy/docker-compose.yml config`
   - `git diff --check`
 - Live Compose 验证确认服务健康、frontend `/api/` 代理、SSE auth boundary 和 cleanup 均正常。
-- 非阻塞遗留：Provider/model 更强事务序列化和严格并发 quota reservation 仍属于 post-R15 backlog；其中 quota reservation 是当前 P17 下一任务。
+- 非阻塞遗留：Provider/model 更强事务序列化仍属于 post-R15 backlog；严格并发 quota reservation 已由 `P17-BE-STORAGE-QUOTA-RESERVATION` 完成。
 
 ## 稳定生产上线路线图
 
@@ -532,6 +532,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 已完成并合并。
 2. `P17-BE-STORAGE-QUOTA-RESERVATION`
    - 为并发上传和 Worker 输出增加严格 quota reservation/counter 与 reconciliation。
+   - 已完成并合并。
 3. `P17-BE-OBSERVABILITY-METRICS`
    - 增加 admin-only JSON diagnostics：queue depth、running/failed tasks、Provider failure rate、storage usage、maintenance job result 等。
 4. `R17`
@@ -548,7 +549,220 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P17-BE-STORAGE-QUOTA-RESERVATION
+## 下一个任务包：P17-BE-OBSERVABILITY-METRICS
+
+### 调度决策
+
+- 本任务串行执行，不与 Provider/model serialization、real Provider smoke、前端任务或部署 dry-run 并行。
+- 理由：这是首个生产 diagnostics 公共合同，会触达 admin API、queue inspection、task/provider aggregate、storage usage 和 maintenance result 读取；先稳定只读诊断边界，再进入 P18 最终上线信心任务。
+- 本任务只实现 backend read-only JSON diagnostics，不新增前端 UI，不新增 Prometheus/exporter，不触发 cleanup、Provider test 或任务执行。
+
+### 任务信息
+
+- 任务名称：`P17-BE-OBSERVABILITY-METRICS`
+- 目标：增加 admin-only、tenant-scoped、read-only production diagnostics JSON API，用于查看 queue depth、running/failed tasks、Provider failure rate、storage usage 和 recent maintenance results，提升上线运维可见性。
+- 推荐线程名：`P17-BE-OBSERVABILITY-METRICS`
+- 推荐分支名：`codex/p17-backend-observability-metrics`
+- 起始分支：已合并 `P17-BE-STORAGE-QUOTA-RESERVATION` 的最新 `main`
+- 前置依赖：P17 orphan cleanup 和 P17 strict storage quota reservation 已合并；P9/P14 audit usage reads、P13/P16 runtime settings、P7/P10 queue/Worker/SSE 基础均已可用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P17-BE-OBSERVABILITY-METRICS`。
+
+你必须在分支 `codex/p17-backend-observability-metrics` 上工作；如果当前不在该分支，先执行 `git switch codex/p17-backend-observability-metrics`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P17-BE-STORAGE-QUOTA-RESERVATION` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p17-backend-observability-metrics` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+增加 backend admin-only JSON diagnostics 能力：
+- 新增 `GET /api/v1/admin/diagnostics/summary`。
+- 该接口只读、tenant-scoped、admin-only，并要求 `audit:read` 权限。
+- 返回 queue depth、task status aggregates、Provider/API-call failure rate、storage usage aggregate、recent maintenance result aggregate。
+- 只返回聚合和 sanitized samples，不返回 Redis keys、queue payload、claim IDs、raw Provider payload、operation/API log raw metadata、bucket、object key、MinIO URL、signed URL、image base64、Authorization、Cookie、JWT 或 Provider secrets。
+- Redis/queue section 不可用时优先返回 section-level `status="unavailable"` 和 sanitized reason code，不泄漏连接串或底层错误；数据库主查询失败仍按现有 API 错误形状返回 sanitized 500。
+
+允许修改文件：
+- `backend/internal/api/**`
+- `backend/internal/queue/**` 仅限新增只读 queue depth inspector 和测试
+- `backend/internal/task/**` 仅限只读 aggregate helper 或测试；不得改 Worker 状态机
+- `backend/internal/settings/**` 仅限读取 storage quota/public usage helper 或测试
+- `backend/internal/asset/**` 仅限只读 storage aggregate helper 或测试
+- `backend/internal/database/**` 仅限使用既有模型/必要测试 helper；默认不新增表和 migration
+- backend-only 测试文件
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理写路径、认证/JWT/Cookie 主流程、SSE handler、Worker claim/cancel/retry/timeout 状态机、任务创建/执行语义
+- 不新增 AI Provider 调用、Provider test 调用、API key 解密、cleanup 触发、任务 enqueue、前端轮询、浏览器存储、Prometheus/exporter 或公共 MinIO/signed URL
+
+前置阅读：
+- `docs/api-contract.md` 的 P17 diagnostics contract
+- `docs/security.md` 的 P17 production diagnostics 安全要求
+- `docs/development-plan.md` 的 P17 当前优先级
+- `backend/internal/api/audit_usage_routes.go`
+- `backend/internal/api/router.go`
+- `backend/internal/queue/reliable_queue.go`
+- `backend/internal/task/types.go`
+- `backend/internal/database/models.go`
+- `backend/internal/settings/quota.go`
+- `backend/internal/asset/repository.go`
+- `backend/cmd/worker/log_retention_maintenance.go`
+- `backend/internal/asset/orphan_cleanup.go`
+
+具体开发内容：
+1. API 合同：
+   - 注册 `GET /api/v1/admin/diagnostics/summary`。
+   - 使用现有认证、tenant、admin/RBAC 中间件模式。
+   - 要求 tenant admin 加 `audit:read` 权限；无权限返回现有 `403 FORBIDDEN` 形状。
+   - 响应走现有统一 envelope。
+2. Task diagnostics：
+   - 返回当前 tenant 的 task counts by status，至少覆盖 queued/running/retrying/cancelling/succeeded/failed/cancelled/timed_out。
+   - 返回 bounded recent failures，字段只允许 taskId、status、errorCode、sanitized errorMessage、updatedAt/finishedAt。
+   - 支持 bounded `windowHours` 和 `limit`，默认值必须小且安全，最大值必须受限。
+3. Queue diagnostics：
+   - 新增只读 queue depth inspector，读取 pending/processing/delayed/dead counts。
+   - 不返回 Redis key 名称、payload、claim ID、task ID 列表或 Redis 原始错误。
+   - Redis 不可用时 diagnostics endpoint 不应泄漏内部错误；返回 queue section `status="unavailable"` 和 `reason="queue_unavailable"`。
+4. Provider diagnostics：
+   - 基于 `api_call_logs` 做 tenant-scoped aggregate。
+   - 返回固定/请求窗口内 totalCalls、failedCalls、failureRate，以及 bounded by Provider 聚合。
+   - Provider sample 只能包含 providerId、providerName 或 display-safe name、totalCalls、failedCalls、failureRate。
+   - 不返回 raw request/response JSON、request ID 列表、Provider error raw body、API key hint 以外的任何 secret。
+5. Storage diagnostics：
+   - 返回 `storageQuota.maxBytes`、read-only `usedBytes`、asset counts、softDeleted count、purged count。
+   - 不返回 reservation IDs、counter internals、bucket、object key、MinIO URL、signed URL。
+   - 不使用 MinIO listing 计算 quota 或 asset usage；MySQL metadata / settings quota helper 仍是 truth。
+6. Maintenance diagnostics：
+   - 基于现有 operation logs 的 sanitized aggregate metadata 返回 latest maintenance summaries when available。
+   - 至少覆盖 `storage.orphan_cleanup` 和 `log_retention.cleanup`；storage retention cleanup 如没有 operation log，只返回 `status="not_recorded"` 或省略，不要伪造成功状态。
+   - 不返回 operation log raw metadata 中的敏感或过大字段；只提取安全的 processed/deleted/failed/candidates/status/counts/timestamps。
+7. 错误、安全与边界：
+   - 所有查询必须带 tenant_id 过滤。
+   - 所有 limit/window 参数必须校验并 clamp。
+   - 所有 response strings 必须脱敏并限制长度。
+   - 不写 operation log，因为该接口是只读 diagnostics read；如项目已有 read-log 策略则沿用，不新增高噪声日志。
+
+安全要求：
+- 不允许泄漏 Redis keys、queue payload、claim IDs、raw task params、raw prompt、raw Provider request/response metadata、API key、Authorization、Cookie、JWT、image base64、bucket、object key、MinIO URL、signed URL。
+- 不允许跨 tenant 读取任何 task、asset、usage、API call、operation log、Provider、model 或 setting 数据。
+- 不允许在 diagnostics 中调用 Provider、解密 Provider key、执行 cleanup、enqueue task、修改 task state、修改 settings 或写 MinIO。
+- Section-level unavailable 必须是 sanitized reason code，不得包含 DSN、host、password、Redis key、SQL 或 stack trace。
+
+必须保持的现有行为：
+- 现有 `/admin/usage/*`、`/admin/operation-logs`、`/admin/api-call-logs*` 行为不变。
+- 现有 `/healthz` 和 `/api/v1/healthz` 行为不变。
+- 现有 task creation、queue claim、Worker execution、SSE replay、quota reservation、orphan cleanup、log retention cleanup 不变。
+- Frontend 不变。
+
+允许的中间态：
+- 可以先实现 backend-only JSON diagnostics；前端 UI、Prometheus/exporter 和 alerting 留给后续任务。
+- 可以对 Redis queue metrics 做 best-effort unavailable section；不能因此阻塞数据库-backed diagnostics。
+
+禁止的半迁移状态：
+- diagnostics endpoint 读取跨租户数据。
+- diagnostics endpoint 返回 Redis key/payload、object key/bucket、raw log metadata、raw Provider payload 或 secrets。
+- 为了展示 maintenance result 触发 cleanup 或修改任何状态。
+- 为了展示 queue depth 改变 queue 数据结构或 Worker claim/ack/retry 行为。
+- 新增 active writable setting 但没有 runtime consumer。
+- 前端开始轮询 diagnostics。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| 未登录 | 401 | 是 |
+| 非 admin 或缺少 `audit:read` | 403 | 是 |
+| tenant A 请求 | 只返回 tenant A 聚合，不包含 tenant B 数据 | 是 |
+| 默认查询参数 | 返回 bounded aggregates | 是 |
+| `windowHours` / `limit` 非法或过大 | 422 或 clamp 到安全上限，行为需测试明确 | 是 |
+| Redis/queue unavailable | endpoint 返回 200，queue section `status=unavailable`，无底层错误泄漏 | 是 |
+| DB 查询失败 | sanitized 500，不泄漏 SQL/table/stack | 是 |
+| Provider failure rate | 基于 tenant-scoped `api_call_logs` 聚合，不返回 raw JSON | 是 |
+| Storage usage | 使用 settings/quota metadata truth，不使用 MinIO listing，不暴露 object identifiers | 是 |
+| Maintenance logs absent | 返回 empty/not_recorded，不伪造成功 | 是 |
+| Maintenance metadata 含敏感字段 | response 不包含敏感字段或超长 raw metadata | 是 |
+
+必须新增或更新的回归测试：
+- `backend/internal/api/**`：diagnostics auth/RBAC、tenant isolation、response shape、query validation、Redis unavailable、DB failure sanitization。
+- `backend/internal/queue/**`：queue depth inspector 只读读取 pending/processing/delayed/dead counts，错误脱敏。
+- `backend/internal/api/**` 或相关 backend tests：Provider failure aggregate、task status aggregate、storage usage aggregate、maintenance latest result aggregate。
+- forbidden response tests：断言不包含 `tenants/`、bucket name、objectKey、Redis key、Authorization、Cookie、JWT、base64、raw request/response JSON、Provider key marker。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/api ./internal/queue ./internal/task ./internal/settings ./internal/asset -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+最终交付必须包含：
+- 修改文件清单。
+- 执行的测试命令和结果。
+- failure matrix 到具体测试文件/测试名的映射。
+- 安全自查结果，明确无 Redis key/payload、object key/bucket、raw metadata、Provider secret、Authorization/Cookie/JWT/image base64 泄漏。
+- 刻意未修改范围，特别说明 frontend UI、Prometheus/exporter、Provider/model serialization、real Provider smoke、cleanup triggers 不在本任务内。
+- 如使用共享本地 MySQL/Redis/MinIO，说明创建/修改/清理了哪些 `codex_p17_observability_metrics_*` 测试数据；默认优先使用自动化测试和 fake Redis/store。
+- 如发现公共合同缺口，只报告主 agent，不修改 docs。
+```
+
+### 允许修改文件
+
+- `backend/internal/api/**`
+- `backend/internal/queue/**` 仅限只读 queue depth inspector 和测试
+- `backend/internal/task/**` 仅限只读 aggregate helper 或测试
+- `backend/internal/settings/**` 仅限读取 storage quota/public usage helper 或测试
+- `backend/internal/asset/**` 仅限只读 storage aggregate helper 或测试
+- `backend/internal/database/**` 仅限既有模型使用或测试 helper；默认不新增 migration
+- backend-only 测试文件
+
+### 禁止修改文件
+
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- Provider Adapter、Provider/model 管理写路径、认证/JWT/Cookie 主流程、SSE handler、Worker claim/cancel/retry/timeout 状态机、任务创建/执行语义
+
+### 验收标准
+
+- `GET /api/v1/admin/diagnostics/summary` 可返回 tenant-scoped diagnostics summary。
+- 权限、tenant isolation、query bounds、Redis unavailable、DB failure、敏感字段脱敏均有测试。
+- Endpoint 不修改状态、不调用 Provider、不触发 cleanup、不 enqueue task。
+- 不泄漏 Redis key/payload、object key/bucket/MinIO URL、raw Provider/log metadata、Authorization/Cookie/JWT、Provider secret 或 image base64。
+- 现有 admin usage/audit/settings/task/queue/Worker/SSE 行为不回归。
+
+### 测试命令
+
+```bash
+cd backend
+go test ./internal/api ./internal/queue ./internal/task ./internal/settings ./internal/asset -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+## 最近已完成任务包：P17-BE-STORAGE-QUOTA-RESERVATION
 
 ### 调度决策
 

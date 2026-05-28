@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P17 Orphan Cleanup
+## Current State After P17 Quota Reservation
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -41,7 +41,7 @@ Phase status:
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
-| P17 | In Progress | Conservative MinIO orphan scan/dry-run/cleanup is complete; strict storage quota reservation and production diagnostics remain. |
+| P17 | In Progress | Conservative MinIO orphan scan/dry-run/cleanup and strict storage quota reservation are complete; production diagnostics and R17 remain. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
@@ -78,11 +78,11 @@ R12 reviewed the complete P12 code range from `f843b1e..HEAD` and found no block
 
 `P13-BE-STORAGE-RETENTION-RUNTIME` was reviewed and merged. The backend now exposes nullable `storageRetention.deletedAssetRetentionDays`, keeps automatic physical cleanup disabled by default, and runs a Worker maintenance loop that reads valid active-tenant retention settings and calls the cleanup foundation with tenant/cutoff/batch boundaries. Malformed/null/inactive settings fail closed and cleanup errors are logged with sanitized metadata only. Validation passed focused system-settings/settings/asset/database/worker tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Later P13/P17 slices added storage quota accounting and conservative orphan discovery.
 
-`P13-BE-STORAGE-QUOTA-ACCOUNTING` was reviewed and merged. The backend now exposes nullable `storageQuota.maxBytes` with read-only computed `storageQuota.usedBytes`, computes usage from tenant-scoped `image_assets.size_bytes` where `purged_at IS NULL`, and enforces quota before reference uploads and Worker output asset persistence. Quota failures return sanitized stable errors and avoid successful asset rows, task outputs, output events, usage records, successful operation logs, and object leaks. Validation passed focused system-settings/settings/asset/database/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Non-blocking follow-up: strict concurrent quota reservation/counters remains planned in P17.
+`P13-BE-STORAGE-QUOTA-ACCOUNTING` was reviewed and merged. The backend now exposes nullable `storageQuota.maxBytes` with read-only computed `storageQuota.usedBytes`, computes usage from tenant-scoped `image_assets.size_bytes` where `purged_at IS NULL`, and enforces quota before reference uploads and Worker output asset persistence. Quota failures return sanitized stable errors and avoid successful asset rows, task outputs, output events, usage records, successful operation logs, and object leaks. Validation passed focused system-settings/settings/asset/database/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Later P17 work replaced this optimistic check with strict tenant-scoped quota counters and reservations for concurrent uploads and Worker outputs.
 
 `P13-FE-SYSTEM-SETTINGS` was reviewed and merged. The frontend admin settings tab now displays and edits only runtime-backed settings: upload policy, task defaults, task concurrency, storage retention, and storage quota. Each save sends one top-level settings patch with CSRF, `storageQuota.usedBytes` remains read-only, and deferred settings such as log retention, orphan cleanup, manual cleanup, MinIO listing, and Provider secrets remain hidden. Validation passed frontend lint, type-check, targeted admin settings tests, full frontend tests, build, whitespace checks, and forbidden-pattern scans.
 
-R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging frontend system settings. No blocking issues were found. Validation passed frontend lint, type-check, tests, build; backend tests, race tests, vet, API/Worker builds; Docker Compose config; whitespace checks; and frontend forbidden-pattern scans for direct AI Provider calls, browser Provider-key storage, task polling, deferred settings, bucket/object-key exposure, and sensitive auth strings. Later phases completed thumbnail policy, log retention, and conservative orphan cleanup. Remaining follow-ups include strict concurrent quota reservation/counters, optional minimum bound for `WORKER_RETENTION_MAINTENANCE_INTERVAL`, built-in `asset:*` permission reconciliation for existing tenants, and stronger Provider/model transaction serialization.
+R13 reviewed the complete P13 code range from `eeba51f..HEAD` after merging frontend system settings. No blocking issues were found. Validation passed frontend lint, type-check, tests, build; backend tests, race tests, vet, API/Worker builds; Docker Compose config; whitespace checks; and frontend forbidden-pattern scans for direct AI Provider calls, browser Provider-key storage, task polling, deferred settings, bucket/object-key exposure, and sensitive auth strings. Later phases completed thumbnail policy, log retention, conservative orphan cleanup, and strict quota reservations. Remaining follow-ups include optional minimum bound for `WORKER_RETENTION_MAINTENANCE_INTERVAL`, built-in `asset:*` permission reconciliation for existing tenants, and stronger Provider/model transaction serialization.
 
 `P14-BE-PROVIDER-MODEL-INTEGRITY` was reviewed, fixed, and merged. Provider/model management now rejects model create/update/enable paths that target disabled, deleted, or cross-tenant Providers; default task settings are revalidated when loaded; Provider delete takes a row lock and remains blocked while same-tenant non-deleted linked models exist; Provider disable through both `/disable` and `PATCH status=DISABLED` is rejected while enabled linked models remain. Failed writes do not record successful operation logs and conflict responses stay non-sensitive. Validation passed focused Provider/model/settings/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, and whitespace checks. Same-Provider `model_name` uniqueness remains deferred because runtime task execution uses stable `modelId` references.
 
@@ -108,6 +108,8 @@ R16 reviewed the complete P16 range from `4b1913e..HEAD` and found no blocking i
 
 `P17-BE-ORPHAN-CLEANUP` was reviewed, fixed, and merged. The backend now has admin-only storage orphan scan and cleanup endpoints with dry-run default, explicit cleanup confirmation, tenant/admin permission checks, bounded MinIO listing, opaque continuation cursor, recognized backend object-key pattern checks, MySQL metadata exclusion, age gating, retry-safe delete failure handling, and sanitized aggregate operation logs. Validation passed focused storage/asset/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
+`P17-BE-STORAGE-QUOTA-RESERVATION` was reviewed, fixed, and merged. The backend now uses tenant-scoped quota counter/reservation tables for reference uploads and Worker generated/edited outputs. Asset-creating paths reserve original bytes before MinIO writes, finalize reservations inside metadata transactions, release on validation/storage/DB failures, keep soft-deleted-but-not-purged assets counted, decrement after physical purge, and reconcile counters from MySQL metadata rather than MinIO listing. Released or malformed reservations fail closed without successful asset/task-output side effects, and concurrent upload tests verify combined over-limit requests cannot exceed tenant quota. Validation passed focused database/settings/asset/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -127,6 +129,7 @@ The current `main` branch supports:
 - Backend runtime-backed task concurrency policy: tenant admins can configure tenant/user/Provider/model limits within environment hard caps, and Worker Redis semaphore acquisition consumes those effective limits before Provider execution.
 - Backend storage cleanup foundation: upload rollback cleanup no longer depends on canceled request contexts, and soft-deleted image assets can be physically purged through an internal tenant-scoped, cutoff-based, idempotent cleanup service.
 - Backend storage orphan cleanup: tenant admins or settings managers can run conservative dry-run scans and confirmed cleanup for MinIO objects that match backend object-key patterns and are not referenced by MySQL metadata, without exposing raw object keys or buckets.
+- Backend storage quota reservation: reference uploads and Worker output persistence use tenant-scoped MySQL reservation/counter accounting to prevent concurrent writes from exceeding `storageQuota.maxBytes`; counters reconcile from `image_assets` metadata and do not use MinIO listing as quota truth.
 - Backend runtime-backed storage retention policy: tenant admins can optionally set `storageRetention.deletedAssetRetentionDays`; Worker maintenance consumes it and defaults to disabled when unset or cleared.
 - Backend runtime-backed storage quota policy: tenant admins can optionally set `storageQuota.maxBytes`; `storageQuota.usedBytes` is computed from tenant-scoped asset metadata, and uploads/Worker output persistence enforce the quota before creating new asset metadata.
 - Frontend admin system settings UI for active runtime-backed settings only: upload policy, task defaults, task concurrency, storage retention, and storage quota.
@@ -299,13 +302,14 @@ Suggested order:
 2. `P17-BE-STORAGE-QUOTA-RESERVATION`
    - Add strict quota reservation/counter behavior for concurrent uploads and Worker output writes.
    - Include reconciliation for counters versus metadata and clear behavior for failed reservations.
+   - Completed and merged. Reference upload, Worker output persistence, physical purge accounting, stale reservation reconciliation, and fail-closed malformed state handling are active.
 3. `P17-BE-OBSERVABILITY-METRICS`
    - Add admin-only production diagnostics for API/Worker health detail, queue depth, running/failed task counts, Provider failure rates, storage usage, and maintenance job results.
    - This can start as JSON diagnostics before Prometheus or external monitoring integration.
 4. `R17`
    - Review storage governance and observability behavior before final Provider/admin consistency work.
 
-Parallelism: keep `P17-BE-STORAGE-QUOTA-RESERVATION` serial because it touches asset upload, Worker output persistence, cleanup accounting, and database schema. Observability can start only after quota reservation is merged and reviewed.
+Parallelism: quota reservation is merged and reviewed. Keep `P17-BE-OBSERVABILITY-METRICS` serial because it defines the first production diagnostics contract and touches admin API, queue inspection, task/provider aggregates, storage usage, and maintenance-result reads.
 
 ### P18: Production Confidence And Go/No-Go
 
@@ -380,6 +384,6 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P17-BE-STORAGE-QUOTA-RESERVATION` from latest `main`. Orphan cleanup is merged and reviewed. The next production risk is optimistic storage quota enforcement: concurrent reference uploads or Worker output writes can pass a metadata-sum quota check independently and together exceed the tenant limit.
+Start `P17-BE-OBSERVABILITY-METRICS` from latest `main`. Orphan cleanup and quota reservation are merged and reviewed. The next production risk is limited operator visibility into queue backlog, task failures, Provider failure rate, storage usage, and recent maintenance outcomes.
 
-The P17 quota reservation task must add strict tenant-scoped reservation/counter behavior around all asset-creating write paths. It should reserve bytes before MinIO writes, finalize reservations atomically with metadata creation, release reservations on validation/storage/DB failure, reconcile counters with `image_assets` metadata, and keep `storageQuota.usedBytes` honest without exposing internal reservation IDs to the frontend.
+The P17 diagnostics task must add an admin-only backend JSON endpoint for aggregated production diagnostics. It should stay read-only, tenant-scoped, permission-gated, bounded by time windows and limits, and must not expose raw Provider payloads, object keys, bucket names, MinIO URLs, Redis keys, queue payload contents, Authorization/Cookie/JWT values, or Provider secrets.

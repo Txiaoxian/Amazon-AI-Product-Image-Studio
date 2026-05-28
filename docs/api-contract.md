@@ -378,6 +378,7 @@ Frontend uses enabled model capability fields to render dynamic parameters. P6 o
 - `GET /admin/operation-logs`
 - `GET /admin/api-call-logs`
 - `GET /admin/api-call-logs/:id`
+- Planned P17 diagnostics endpoint: `GET /admin/diagnostics/summary`
 
 Current P9 backend contract:
 
@@ -390,6 +391,19 @@ Current P9 backend contract:
 - Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
 - `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
 - Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` consumes these routes through `frontend/src/api/admin.ts`, keeps list reads paginated, and gates visible sections by `usage:read` or `audit:read`.
+
+P17 diagnostics contract:
+
+- `GET /admin/diagnostics/summary` is an admin-only, read-only JSON endpoint for production diagnostics. It requires tenant admin access plus `audit:read` unless a later task deliberately adds a narrower diagnostics permission.
+- The response must use the standard envelope and contain aggregate sections only:
+  - `tasks`: counts by active/terminal statuses, recent failures, retrying/timeout counts, and bounded recent-failure samples with task IDs and sanitized error codes/messages only.
+  - `queue`: pending/processing/delayed/dead counts and section-level availability status; it must not expose Redis keys, queue payload contents, claim IDs, or task payload bodies.
+  - `providers`: bounded Provider/API-call aggregate counts and failure rates for a fixed or query-bounded time window; raw request/response metadata must not be returned.
+  - `storage`: `storageQuota.maxBytes`, read-only `usedBytes`, asset counts, soft-deleted/purged counts, and cleanup/orphan aggregate state without bucket/object-key/MinIO URL exposure.
+  - `maintenance`: latest sanitized aggregate operation-log summaries for storage retention, log retention, and orphan cleanup when available.
+- Query parameters should be limited to safe controls such as `windowHours` and `limit`; defaults must be bounded.
+- Database-backed sections are tenant-scoped. Redis or storage-inspection failures should be represented as sanitized section-level `status=unavailable` where possible rather than leaking infrastructure details.
+- Diagnostics must not mutate state, enqueue tasks, run cleanup, test Providers, call AI Providers, or read/decrypt Provider API keys.
 
 P14 usage/cost reporting contract:
 
@@ -479,8 +493,8 @@ The active runtime-backed settings slices are intentionally narrow:
   - `PATCH /admin/system-settings` may set a positive integer `maxBytes` or clear it with `null`; `usedBytes` is never writable.
   - Reference uploads and Worker output asset persistence must reject writes that would exceed the quota and must not leave successful asset metadata, successful task output events, or sensitive object identifiers in responses/logs.
   - Malformed persisted `storage_quota` must fail closed for new asset writes. Existing assets must not be deleted or hidden because of quota settings.
-  - Current pre-P17-reservation limitation: enforcement is based on metadata usage checks and is optimistic under concurrent writers.
-  - `P17-BE-STORAGE-QUOTA-RESERVATION` must keep this public API shape stable while adding server-side reservation/counter behavior. Internal reservation IDs, counter rows, lock keys, and reconciliation details must not be returned to the frontend.
+  - P17 quota reservation keeps this public API shape stable while adding server-side reservation/counter behavior. Internal reservation IDs, counter rows, lock keys, and reconciliation details must not be returned to the frontend.
+  - `usedBytes` reflects the tenant-scoped quota counter initialized/reconciled from MySQL `image_assets` metadata. MinIO bucket listing is not quota truth.
 - P16 contracts `logRetention` only together with a Worker runtime consumer:
   - `GET /admin/system-settings` returns nullable `operationLogRetentionDays`, `apiCallLogRetentionDays`, and `taskEventRetentionDays`.
   - `PATCH /admin/system-settings` may set each field to a positive integer day count or clear it with `null`; omitted fields retain their current value.
@@ -491,5 +505,5 @@ The active runtime-backed settings slices are intentionally narrow:
   - The setting covers existing database-backed logs only: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities.
   - Malformed persisted `log_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
 - Manual cleanup triggers remain absent from `system-settings`. P17 dedicated admin storage orphan endpoints have real runtime behavior and must not be mirrored as writable settings.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`; backend `logRetention` read/write and Worker maintenance cleanup are merged in `P16-BE-LOG-RETENTION`; backend thumbnail generation and authorized thumbnail streaming are merged in `P16-BE-THUMBNAIL-POLICY`; backend admin storage orphan scan/cleanup is merged in `P17-BE-ORPHAN-CLEANUP`.
+- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`; backend strict quota reservation/counter/reconciliation is merged in `P17-BE-STORAGE-QUOTA-RESERVATION`; backend `logRetention` read/write and Worker maintenance cleanup are merged in `P16-BE-LOG-RETENTION`; backend thumbnail generation and authorized thumbnail streaming are merged in `P16-BE-THUMBNAIL-POLICY`; backend admin storage orphan scan/cleanup is merged in `P17-BE-ORPHAN-CLEANUP`.
 - Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`. It sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps deferred settings absent from UI and requests. Frontend `logRetention` controls are deferred until after the backend runtime consumer is merged and reviewed.
