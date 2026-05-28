@@ -328,7 +328,7 @@ func TestAdminDiagnosticsSummaryMaintenanceStringSanitization(t *testing.T) {
 	}
 	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
 
-	// Seed with status values that contain sensitive markers
+	// Seed with completedAt containing a URL — not a valid RFC3339, will be dropped
 	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-str-sens", "storage.orphan_cleanup",
 		`{"status":"completed","completedAt":"http://minio:9000/leaked-url"}`)
 
@@ -342,8 +342,9 @@ func TestAdminDiagnosticsSummaryMaintenanceStringSanitization(t *testing.T) {
 		"minio:9000",
 		"leaked-url",
 	)
-	if !strings.Contains(body, `"redacted"`) {
-		t.Fatal("sensitive string should be replaced with 'redacted'")
+	// completedAt should be entirely dropped (not redacted) because it's not valid RFC3339
+	if strings.Contains(body, `"completedAt"`) {
+		t.Fatal("invalid completedAt should be dropped entirely, not included in response")
 	}
 }
 
@@ -514,6 +515,129 @@ func TestAdminDiagnosticsSummaryErrorMessageSanitization(t *testing.T) {
 	if len([]rune(errorMessage)) > 200 {
 		t.Fatalf("errorMessage rune count = %d, want <= 200", len([]rune(errorMessage)))
 	}
+}
+
+func TestAdminDiagnosticsSummaryCompletedAtObjectKeyDropped(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// completedAt with an object key path — not RFC3339, must be dropped
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-objkey", "storage.orphan_cleanup",
+		`{"scanned":10,"completedAt":"tenant-a/project-x/assets/abc.jpg","status":"completed"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"tenant-a",
+		"project-x",
+		"abc.jpg",
+	)
+	if strings.Contains(body, `"completedAt"`) {
+		t.Fatal("completedAt with object key should be dropped, not included")
+	}
+	// scanned should still be present as a numeric field
+	if !strings.Contains(body, `"scanned"`) {
+		t.Fatal("scanned should still be present")
+	}
+}
+
+func TestAdminDiagnosticsSummaryCompletedAtUnknownSecretDropped(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// completedAt with a secret-like string that doesn't match old markers
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-secret", "storage.orphan_cleanup",
+		`{"scanned":5,"completedAt":"sk-live-abc123xyz","status":"completed"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"sk-live-abc123xyz",
+	)
+	if strings.Contains(body, `"completedAt"`) {
+		t.Fatal("completedAt with unknown secret should be dropped, not included")
+	}
+}
+
+func TestAdminDiagnosticsSummaryCompletedAtValidRFC3339Preserved(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	validTimestamp := "2025-06-15T10:30:00Z"
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-valid-ts", "storage.orphan_cleanup",
+		`{"scanned":5,"completedAt":"`+validTimestamp+`","status":"completed"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	if !strings.Contains(body, validTimestamp) {
+		t.Fatalf("valid RFC3339 completedAt should be preserved, body: %s", body)
+	}
+}
+
+func TestAdminDiagnosticsSummaryNumericFieldRejectsString(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// "scanned" is a numeric field — string value should be silently dropped
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-numeric-str", "storage.orphan_cleanup",
+		`{"scanned":"tenant/project/leak.jpg","deleted":3,"status":"completed"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"leak.jpg",
+		"tenant/project",
+	)
+	// deleted (numeric) should still be present
+	if !strings.Contains(body, `"deleted"`) {
+		t.Fatal("deleted should still be present")
+	}
+}
+
+func TestAdminDiagnosticsSummaryStatusRejectsNonEnum(t *testing.T) {
+	inspector := &fakeQueueDepthInspector{
+		result: queue.QueueDepth{Status: "available"},
+	}
+	router, db, adminSession := newDiagnosticsTestRouter(t, inspector)
+
+	// "status" with a non-enum string — must be dropped
+	seedDiagnosticsMaintenanceLog(t, db, adminSession.tenantID, "maint-bad-status", "storage.orphan_cleanup",
+		`{"scanned":1,"status":"completed at tenant/project/abc.jpg"}`)
+
+	response := performJSON(router, http.MethodGet, "/api/v1/admin/diagnostics/summary", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostics status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	body := response.Body.String()
+	assertResponseExcludes(t, body,
+		"abc.jpg",
+		"tenant/project",
+	)
 }
 
 // --- Test helpers ---

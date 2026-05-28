@@ -403,96 +403,102 @@ func sanitizeMaintenanceMetadata(metadataJSON string) map[string]any {
 	return filterSafeFields(decoded)
 }
 
-// Whitelisted maintenance metadata fields for safe diagnostics output.
-// Only aggregate counts, boolean flags, and status indicators are allowed.
+// maintenanceFieldType classifies how each whitelisted maintenance metadata
+// field value should be validated. This is fail-closed: any value that does
+// not match the expected type is dropped entirely.
+type maintenanceFieldType int
+
+const (
+	// fieldTypeNumeric only allows JSON numbers (float64). Strings, arrays,
+	// and all other types are dropped.
+	fieldTypeNumeric maintenanceFieldType = iota
+	// fieldTypeBool only allows JSON booleans.
+	fieldTypeBool
+	// fieldTypeStatusEnum only allows a fixed set of status string values.
+	fieldTypeStatusEnum
+	// fieldTypeTimestamp only allows valid RFC3339 timestamp strings.
+	fieldTypeTimestamp
+)
+
+// maintenanceMetadataFieldTypes maps each safe maintenance metadata key to
+// its expected value type. Keys not listed here are always dropped.
+//
 // The "errors" field is intentionally excluded because historical operation
 // logs may contain unsanitized error strings with object keys, Authorization
 // headers, or other sensitive content.
-var maintenanceMetadataSafeFields = map[string]bool{
-	"processed":      true,
-	"deleted":        true,
-	"failed":         true,
-	"candidates":     true,
-	"scanned":        true,
-	"status":         true,
-	"completedAt":    true,
-	"totalProcessed": true,
-	"totalDeleted":   true,
-	"totalFailed":    true,
-	"skipped":        true,
-	"dryRun":         true,
+var maintenanceMetadataFieldTypes = map[string]maintenanceFieldType{
+	// Aggregate count fields — numeric only.
+	"processed":      fieldTypeNumeric,
+	"deleted":        fieldTypeNumeric,
+	"failed":         fieldTypeNumeric,
+	"candidates":     fieldTypeNumeric,
+	"scanned":        fieldTypeNumeric,
+	"totalProcessed": fieldTypeNumeric,
+	"totalDeleted":   fieldTypeNumeric,
+	"totalFailed":    fieldTypeNumeric,
+	"skipped":        fieldTypeNumeric,
+
+	// Boolean flags.
+	"dryRun": fieldTypeBool,
+
+	// Status indicator — enum string only.
+	"status": fieldTypeStatusEnum,
+
+	// Timestamp — RFC3339 only.
+	"completedAt": fieldTypeTimestamp,
 }
 
-// maintenanceMetadataSafeStatusValues are the allowed string values for
-// whitelisted maintenance metadata fields. Any string not in this set
-// is replaced with "redacted" to prevent leaking arbitrary content.
-var maintenanceMetadataSafeStatusValues = map[string]bool{
+// maintenanceStatusEnumValues is the closed set of allowed status strings.
+var maintenanceStatusEnumValues = map[string]bool{
 	"completed": true, "failed": true, "skipped": true,
 	"success": true, "error": true, "partial": true,
 	"running": true, "pending": true, "dry_run": true,
 }
 
-// maintenanceMetadataMaxStringLen is the max rune length for status strings.
-const maintenanceMetadataMaxStringLen = 64
-
-// maintenanceSensitiveMarkers are substrings that must never appear in
-// maintenance diagnostics output. If a string value contains any of these
-// markers, it is replaced with "redacted".
-var maintenanceSensitiveMarkers = []string{
-	"bearer", "token", "authorization", "cookie", "jwt",
-	"api_key", "apikey", "secret", "password",
-	"minio", "s3://", "http://", "https://",
-	"object_key", "objectkey", "bucket",
-}
-
-// filterSafeFields extracts only whitelisted keys with safe value types.
-// - Only keys in maintenanceMetadataSafeFields are kept.
-// - Non-whitelisted keys are completely dropped (no nested recursion
-//   through unsafe keys, which would leak the key name itself).
-// - Allowed value types: float64 (JSON number), bool, nil.
-// - String values must pass sensitive-marker check and length cap.
-// - Arrays and all other types are dropped.
+// filterSafeFields extracts only whitelisted keys and validates each value
+// against the expected type for that key. This is fail-closed: if the value
+// does not match the expected type, it is dropped silently.
+//
+// - Non-whitelisted keys are completely dropped.
+// - Numeric fields only accept float64 (JSON number).
+// - Bool fields only accept bool.
+// - Status enum fields only accept strings from maintenanceStatusEnumValues.
+// - Timestamp fields only accept valid RFC3339 strings.
+// - All other value types (arrays, maps, unexpected strings) are dropped.
 func filterSafeFields(data map[string]any) map[string]any {
 	safe := make(map[string]any)
 	for key, value := range data {
-		if !maintenanceMetadataSafeFields[key] {
+		fieldType, ok := maintenanceMetadataFieldTypes[key]
+		if !ok {
 			continue
 		}
-		switch v := value.(type) {
-		case float64:
-			safe[key] = v
-		case bool:
-			safe[key] = v
-		case nil:
-			safe[key] = v
-		case string:
-			safe[key] = sanitizeMaintenanceString(v)
-		default:
-			// Arrays, nested maps, and unknown types are dropped.
-			// This prevents leaking array contents like object keys
-			// or error messages.
+		switch fieldType {
+		case fieldTypeNumeric:
+			if v, ok := value.(float64); ok {
+				safe[key] = v
+			}
+		case fieldTypeBool:
+			if v, ok := value.(bool); ok {
+				safe[key] = v
+			}
+		case fieldTypeStatusEnum:
+			if v, ok := value.(string); ok {
+				lower := strings.ToLower(strings.TrimSpace(v))
+				if maintenanceStatusEnumValues[lower] {
+					safe[key] = lower
+				}
+			}
+		case fieldTypeTimestamp:
+			if v, ok := value.(string); ok {
+				if _, err := time.Parse(time.RFC3339, v); err == nil {
+					safe[key] = v
+				} else if _, err := time.Parse(time.RFC3339Nano, v); err == nil {
+					safe[key] = v
+				}
+			}
 		}
 	}
 	return safe
-}
-
-// sanitizeMaintenanceString validates a string value from maintenance
-// metadata. Returns the original if it is a known safe status value,
-// otherwise checks length and sensitive markers.
-func sanitizeMaintenanceString(s string) string {
-	lower := strings.ToLower(strings.TrimSpace(s))
-	if maintenanceMetadataSafeStatusValues[lower] {
-		return lower
-	}
-	if len([]rune(s)) > maintenanceMetadataMaxStringLen {
-		return "redacted"
-	}
-	for _, marker := range maintenanceSensitiveMarkers {
-		if strings.Contains(lower, marker) {
-			return "redacted"
-		}
-	}
-	return s
 }
 
 // safeFailureRate returns the failure rate as a float64 rounded to 4 decimal
