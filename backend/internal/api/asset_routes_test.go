@@ -271,6 +271,89 @@ func TestAssetUploadEnforcesTenantStorageQuotaAndDoesNotLeakObject(t *testing.T)
 	assertQuotaCounter(t, db, adminSession.tenantID, 30+int64(len(imageBytes))*2, 0)
 }
 
+func TestAssetUploadConcurrentQuotaReservationAllowsOnlyOneCombinedOverLimit(t *testing.T) {
+	router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{MaxFileSizeBytes: 1024 * 1024, MaxWidth: 10, MaxHeight: 10, MaxPixels: 100, AllowedMIMETypes: []string{"image/png"}})
+	projectID := createAssetTestProject(t, router, adminSession, "Concurrent Quota Project")
+	imageBytes := validPNG(t, 2, 2)
+	now := time.Now().UTC()
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-active-concurrent", 10, nil, nil)
+	seedQuotaAsset(t, db, adminSession.tenantID, "quota-soft-concurrent", 20, &now, nil)
+
+	setQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": int64(len(imageBytes)) + 30},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setQuota.Code != http.StatusOK {
+		t.Fatalf("set storageQuota status = %d, want %d: %s", setQuota.Code, http.StatusOK, setQuota.Body.String())
+	}
+
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		i := i
+		go func() {
+			<-start
+			response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", fmt.Sprintf("asset-%d.png", i), "image/png", imageBytes, nil, adminSession.cookies, adminSession.csrfHeader())
+			statuses <- response.Code
+		}()
+	}
+	close(start)
+
+	var created int
+	var exceeded int
+	for i := 0; i < 2; i++ {
+		switch code := <-statuses; code {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			exceeded++
+		default:
+			t.Fatalf("concurrent upload status = %d, want created or conflict", code)
+		}
+	}
+	if created != 1 || exceeded != 1 {
+		t.Fatalf("concurrent upload created/conflict = %d/%d, want 1/1", created, exceeded)
+	}
+	var projectAssets int64
+	if err := db.Model(&database.ImageAsset{}).Where("tenant_id = ? AND project_id = ?", adminSession.tenantID, projectID).Count(&projectAssets).Error; err != nil {
+		t.Fatalf("count concurrent upload assets: %v", err)
+	}
+	if projectAssets != 1 {
+		t.Fatalf("concurrent upload asset rows = %d, want 1", projectAssets)
+	}
+	if store.count() != 2 {
+		t.Fatalf("concurrent upload stored objects = %d, want 2", store.count())
+	}
+	assertQuotaCounter(t, db, adminSession.tenantID, 30+int64(len(imageBytes)), 0)
+}
+
+func TestAssetUploadFailsClosedWhenReservationReleasedBeforeMetadataCommit(t *testing.T) {
+	router, db, store, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+	projectID := createAssetTestProject(t, router, adminSession, "Released Reservation Project")
+	imageBytes := validPNG(t, 2, 2)
+	setQuota := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"storageQuota": map[string]any{"maxBytes": int64(len(imageBytes)) * 2},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if setQuota.Code != http.StatusOK {
+		t.Fatalf("set storageQuota status = %d, want %d: %s", setQuota.Code, http.StatusOK, setQuota.Body.String())
+	}
+	var once sync.Once
+	store.onPut = func() {
+		once.Do(func() {
+			releaseReservedQuotaRowsForTest(t, db, adminSession.tenantID)
+		})
+	}
+
+	response := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "asset.png", "image/png", imageBytes, nil, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("upload status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+	assertNoAssetRows(t, db, adminSession.tenantID)
+	if store.count() != 0 {
+		t.Fatalf("released reservation failure left stored objects: %#v", store.objects)
+	}
+	assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
+}
+
 func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
 	projectID := createAssetTestProject(t, router, adminSession, "Permission Project")
@@ -468,6 +551,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 		if store.count() != 0 {
 			t.Fatal("storage failure should not leave stored objects")
 		}
+		assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 	})
 
 	t.Run("thumbnail storage failure deletes uploaded original and leaves no metadata", func(t *testing.T) {
@@ -482,6 +566,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 		if store.count() != 0 {
 			t.Fatalf("thumbnail storage failure left orphan objects: %#v", store.objects)
 		}
+		assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 	})
 
 	t.Run("database failure deletes uploaded object", func(t *testing.T) {
@@ -501,6 +586,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 		if store.removeCount == 0 {
 			t.Fatal("database failure should attempt object cleanup")
 		}
+		assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 	})
 
 	t.Run("database failure after request cancellation still cleans uploaded object", func(t *testing.T) {
@@ -525,6 +611,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 				t.Fatalf("cleanup used canceled request context: %v", removeErr)
 			}
 		}
+		assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 	})
 
 	t.Run("database failure with cleanup failure returns sanitized upload failure", func(t *testing.T) {
@@ -553,6 +640,7 @@ func TestAssetUploadValidationRejectsInvalidFilesAndAvoidsOrphans(t *testing.T) 
 				t.Fatalf("upload cleanup failure response leaked %q: %s", forbidden, body)
 			}
 		}
+		assertQuotaCounter(t, db, adminSession.tenantID, 0, 0)
 	})
 }
 
@@ -958,6 +1046,29 @@ func seedQuotaCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int6
 		UpdatedAt:     now,
 	}).Error; err != nil {
 		t.Fatalf("seed quota counter: %v", err)
+	}
+}
+
+func releaseReservedQuotaRowsForTest(t *testing.T, db *gorm.DB, tenantID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.StorageQuotaReservation{}).
+			Where("tenant_id = ? AND status = ?", tenantID, "RESERVED").
+			Updates(map[string]any{
+				"status":     "RELEASED",
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&database.StorageQuotaCounter{}).
+			Where("tenant_id = ?", tenantID).
+			Updates(map[string]any{
+				"reserved_bytes": 0,
+				"updated_at":     now,
+			}).Error
+	}); err != nil {
+		t.Fatalf("release reserved quota rows: %v", err)
 	}
 }
 

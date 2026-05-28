@@ -101,14 +101,29 @@ func FinalizeStorageQuotaReservation(ctx context.Context, repo Repository, scope
 		if err != nil {
 			return err
 		}
-		if record.Status != storageQuotaReservationStatusReserved {
-			return nil
-		}
 		if record.Bytes < 0 || record.FinalizedBytes < 0 {
+			return ErrStorageQuotaReservationInvalid
+		}
+		if record.Bytes != reservation.Bytes {
 			return ErrStorageQuotaReservationInvalid
 		}
 		if finalizedBytes > record.Bytes {
 			return ErrValidation
+		}
+		switch record.Status {
+		case storageQuotaReservationStatusFinalized:
+			if record.FinalizedBytes == finalizedBytes {
+				return nil
+			}
+			return ErrStorageQuotaReservationInvalid
+		case storageQuotaReservationStatusReleased:
+			if finalizedBytes == 0 {
+				return nil
+			}
+			return ErrStorageQuotaReservationInvalid
+		case storageQuotaReservationStatusReserved:
+		default:
+			return ErrStorageQuotaReservationInvalid
 		}
 		status := storageQuotaReservationStatusFinalized
 		if finalizedBytes == 0 {
