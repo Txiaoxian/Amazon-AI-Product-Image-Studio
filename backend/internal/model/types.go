@@ -33,9 +33,10 @@ const (
 )
 
 var (
-	ErrValidation = errors.New("invalid model request")
-	ErrForbidden  = errors.New("model access forbidden")
-	ErrNotFound   = errors.New("model not found")
+	ErrValidation         = errors.New("invalid model request")
+	ErrForbidden          = errors.New("model access forbidden")
+	ErrNotFound           = errors.New("model not found")
+	ErrDuplicateModelName = errors.New("model name already exists for provider")
 )
 
 type ListQuery struct {

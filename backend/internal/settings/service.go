@@ -507,7 +507,7 @@ func (s *Service) UpdateTaskDefaults(ctx context.Context, principal auth.Princip
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
 		if updated.DefaultProviderID != nil {
-			if err := validateTaskDefaults(ctx, repo, scope, *updated.DefaultProviderID, *updated.DefaultModelID); err != nil {
+			if err := validateTaskDefaultsForUpdate(ctx, repo, scope, *updated.DefaultProviderID, *updated.DefaultModelID); err != nil {
 				return err
 			}
 		}
@@ -1453,6 +1453,24 @@ func validateTaskDefaults(ctx context.Context, repo Repository, scope tenant.Sco
 		return ErrValidation
 	}
 	modelRecord, err := repo.FindModel(ctx, scope, modelID)
+	if err != nil {
+		return err
+	}
+	if modelRecord.Status != modelpkg.StatusEnabled || modelRecord.ProviderID != providerRecord.ID {
+		return ErrValidation
+	}
+	return nil
+}
+
+func validateTaskDefaultsForUpdate(ctx context.Context, repo Repository, scope tenant.Scope, providerID string, modelID string) error {
+	providerRecord, err := repo.LockProvider(ctx, scope, providerID)
+	if err != nil {
+		return err
+	}
+	if providerRecord.Status != providerpkg.StatusEnabled {
+		return ErrValidation
+	}
+	modelRecord, err := repo.LockModel(ctx, scope, modelID)
 	if err != nil {
 		return err
 	}

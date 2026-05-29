@@ -620,6 +620,14 @@ func TestSystemSettingsTaskDefaultsRejectsInvalidReferencesAndShapes(t *testing.
 	disabledProviderID, disabledProviderModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-disabled-provider", provider.StatusDisabled, model.StatusEnabled, true, true, false, false, 1)
 	enabledProviderID, disabledModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-disabled-model", provider.StatusEnabled, model.StatusDisabled, true, true, false, false, 1)
 	otherProviderID, otherModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-other-provider", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	deletedProviderID, deletedProviderModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-deleted-provider", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, deletedProviderID).Delete(&database.AIProvider{}).Error; err != nil {
+		t.Fatalf("soft delete settings provider: %v", err)
+	}
+	deletedModelProviderID, deletedModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "settings-deleted-model", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
+	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, deletedModelID).Delete(&database.AIModel{}).Error; err != nil {
+		t.Fatalf("soft delete settings model: %v", err)
+	}
 	seedOtherTenantTask(t, db)
 
 	valid := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
@@ -644,7 +652,9 @@ func TestSystemSettingsTaskDefaultsRejectsInvalidReferencesAndShapes(t *testing.
 		{name: "empty provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": " ", "defaultModelId": modelID}}},
 		{name: "empty model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": ""}}},
 		{name: "disabled provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": disabledProviderID, "defaultModelId": disabledProviderModelID}}},
+		{name: "deleted provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": deletedProviderID, "defaultModelId": deletedProviderModelID}}},
 		{name: "disabled model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": enabledProviderID, "defaultModelId": disabledModelID}}},
+		{name: "deleted model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": deletedModelProviderID, "defaultModelId": deletedModelID}}},
 		{name: "cross-tenant provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": "provider-tenant-b", "defaultModelId": modelID}}},
 		{name: "cross-tenant model", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": providerID, "defaultModelId": "model-tenant-b"}}},
 		{name: "model belongs to different provider", body: map[string]any{"taskDefaults": map[string]any{"defaultProviderId": otherProviderID, "defaultModelId": modelID}}},
@@ -662,7 +672,7 @@ func TestSystemSettingsTaskDefaultsRejectsInvalidReferencesAndShapes(t *testing.
 				t.Fatalf("GET status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
 			}
 			assertTaskDefaults(t, getResponse, providerID, modelID)
-			assertResponseExcludes(t, response.Body.String(), "provider-tenant-b", "model-tenant-b", disabledProviderID, disabledModelID)
+			assertResponseExcludes(t, response.Body.String(), "provider-tenant-b", "model-tenant-b", disabledProviderID, disabledModelID, deletedProviderID, deletedModelID)
 		})
 	}
 }

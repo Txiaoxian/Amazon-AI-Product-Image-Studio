@@ -248,6 +248,58 @@ func TestModelRoutesRejectUnavailableProviderForCreateUpdateAndEnable(t *testing
 	assertNoModelOperationLog(t, db, modelID, "model.enable")
 }
 
+func TestModelRoutesRejectDuplicateActiveModelNamePerProvider(t *testing.T) {
+	router, db, adminSession := newModelRouteTestRouter(t)
+	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-duplicate-model-name", "Duplicate Name Provider")
+
+	firstPayload := validModelPayload(providerID)
+	firstPayload["modelName"] = "duplicate-image-model"
+	firstPayload["displayName"] = "Duplicate Image Model"
+	first := performJSON(router, http.MethodPost, "/api/v1/models", firstPayload, adminSession.cookies, adminSession.csrfHeader())
+	if first.Code != http.StatusCreated {
+		t.Fatalf("create first model status = %d, want %d: %s", first.Code, http.StatusCreated, first.Body.String())
+	}
+	firstModelID := stringField(t, decodeData(t, first), "id")
+
+	duplicateCreate := performJSON(router, http.MethodPost, "/api/v1/models", firstPayload, adminSession.cookies, adminSession.csrfHeader())
+	if duplicateCreate.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate create status = %d, want %d: %s", duplicateCreate.Code, http.StatusUnprocessableEntity, duplicateCreate.Body.String())
+	}
+	assertResponseExcludes(t, duplicateCreate.Body.String(), providerID, "duplicate-image-model", "Duplicate Image Model")
+	assertActiveModelNameCount(t, db, adminSession.tenantID, providerID, "duplicate-image-model", 1)
+
+	secondPayload := validModelPayload(providerID)
+	secondPayload["modelName"] = "other-image-model"
+	secondPayload["displayName"] = "Other Image Model"
+	second := performJSON(router, http.MethodPost, "/api/v1/models", secondPayload, adminSession.cookies, adminSession.csrfHeader())
+	if second.Code != http.StatusCreated {
+		t.Fatalf("create second model status = %d, want %d: %s", second.Code, http.StatusCreated, second.Body.String())
+	}
+	secondModelID := stringField(t, decodeData(t, second), "id")
+
+	duplicateUpdate := performJSON(router, http.MethodPatch, "/api/v1/models/"+secondModelID, map[string]any{
+		"modelName": "duplicate-image-model",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if duplicateUpdate.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate update status = %d, want %d: %s", duplicateUpdate.Code, http.StatusUnprocessableEntity, duplicateUpdate.Body.String())
+	}
+	assertActiveModelNameCount(t, db, adminSession.tenantID, providerID, "duplicate-image-model", 1)
+	assertNoModelOperationLog(t, db, secondModelID, "model.update")
+
+	deleteFirst := performJSON(router, http.MethodDelete, "/api/v1/models/"+firstModelID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteFirst.Code != http.StatusOK {
+		t.Fatalf("delete first model status = %d, want %d: %s", deleteFirst.Code, http.StatusOK, deleteFirst.Body.String())
+	}
+
+	allowedAfterDelete := performJSON(router, http.MethodPatch, "/api/v1/models/"+secondModelID, map[string]any{
+		"modelName": "duplicate-image-model",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if allowedAfterDelete.Code != http.StatusOK {
+		t.Fatalf("rename after first soft-delete status = %d, want %d: %s", allowedAfterDelete.Code, http.StatusOK, allowedAfterDelete.Body.String())
+	}
+	assertActiveModelNameCount(t, db, adminSession.tenantID, providerID, "duplicate-image-model", 1)
+}
+
 func TestModelRoutesRejectInvalidCapabilityRequests(t *testing.T) {
 	router, db, adminSession := newModelRouteTestRouter(t)
 	providerID := seedModelRouteProvider(t, db, adminSession.tenantID, adminSession.userID, "provider-validation", "Validation Provider")
@@ -604,5 +656,19 @@ func assertNoModelOperationLog(t *testing.T, db *gorm.DB, modelID string, action
 	}
 	if count != 0 {
 		t.Fatalf("%s operation log count = %d, want 0", action, count)
+	}
+}
+
+func assertActiveModelNameCount(t *testing.T, db *gorm.DB, tenantID string, providerID string, modelName string, expected int64) {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND provider_id = ? AND model_name = ? AND deleted_at IS NULL", tenantID, providerID, modelName).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count active model name: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("active model name count = %d, want %d", count, expected)
 	}
 }
