@@ -42,7 +42,7 @@ Phase status:
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
 | P17 | Complete | Storage governance and observability are complete. Conservative orphan cleanup, strict quota reservation, backend production diagnostics, and R17 regression passed. |
-| P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
+| P18 | In Progress | Provider/model/default-setting serialization is complete; real Provider smoke, production dry-run, and R18 Go/No-Go review remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -114,6 +114,8 @@ R16 reviewed the complete P16 range from `4b1913e..HEAD` and found no blocking i
 
 R17 reviewed the complete P17 range after merging orphan cleanup, strict quota reservation, and production diagnostics. No blocking storage-governance or observability issues were found. Validation passed full backend tests, backend race tests, vet, API/Worker builds, full frontend lint/type-check/test/build, Docker Compose config, security regression, whitespace checks, and default deployment release validation with image builds. P18 may start from latest `main`.
 
+`P18-BE-PROVIDER-MODEL-SERIALIZATION` was reviewed and merged. Provider/model/default settings write paths now use stronger row-locking on MySQL paths, model create/update/enable/delete paths lock target rows where needed, `taskDefaults` updates lock Provider/model rows before persisting, and same-tenant same-Provider non-deleted `modelName` duplicates are rejected without a destructive unique-index migration. Validation passed focused backend Provider/model/settings/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks. Existing Provider API shape, frontend, Provider Adapter runtime, Worker/SSE/task execution, storage lifecycle, and deployment scripts were not changed.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -137,7 +139,7 @@ The current `main` branch supports:
 - Backend runtime-backed storage retention policy: tenant admins can optionally set `storageRetention.deletedAssetRetentionDays`; Worker maintenance consumes it and defaults to disabled when unset or cleared.
 - Backend runtime-backed storage quota policy: tenant admins can optionally set `storageQuota.maxBytes`; `storageQuota.usedBytes` is computed from tenant-scoped asset metadata, and uploads/Worker output persistence enforce the quota before creating new asset metadata.
 - Frontend admin system settings UI for active runtime-backed settings only: upload policy, task defaults, task concurrency, storage retention, and storage quota.
-- Backend Provider/model lifecycle integrity: Provider delete and disable are guarded against linked model states that would leave active models pointing at unavailable Providers, and model write paths reject disabled, deleted, or cross-tenant Providers.
+- Backend Provider/model lifecycle integrity: Provider delete and disable are guarded against linked model states that would leave active models pointing at unavailable Providers; model/default-setting writes lock and revalidate Provider/model references; same Provider non-deleted model names are rejected by write-path checks.
 - Backend deterministic usage/cost reporting: Worker usage records use stable decimal cost estimation, pricing failures are zero-cost non-fatal cases, and admin usage summary supports tenant/user/project/Provider/model aggregation with exact cost strings.
 - Frontend admin cost observability: the usage tab displays tenant totals, dimension summaries, filtered usage records, drilldown filters, multi-currency cost strings from the backend, and stale-response protection without Provider direct calls, browser Provider-key storage, or polling.
 - Backend core-flow E2E coverage: init admin, Provider/model setup, project/reference asset upload, task creation, fake Worker execution, SSE replay, output asset download, project history, usage, and logs are now verified in one integration path without external AI calls.
@@ -326,6 +328,7 @@ Suggested order:
 1. `P18-BE-PROVIDER-MODEL-SERIALIZATION`
    - Strengthen transaction serialization for Provider/model enable/disable/delete/update and default-setting interactions.
    - Revisit same-Provider `model_name` uniqueness as an explicit product/data-integrity decision.
+   - Completed and merged. The write path now enforces same-Provider non-deleted modelName uniqueness without a destructive migration.
 2. `P18-E2E-REAL-PROVIDER-SMOKE`
    - Add an optional, manual real Provider smoke script.
    - It must not run in default CI, must not commit real keys, and must have explicit cost controls.
@@ -390,4 +393,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P18-BE-PROVIDER-MODEL-SERIALIZATION` from latest `main`. P17 storage governance and observability have passed R17. The next production risk is concurrent admin mutation of Provider/model/default-setting state around enabled models, disabled Providers, soft-deleted rows, and tenant defaults.
+Start `P18-E2E-REAL-PROVIDER-SMOKE` from latest `main`. Provider/model/default-setting serialization has been merged. The next production risk is proving the real Provider path with an explicitly opt-in, cost-bounded smoke script that never runs in default CI and never commits real API keys.

@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION`、`P17-BE-OBSERVABILITY-METRICS` 和 `R17` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation、admin-only backend JSON diagnostics 与 R17 回归已完成。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION`、`P17-BE-OBSERVABILITY-METRICS`、`R17` 和 `P18-BE-PROVIDER-MODEL-SERIALIZATION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation、admin-only backend JSON diagnostics 与 R17 回归已完成；P18 首个 Provider/model/default-setting serialization 切片已合并。
 
 已完成的平台基础：
 
@@ -111,8 +111,8 @@
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
 - P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race；backend admin diagnostics 已提供 queue depth、task aggregates、Provider failure rate、storage usage 和 sanitized maintenance result。
 - R17 已完成：完整 P17 范围通过后端、前端、Compose、安全回归和默认 deployment release validation，未发现阻塞问题。
-- 下一任务：`P18-BE-PROVIDER-MODEL-SERIALIZATION`。需要强化 Provider/model enable/disable/delete/update 与 default setting 交互的事务序列化。
-- Provider/模型并发管理操作可能需要更强的事务序列化。
+- P18 已完成切片：`P18-BE-PROVIDER-MODEL-SERIALIZATION`。Provider/model/default settings 写路径已补强 MySQL 行锁、模型写路径目标行锁、`taskDefaults` 保存前锁定 Provider/model，并拒绝同租户同 Provider 非删除 `modelName` 重复。
+- 下一任务：`P18-E2E-REAL-PROVIDER-SMOKE`。需要新增可选真实 Provider smoke 脚本；默认不运行真实 AI、不进入 CI、不提交真实 key，并且必须有明确费用控制。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
 ## 建议剩余阶段
@@ -545,6 +545,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 
 1. `P18-BE-PROVIDER-MODEL-SERIALIZATION`
    - 强化 Provider/model enable/disable/delete/update 与默认设置交互的事务序列化。
+   - 已完成并合并。
 2. `P18-E2E-REAL-PROVIDER-SMOKE`
    - 新增可选真实 Provider smoke 脚本；不进默认 CI，不提交真实 key，必须有费用控制。
 3. `P18-PROD-DRY-RUN`
@@ -552,7 +553,170 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P18-BE-PROVIDER-MODEL-SERIALIZATION
+## 下一个任务包：P18-E2E-REAL-PROVIDER-SMOKE
+
+### 调度决策
+
+- 本任务串行执行，不与 production dry-run 或 R18 并行。
+- 理由：真实 Provider smoke 是显式 opt-in 的上线信心验证入口，必须先稳定安全门禁、成本门禁和脚本行为，再允许后续生产 dry-run 引用。
+- 本任务以脚本和脚本测试为主。默认模式不得调用真实 Provider，不得创建 Provider/model/project/task，不得消耗费用。
+
+### 任务信息
+
+- 任务名称：`P18-E2E-REAL-PROVIDER-SMOKE`
+- 目标：新增一个手动执行的真实 Provider smoke 脚本，用来在部署环境中验证“登录/初始化、Provider/model 配置、项目创建、任务提交、SSE/状态观察、输出资产检查”的最小真实 AI 调用路径；脚本必须有费用控制、密钥保护、默认 dry-run 和清理说明。
+- 推荐线程名：`P18-E2E-REAL-PROVIDER-SMOKE`
+- 推荐分支名：`codex/p18-real-provider-smoke`
+- 起始分支：已合并 `P18-BE-PROVIDER-MODEL-SERIALIZATION` 的最新 `main`
+- 前置依赖：P18 Provider/model/default-setting serialization 已合并；P15 deploy runbook、P15 security regression、P17 diagnostics 均可用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P18-E2E-REAL-PROVIDER-SMOKE`。
+
+你必须在分支 `codex/p18-real-provider-smoke` 上工作；如果当前不在该分支，先执行 `git switch codex/p18-real-provider-smoke`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P18-BE-PROVIDER-MODEL-SERIALIZATION` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p18-real-provider-smoke` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+新增可选真实 Provider smoke 验证入口：
+- 默认执行只显示帮助或 dry-run 校验，不调用真实 AI Provider，不消耗费用。
+- 只有显式 `--run` 加确认环境变量时才允许创建真实 Provider/model/project/task 并触发真实 AI 调用。
+- 必须保护 API Key、Cookie、Authorization、CSRF、Provider response、图片 base64、MinIO object key 和 signed URL，不打印、不写入仓库、不进入测试快照。
+- 必须有费用控制：默认 `n=1`、有限 prompt、有限 timeout、显式确认变量、可配置但有上限的输出数量。
+- 必须使用现有后端 API，不直接调用 OpenAI/Gemini/中转站。
+- 必须观察任务状态通过 SSE 或后端已有事件/状态接口；不得实现前端轮询模式，不得使用 `setInterval`，脚本内如需等待只能作为一次性 CLI smoke 的 bounded wait，不得新增生产代码轮询。
+
+允许修改文件：
+- `scripts/**`
+- `scripts/*test*.sh` 或新增脚本测试文件
+- `deploy/RUNBOOK.md` 仅限增加“如何手动运行 real Provider smoke”的简短章节
+- `docs/deployment.md` 仅限主 agent 指定时修改；本任务默认不要改公共 docs
+- 不改后端/前端生产代码，除非发现脚本无法使用现有公开 API 完成最小 smoke；若需要后端改动，先停止报告
+
+禁止修改文件：
+- `AGENTS.md`
+- `agent-instructions/**`
+- `docs/**`，除非主 agent 明确允许的 `deploy/RUNBOOK.md` 不属于 docs
+- `backend/internal/**`
+- `backend/cmd/**`
+- `frontend/**`
+- `deploy/docker-compose.yml`
+- Provider Adapter runtime、Provider/model 管理生产逻辑、认证/JWT/Cookie 主流程、SSE handler、Worker 状态机、task execution 主流程、storage/quota/cleanup 逻辑
+- 不提交 `.env`、真实 API Key、真实 Cookie、真实输出图片、真实 Provider response body 或本地测试数据
+
+前置阅读：
+- `AGENTS.md`
+- `agent-instructions/01-project-overview.md`
+- `agent-instructions/02-architecture-rules.md`
+- `agent-instructions/05-security-rules.md`
+- `agent-instructions/06-testing-and-delivery.md`
+- `agent-instructions/07-task-package-and-review-rules.md`
+- `docs/development-plan.md`
+- `docs/codex-agent-tasks.md`
+- `docs/deployment.md`
+- `docs/security.md`
+- `deploy/RUNBOOK.md`
+- `scripts/deploy-release-validation.sh`
+- `scripts/security-regression.sh`
+
+具体开发内容：
+1. 新增脚本，建议命名 `scripts/real-provider-smoke.sh`：
+   - 支持 `--help`、`--dry-run`、`--run`。
+   - 默认无参数等价于 `--help` 或安全 dry-run，不调用真实 Provider。
+   - `--run` 必须要求确认变量，例如 `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`。
+   - 必须要求通过环境变量提供目标 API base URL、admin 登录或 init-admin 信息、Provider 类型/base URL/API Key、模型名、尺寸/质量/输出格式等。
+   - 必须使用临时 cookie jar，并在退出时清理。
+   - 日志输出必须脱敏，只显示 Provider key hint 或固定 `[REDACTED]`。
+   - 失败时退出非零并给出 sanitized 失败阶段。
+2. Smoke 流程：
+   - 连接后端 health endpoint。
+   - 登录现有 admin；可选支持在明确变量开启时调用 init-admin。
+   - 创建或复用 smoke 专用 Provider/model/project，命名必须带 `codex-smoke` 或类似前缀。
+   - 提交最小 generation task，默认 `n=1`，prompt 明确为 smoke test。
+   - 用 SSE 或现有 task/event API 观察 bounded timeout 内的状态；不要新增生产轮询逻辑。
+   - 成功后验证至少一个输出 asset 通过后端授权元数据可见；默认不下载原图，除非显式变量要求。
+   - 输出清理提示；如果脚本执行自动清理，只能清理自己创建的 `codex-smoke` 数据。
+3. 新增脚本测试：
+   - 覆盖 `--help`。
+   - 覆盖无确认变量时 `--run` fail closed。
+   - 覆盖 dry-run 不需要真实 key、不调用 curl 写接口或 Provider。
+   - 覆盖日志脱敏：测试输出不能包含 fake key 全值、Authorization、Cookie、JWT、base64、object key。
+   - 可使用 fake `curl`/PATH 注入方式，参考 `scripts/deploy-release-validation-test.sh`。
+4. 如修改 `deploy/RUNBOOK.md`：
+   - 只增加简短手动运行章节。
+   - 明确该脚本不是默认发布门禁，不应在 CI 默认执行，不应保存真实 key。
+
+安全要求：
+- 脚本不得直接请求 OpenAI/Gemini/AI relay；所有调用都必须是目标平台 `/api/v1` 后端 API。
+- 不得打印、持久化或提交完整 Provider API Key、Cookie、Authorization、CSRF token、JWT、图片 base64、MinIO bucket/object key、signed URL。
+- 默认模式不得产生费用。
+- `--run` 必须有显式确认和 bounded timeout；输出数量默认 1，最大值必须受脚本限制。
+- 不得使用共享本地真实密钥；若使用共享本地 MySQL/Redis/MinIO 验证脚本逻辑，只能用 fake curl 或 dry-run，不写真实业务数据。
+
+必须保持的现有行为：
+- `scripts/security-regression.sh` 和 `scripts/deploy-release-validation.sh` 行为不回归。
+- 默认发布验证仍不调用真实 Provider。
+- 后端/前端生产代码不变。
+- Docker Compose config 不变。
+
+允许的中间态：
+- 新脚本可以先作为手动 smoke 入口存在，不纳入默认 CI 和默认 release validation。
+- 真实 Provider smoke 的实际执行依赖操作者提供有效部署环境和真实 Provider key；自动化测试只验证脚本门禁和脱敏行为。
+
+禁止的半迁移状态：
+- 默认测试或默认 deploy validation 触发真实 AI 调用。
+- 脚本没有确认变量就能执行真实 Provider 任务。
+- 脚本输出完整 API Key、Cookie、Authorization、JWT、base64、object key 或 signed URL。
+- 脚本直接调用 AI Provider，绕过 Go 后端。
+- 脚本创建不可识别、不可清理的业务数据。
+- 为了脚本修改后端生产 API 或前端生产代码。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| `--help` | 输出用法，退出 0，不需要 secrets | 脚本测试 |
+| 无参数 | 安全输出帮助或 dry-run，不调用真实 Provider | 脚本测试 |
+| `--run` 缺确认变量 | fail closed，退出非 0，不打印 secret | 脚本测试 |
+| 缺少必需环境变量 | fail closed，列出缺失字段名，不打印 secret 值 | 脚本测试 |
+| dry-run | 校验参数形状，不调用写接口，不调用 Provider | 脚本测试 |
+| fake curl 返回 auth/validation/server error | sanitized 阶段失败，退出非 0 | 脚本测试 |
+| fake output 含 secret/base64/object key | 输出脱敏或不输出 | 脚本测试 |
+| 真实任务超时 | bounded timeout 后退出非 0，给出 sanitized task id/status | 脚本或文档说明 |
+| 真实任务成功 | 输出 task id、状态、输出 asset 数量，不输出 object key 或 signed URL | 脚本说明/可测试 fake |
+
+必须新增或更新的回归测试：
+- `scripts/real-provider-smoke.sh --help`
+- `scripts/real-provider-smoke.sh --run` 缺确认变量失败
+- `scripts/real-provider-smoke.sh --dry-run` 不调用写接口
+- fake `curl` 场景下 secret redaction 和阶段失败
+- 现有 deploy/security 脚本测试继续通过
+
+验收标准：
+- 新脚本默认安全，不可能误触真实 AI 调用。
+- `--run` 具备显式确认、费用上限、bounded timeout、脱敏输出和临时 cookie cleanup。
+- 现有默认 release validation/security regression 不被改成真实 Provider 调用。
+- 脚本测试通过，Compose config 和安全回归通过。
+
+测试命令：
+```bash
+bash scripts/real-provider-smoke.sh --help
+bash scripts/real-provider-smoke.sh --dry-run
+bash scripts/real-provider-smoke.sh --run
+bash scripts/real-provider-smoke-test.sh
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+```
+
+交付要求：
+- 提交到分支 `codex/p18-real-provider-smoke`。
+- 最终说明必须包含：修改文件清单、执行命令结果、failure mode 到测试名映射、安全自查、刻意未修改范围、是否实际调用真实 Provider。默认应为“未调用真实 Provider”。
+```
+
+## 最近已完成任务包：P18-BE-PROVIDER-MODEL-SERIALIZATION
 
 ### 调度决策
 
