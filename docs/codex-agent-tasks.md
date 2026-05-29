@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP` 和 `P17-BE-STORAGE-QUOTA-RESERVATION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup 与 strict storage quota reservation 已合并。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation 与 admin-only backend JSON diagnostics 已合并。
 
 已完成的平台基础：
 
@@ -109,8 +109,8 @@
 - 上传策略、`taskDefaults`、`taskConcurrency`、`storageRetention` 与 `storageQuota` 已有真实运行时消费者；损坏的 `task_defaults`、`task_concurrency`、`storage_retention` 与 `storage_quota` 配置必须 fail closed，不能绕过校验、限流、Provider 执行边界、清理边界或资产写入边界。其他运行时设置在消费者落地前不得暴露为可写配置。
 - P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION` 和 `P16-BE-THUMBNAIL-POLICY`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`；新 reference upload 和 Worker 输出资产会生成 MinIO thumbnail object 并通过后端鉴权访问。
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
-- P17 已完成切片：`P17-BE-ORPHAN-CLEANUP` 和 `P17-BE-STORAGE-QUOTA-RESERVATION`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race。
-- 下一切片：`P17-BE-OBSERVABILITY-METRICS`。需要增加 admin-only JSON diagnostics，聚合 queue depth、running/failed tasks、Provider failure rate、storage usage 和 maintenance job result，提升上线运维可见性。
+- P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race；backend admin diagnostics 已提供 queue depth、task aggregates、Provider failure rate、storage usage 和 sanitized maintenance result。
+- 下一任务：`R17`。主 agent 直接 review P17 全部代码、运行回归，并决定是否进入 P18。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -535,6 +535,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 已完成并合并。
 3. `P17-BE-OBSERVABILITY-METRICS`
    - 增加 admin-only JSON diagnostics：queue depth、running/failed tasks、Provider failure rate、storage usage、maintenance job result 等。
+   - 已完成并合并。
 4. `R17`
    - 主 agent review P17 全部代码和回归。
 
@@ -549,7 +550,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P17-BE-OBSERVABILITY-METRICS
+## 最近已完成任务包：P17-BE-OBSERVABILITY-METRICS
 
 ### 调度决策
 

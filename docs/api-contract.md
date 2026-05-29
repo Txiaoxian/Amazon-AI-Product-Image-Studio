@@ -378,7 +378,7 @@ Frontend uses enabled model capability fields to render dynamic parameters. P6 o
 - `GET /admin/operation-logs`
 - `GET /admin/api-call-logs`
 - `GET /admin/api-call-logs/:id`
-- Planned P17 diagnostics endpoint: `GET /admin/diagnostics/summary`
+- `GET /admin/diagnostics/summary`
 
 Current P9 backend contract:
 
@@ -404,6 +404,7 @@ P17 diagnostics contract:
 - Query parameters should be limited to safe controls such as `windowHours` and `limit`; defaults must be bounded.
 - Database-backed sections are tenant-scoped. Redis or storage-inspection failures should be represented as sanitized section-level `status=unavailable` where possible rather than leaking infrastructure details.
 - Diagnostics must not mutate state, enqueue tasks, run cleanup, test Providers, call AI Providers, or read/decrypt Provider API keys.
+- Implementation status: merged in `P17-BE-OBSERVABILITY-METRICS`. The endpoint returns task status/recent failure aggregates, Redis queue depth with `reason="queue_unavailable"` on unavailable queue inspection, untruncated Provider/API-call totals with bounded Provider breakdowns, storage quota/asset aggregates, and fail-closed sanitized maintenance summaries. Maintenance metadata strings are not passed through generically: `status` is enum-only, `completedAt` is RFC3339/RFC3339Nano-only, numeric fields must be JSON numbers, and unknown/array/map/string payloads are dropped rather than redacted into client-visible raw content.
 
 P14 usage/cost reporting contract:
 

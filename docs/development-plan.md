@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P17 Quota Reservation
+## Current State After P17 Diagnostics Merge
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -41,7 +41,7 @@ Phase status:
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
-| P17 | In Progress | Conservative MinIO orphan scan/dry-run/cleanup and strict storage quota reservation are complete; production diagnostics and R17 remain. |
+| P17 | In Progress | Conservative MinIO orphan scan/dry-run/cleanup, strict storage quota reservation, and backend production diagnostics are complete; R17 remains. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
@@ -109,6 +109,8 @@ R16 reviewed the complete P16 range from `4b1913e..HEAD` and found no blocking i
 `P17-BE-ORPHAN-CLEANUP` was reviewed, fixed, and merged. The backend now has admin-only storage orphan scan and cleanup endpoints with dry-run default, explicit cleanup confirmation, tenant/admin permission checks, bounded MinIO listing, opaque continuation cursor, recognized backend object-key pattern checks, MySQL metadata exclusion, age gating, retry-safe delete failure handling, and sanitized aggregate operation logs. Validation passed focused storage/asset/API tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
 `P17-BE-STORAGE-QUOTA-RESERVATION` was reviewed, fixed, and merged. The backend now uses tenant-scoped quota counter/reservation tables for reference uploads and Worker generated/edited outputs. Asset-creating paths reserve original bytes before MinIO writes, finalize reservations inside metadata transactions, release on validation/storage/DB failures, keep soft-deleted-but-not-purged assets counted, decrement after physical purge, and reconcile counters from MySQL metadata rather than MinIO listing. Released or malformed reservations fail closed without successful asset/task-output side effects, and concurrent upload tests verify combined over-limit requests cannot exceed tenant quota. Validation passed focused database/settings/asset/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
+
+`P17-BE-OBSERVABILITY-METRICS` was reviewed, fixed, and merged. The backend now exposes `GET /api/v1/admin/diagnostics/summary` as an admin-only, tenant-scoped, read-only diagnostics endpoint requiring `audit:read`. It returns bounded aggregate sections for task statuses and recent failures, Redis queue depth, Provider/API-call failure rates, storage quota/asset usage, and recent maintenance summaries. The endpoint does not mutate state, call Providers, trigger cleanup, enqueue tasks, decrypt Provider keys, or expose Redis keys, queue payloads, object keys, buckets, MinIO URLs, signed URLs, raw Provider/log metadata, Authorization/Cookie/JWT values, Provider secrets, or image base64. Review fixes added production Redis queue inspector wiring, untruncated Provider totals, queue `reason="queue_unavailable"`, and fail-closed maintenance metadata parsing. Validation passed focused diagnostics/queue/task/settings/asset tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
 ## Completed Platform Capabilities
 
@@ -306,10 +308,11 @@ Suggested order:
 3. `P17-BE-OBSERVABILITY-METRICS`
    - Add admin-only production diagnostics for API/Worker health detail, queue depth, running/failed task counts, Provider failure rates, storage usage, and maintenance job results.
    - This can start as JSON diagnostics before Prometheus or external monitoring integration.
+   - Completed and merged. The diagnostics endpoint is read-only, tenant-scoped, permission-gated, bounded, and aggregate-only.
 4. `R17`
    - Review storage governance and observability behavior before final Provider/admin consistency work.
 
-Parallelism: quota reservation is merged and reviewed. Keep `P17-BE-OBSERVABILITY-METRICS` serial because it defines the first production diagnostics contract and touches admin API, queue inspection, task/provider aggregates, storage usage, and maintenance-result reads.
+Parallelism: P17 implementation slices are merged. Execute `R17` serially before starting P18.
 
 ### P18: Production Confidence And Go/No-Go
 
@@ -384,6 +387,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P17-BE-OBSERVABILITY-METRICS` from latest `main`. Orphan cleanup and quota reservation are merged and reviewed. The next production risk is limited operator visibility into queue backlog, task failures, Provider failure rate, storage usage, and recent maintenance outcomes.
-
-The P17 diagnostics task must add an admin-only backend JSON endpoint for aggregated production diagnostics. It should stay read-only, tenant-scoped, permission-gated, bounded by time windows and limits, and must not expose raw Provider payloads, object keys, bucket names, MinIO URLs, Redis keys, queue payload contents, Authorization/Cookie/JWT values, or Provider secrets.
+Execute `R17` on latest `main`. P17 orphan cleanup, strict storage quota reservation, and backend production diagnostics are merged and reviewed individually. R17 must review the combined storage governance and observability behavior, run the standard backend/frontend/deployment/security regression gates, and decide whether P18 can start from a stable `main`.
