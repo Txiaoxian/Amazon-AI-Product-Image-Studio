@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P17 Diagnostics Merge
+## Current State After P18 Real Provider Smoke Merge
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -42,7 +42,7 @@ Phase status:
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
 | P17 | Complete | Storage governance and observability are complete. Conservative orphan cleanup, strict quota reservation, backend production diagnostics, and R17 regression passed. |
-| P18 | In Progress | Provider/model/default-setting serialization is complete; real Provider smoke, production dry-run, and R18 Go/No-Go review remain. |
+| P18 | In Progress | Provider/model/default-setting serialization and opt-in real Provider smoke tooling are complete; production dry-run and R18 Go/No-Go review remain. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -116,6 +116,8 @@ R17 reviewed the complete P17 range after merging orphan cleanup, strict quota r
 
 `P18-BE-PROVIDER-MODEL-SERIALIZATION` was reviewed and merged. Provider/model/default settings write paths now use stronger row-locking on MySQL paths, model create/update/enable/delete paths lock target rows where needed, `taskDefaults` updates lock Provider/model rows before persisting, and same-tenant same-Provider non-deleted `modelName` duplicates are rejected without a destructive unique-index migration. Validation passed focused backend Provider/model/settings/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks. Existing Provider API shape, frontend, Provider Adapter runtime, Worker/SSE/task execution, storage lifecycle, and deployment scripts were not changed.
 
+`P18-E2E-REAL-PROVIDER-SMOKE` was reviewed and merged. The repository now has an optional, manual `scripts/real-provider-smoke.sh` entry point plus `scripts/real-provider-smoke-test.sh`. The script is safe by default, supports `--help`, `--dry-run`, and explicit `--run`, requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS` before any billable path, rejects direct AI Provider API bases, bounds output count and timeout, uses only the platform `/api/v1` backend, cleans temporary cookie/payload files, and keeps secrets out of stdout/stderr. `deploy/RUNBOOK.md` documents manual usage without putting secrets into shell history. Validation passed the script test, default deployment release validation, security regression, Docker Compose config, dry-run/manual guard checks, and whitespace checks. No real Provider call was executed during automated validation.
+
 ## Completed Platform Capabilities
 
 The current `main` branch supports:
@@ -145,6 +147,7 @@ The current `main` branch supports:
 - Backend core-flow E2E coverage: init admin, Provider/model setup, project/reference asset upload, task creation, fake Worker execution, SSE replay, output asset download, project history, usage, and logs are now verified in one integration path without external AI calls.
 - Final security regression entry point: `scripts/security-regression.sh` consolidates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, Compose config validation, `/api/` proxy safety checks, and whitespace checks.
 - Deployment release runbook and validation entry point: `deploy/RUNBOOK.md` and `scripts/deploy-release-validation.sh` document and verify Compose release operations, health checks, init-admin, MinIO bootstrap, SSE proxy behavior, backup/restore, upgrade/rollback, log troubleshooting, and cleanup.
+- Optional real Provider smoke tooling: `scripts/real-provider-smoke.sh` can be run manually with explicit confirmation to validate the backend-mediated Provider/task/SSE/output path; default help/dry-run modes never call real AI Providers or consume credits.
 - Docker Compose deployment topology for frontend, backend API, backend Worker, MySQL, Redis, and MinIO.
 
 Hard platform rules remain unchanged:
@@ -332,6 +335,7 @@ Suggested order:
 2. `P18-E2E-REAL-PROVIDER-SMOKE`
    - Add an optional, manual real Provider smoke script.
    - It must not run in default CI, must not commit real keys, and must have explicit cost controls.
+   - Completed and merged. The script is opt-in, backend-only, cost-bounded, direct-Provider guarded, and covered by fake-curl safety tests.
 3. `P18-PROD-DRY-RUN`
    - Execute the runbook against the target or staging server: init admin, tenant/user setup, Provider/model config, fake or real task, backup/restore, rollback, and security/deploy gates.
 4. `R18-STABLE-PRODUCTION-READINESS`
@@ -393,4 +397,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P18-E2E-REAL-PROVIDER-SMOKE` from latest `main`. Provider/model/default-setting serialization has been merged. The next production risk is proving the real Provider path with an explicitly opt-in, cost-bounded smoke script that never runs in default CI and never commits real API keys.
+Start `P18-PROD-DRY-RUN` from latest `main`. Provider/model/default-setting serialization and optional real Provider smoke tooling have been merged. The next production risk is proving the operator runbook end to end with deployment validation, security regression, backup/restore rehearsal, optional real Provider smoke dry-run, and a sanitized Go/No-Go evidence package.

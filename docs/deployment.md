@@ -17,7 +17,7 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after P15 security regression
+## Current state after P18 real Provider smoke tooling
 
 The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. P15 security regression added `scripts/security-regression.sh`, which now validates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety, Compose config, and whitespace checks.
 
@@ -33,6 +33,7 @@ Current verified state:
 - Backend `go test`, race tests, `go vet`, API build, and worker build pass after R12 validation.
 - R12 validation confirmed `docker compose -f deploy/docker-compose.yml config` still passes after unified frontend history, seller project/asset workflow polish, and backend project-member last-`OWNER` hardening.
 - Shared local `dev-mysql8`, `dev-redis`, and `dev-minio` are the expected routine validation services and were verified reachable in R5.
+- `scripts/real-provider-smoke.sh` exists as an optional manual smoke entry point for backend-mediated real Provider validation. Its default help/dry-run paths do not call AI Providers or consume credits.
 
 Known runtime notes:
 
@@ -41,7 +42,7 @@ Known runtime notes:
 - Frontend Nginx must not proxy AI Provider traffic.
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
-- `P15-DEPLOY-RUNBOOK-FINAL` is the next deployment-specific slice. It should add a repeatable deploy release validation entry point and a `deploy/` runbook without changing business runtime behavior.
+- `P18-PROD-DRY-RUN` is the next deployment-specific slice. It should execute the operator evidence path without committing real secrets or changing business runtime behavior.
 
 ## Services
 
@@ -354,3 +355,40 @@ Validation passed:
 The live Compose run verified MySQL, Redis, MinIO, MinIO bootstrap, backend API, backend Worker, and frontend health checks; backend `/healthz`; frontend `/api/` proxy health; SSE auth-boundary routing; and cleanup of project containers and volumes.
 
 Live Compose validation confirmed the stack reached healthy/running state, frontend `/api/` and SSE auth-boundary proxy checks passed, cleanup completed, and follow-up checks showed no project containers or project volumes left behind.
+
+## P18 optional real Provider smoke result
+
+Validation date: 2026-05-29.
+
+`P18-E2E-REAL-PROVIDER-SMOKE` was reviewed and merged. It added:
+
+- `scripts/real-provider-smoke.sh`, a manual, opt-in smoke script for the backend-mediated real Provider path.
+- `scripts/real-provider-smoke-test.sh`, a fake-command regression suite for script guardrails and redaction.
+- A short optional smoke section in `deploy/RUNBOOK.md`.
+
+Safety properties:
+
+- No arguments and `--help` only print usage.
+- `--dry-run` validates local guardrails and does not call any API.
+- `--run` requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`, required environment variables, bounded output count, bounded timeout, and a platform `/api/v1` API base.
+- The script rejects direct AI Provider API bases such as OpenAI or Google API hosts.
+- The script uses a temporary cookie jar and tracked temporary payload/output files, then removes them on exit.
+- Script output does not print full Provider API keys, Authorization headers, Cookies, CSRF tokens, JWTs, image base64, object keys, bucket names, signed URLs, or raw Provider responses.
+- Default release validation and security regression scripts still do not call real AI Providers.
+
+Checks executed:
+
+```bash
+bash scripts/real-provider-smoke.sh --help
+bash scripts/real-provider-smoke.sh --dry-run
+bash scripts/real-provider-smoke.sh --run
+bash scripts/real-provider-smoke-test.sh
+bash scripts/deploy-release-validation-test.sh
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+```
+
+All checks passed except the plain `--run` guard check, which intentionally failed before any API call because the confirmation variable was absent. No real Provider call was executed during automated validation.

@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION`、`P17-BE-OBSERVABILITY-METRICS`、`R17` 和 `P18-BE-PROVIDER-MODEL-SERIALIZATION` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation、admin-only backend JSON diagnostics 与 R17 回归已完成；P18 首个 Provider/model/default-setting serialization 切片已合并。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION`、`P17-BE-OBSERVABILITY-METRICS`、`R17`、`P18-BE-PROVIDER-MODEL-SERIALIZATION` 和 `P18-E2E-REAL-PROVIDER-SMOKE` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation、admin-only backend JSON diagnostics 与 R17 回归已完成；P18 Provider/model/default-setting serialization 与可选真实 Provider smoke 工具已合并。
 
 已完成的平台基础：
 
@@ -111,8 +111,8 @@
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
 - P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race；backend admin diagnostics 已提供 queue depth、task aggregates、Provider failure rate、storage usage 和 sanitized maintenance result。
 - R17 已完成：完整 P17 范围通过后端、前端、Compose、安全回归和默认 deployment release validation，未发现阻塞问题。
-- P18 已完成切片：`P18-BE-PROVIDER-MODEL-SERIALIZATION`。Provider/model/default settings 写路径已补强 MySQL 行锁、模型写路径目标行锁、`taskDefaults` 保存前锁定 Provider/model，并拒绝同租户同 Provider 非删除 `modelName` 重复。
-- 下一任务：`P18-E2E-REAL-PROVIDER-SMOKE`。需要新增可选真实 Provider smoke 脚本；默认不运行真实 AI、不进入 CI、不提交真实 key，并且必须有明确费用控制。
+- P18 已完成切片：`P18-BE-PROVIDER-MODEL-SERIALIZATION` 和 `P18-E2E-REAL-PROVIDER-SMOKE`。Provider/model/default settings 写路径已补强 MySQL 行锁、模型写路径目标行锁、`taskDefaults` 保存前锁定 Provider/model，并拒绝同租户同 Provider 非删除 `modelName` 重复；可选真实 Provider smoke 脚本已具备 help/dry-run/explicit run、费用控制、直接 Provider API base 拒绝、临时文件清理和 fake-curl 安全测试。
+- 下一任务：`P18-PROD-DRY-RUN`。需要按 runbook 形成稳定上线 dry-run 证据包，默认不运行真实 AI、不提交真实 key；如操作者显式提供真实 Provider key，只能通过已合并 smoke 脚本的确认路径执行。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
 ## 建议剩余阶段
@@ -548,12 +548,186 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 已完成并合并。
 2. `P18-E2E-REAL-PROVIDER-SMOKE`
    - 新增可选真实 Provider smoke 脚本；不进默认 CI，不提交真实 key，必须有费用控制。
+   - 已完成并合并。
 3. `P18-PROD-DRY-RUN`
    - 按 runbook 在目标或准生产环境执行完整上线 dry-run。
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
 
-## 下一个任务包：P18-E2E-REAL-PROVIDER-SMOKE
+## 下一个任务包：P18-PROD-DRY-RUN
+
+### 调度决策
+
+- 本任务串行执行，不与 R18 并行。
+- 理由：production dry-run 是最终 Go/No-Go 前的证据收集任务，必须基于已合并的部署 runbook、release validation、安全回归和可选 real Provider smoke 工具完成。
+- 本任务以部署验证脚本、runbook 证据模板和本地/准生产 dry-run 为主。默认不得调用真实 AI Provider，不得提交真实密钥、真实响应体、真实输出图片或环境凭据。
+
+### 任务信息
+
+- 任务名称：`P18-PROD-DRY-RUN`
+- 目标：新增并执行一个稳定上线 dry-run 入口，串联部署前检查、Compose release validation、security regression、runbook checklist、backup/restore rehearsal 说明、optional real Provider smoke dry-run 和 sanitized evidence 输出，为 R18 Go/No-Go review 提供可复现证据。
+- 推荐线程名：`P18-PROD-DRY-RUN`
+- 推荐分支名：`codex/p18-prod-dry-run`
+- 起始分支：已合并 `P18-E2E-REAL-PROVIDER-SMOKE` 的最新 `main`
+- 前置依赖：P18 Provider/model/default-setting serialization 已合并；`scripts/real-provider-smoke.sh`、`scripts/deploy-release-validation.sh`、`scripts/security-regression.sh` 和 `deploy/RUNBOOK.md` 均可用。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P18-PROD-DRY-RUN`。
+
+你必须在分支 `codex/p18-prod-dry-run` 上工作；如果当前不在该分支，先执行 `git switch codex/p18-prod-dry-run`，确认 `git branch --show-current` 后再继续。起始点必须包含已合并 `P18-E2E-REAL-PROVIDER-SMOKE` 的最新 `main`；如果 `git merge-base --is-ancestor main codex/p18-prod-dry-run` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+新增稳定上线 dry-run 验证入口和证据模板，用于 R18 前的 operator rehearsal：
+- 默认模式只运行不会产生真实 AI 费用的检查：deploy release validation、安全回归、Compose config/build/health 路径、real Provider smoke dry-run、runbook checklist。
+- 允许显式 opt-in 的真实 Provider smoke，但必须复用 `scripts/real-provider-smoke.sh --run` 的确认变量、费用上限和脱敏行为；本任务不得新增第二套真实 Provider 调用路径。
+- 输出的 evidence 必须是 sanitized summary，不包含真实密钥、Cookie、Authorization、JWT、CSRF、图片 base64、MinIO bucket/object_key、signed URL、真实 Provider response body、数据库密码或本地服务密钥。
+- 不修改后端/前端生产代码，不改变部署拓扑，不把 dry-run 纳入默认 CI。
+
+允许修改文件：
+- `scripts/**`
+- `deploy/RUNBOOK.md`
+- 可新增 `deploy/PRODUCTION_DRY_RUN.md` 或 `deploy/PRODUCTION_DRY_RUN_TEMPLATE.md`
+- 可新增 `scripts/*dry-run*.sh`、`scripts/*dry-run*test*.sh`
+- 不改 `docs/**`，公共文档由主 agent 在 review/merge 后更新
+
+禁止修改文件：
+- `AGENTS.md`
+- `agent-instructions/**`
+- `docs/**`
+- `backend/internal/**`
+- `backend/cmd/**`
+- `frontend/**`
+- `deploy/docker-compose.yml`，除非发现 runbook 无法验证当前拓扑；如确需改 Compose，先停止报告
+- `.env`、真实密钥文件、真实 Provider 响应、真实输出图片、数据库 dump、MinIO 对象或任何本地环境凭据
+
+前置阅读：
+- `AGENTS.md`
+- `agent-instructions/01-project-overview.md`
+- `agent-instructions/02-architecture-rules.md`
+- `agent-instructions/05-security-rules.md`
+- `agent-instructions/06-testing-and-delivery.md`
+- `agent-instructions/07-task-package-and-review-rules.md`
+- `docs/development-plan.md`
+- `docs/codex-agent-tasks.md`
+- `docs/deployment.md`
+- `docs/security.md`
+- `docs/local-development.md`
+- `deploy/RUNBOOK.md`
+- `scripts/deploy-release-validation.sh`
+- `scripts/deploy-release-validation-test.sh`
+- `scripts/security-regression.sh`
+- `scripts/real-provider-smoke.sh`
+- `scripts/real-provider-smoke-test.sh`
+
+具体开发内容：
+1. 新增 production dry-run 脚本，建议命名 `scripts/prod-dry-run.sh`：
+   - 支持 `--help`、默认安全检查、可选 `--live-compose`、可选 `--real-provider-smoke`。
+   - 默认不启动持久服务、不调用真实 AI Provider、不写真实业务数据。
+   - 默认串联：
+     - `bash scripts/deploy-release-validation.sh`
+     - `bash scripts/security-regression.sh`
+     - `bash scripts/real-provider-smoke.sh --dry-run`
+     - `docker compose -f deploy/docker-compose.yml config`
+   - `--live-compose` 可以调用 `bash scripts/deploy-release-validation.sh --up --down`，并必须继承其 cleanup trap 行为。
+   - `--real-provider-smoke` 只能调用 `bash scripts/real-provider-smoke.sh --run`，不得直接实现 Provider 调用；必须检测并提示确认变量和费用风险。
+   - 所有输出必须是阶段化、脱敏、可复制到 R18 review 的摘要。
+2. 新增脚本测试，建议命名 `scripts/prod-dry-run-test.sh`：
+   - 用 fake PATH 注入模拟 `bash`/`docker`/子脚本或通过轻量 wrapper 验证调用顺序。
+   - 覆盖默认模式不会调用 `real-provider-smoke.sh --run`。
+   - 覆盖 `--real-provider-smoke` 缺确认变量 fail closed，且不打印 fake secret。
+   - 覆盖 `--live-compose` 会调用 release validation 的 `--up --down`，不直接执行 broad docker prune。
+   - 覆盖子命令失败时退出非 0，并输出 sanitized 阶段名。
+3. 更新 `deploy/RUNBOOK.md` 或新增 `deploy/PRODUCTION_DRY_RUN_TEMPLATE.md`：
+   - 给出 dry-run 执行步骤、证据清单、Go/No-Go 条件、rollback/backup rehearsal 检查项。
+   - 明确真实 Provider smoke 是可选人工步骤，不属于默认 dry-run。
+   - 明确不要保存真实 secret、Provider response、图片输出、object key 或 signed URL。
+4. 实际执行本地验证：
+   - 默认 `scripts/prod-dry-run.sh`。
+   - `scripts/prod-dry-run.sh --live-compose` 如本机环境允许；执行后必须确认项目 Compose 容器/卷已清理。
+   - 不执行真实 Provider `--run`，除非主 agent/用户另行提供真实密钥并明确授权。
+
+安全要求：
+- 不得新增任何直接调用 OpenAI、Gemini、OpenAI-Compatible 中转站或自定义 AI Provider 的路径。
+- 不得打印、写入、提交或快照 Provider API Key、Authorization、Cookie、JWT、CSRF、图片 base64、MinIO bucket/object_key、signed URL、数据库密码、Redis/MinIO 凭据。
+- `--real-provider-smoke` 必须复用 `scripts/real-provider-smoke.sh --run`，并保留其确认变量、API base 校验、费用上限和临时文件清理。
+- live Compose dry-run cleanup 必须只使用 `deploy/docker-compose.yml`，不得使用 broad Docker prune、`docker system prune`、`docker volume prune` 或删除无关容器/卷。
+
+必须保持的现有行为：
+- `scripts/deploy-release-validation.sh` 默认行为不变。
+- `scripts/security-regression.sh` 默认行为不变。
+- `scripts/real-provider-smoke.sh` 默认 help/dry-run 行为不变。
+- 后端、前端、Compose topology 不变。
+- 默认验证仍不调用真实 Provider。
+
+允许的中间态：
+- Production dry-run 可以先作为手动 operator entry point 存在，不纳入默认 CI。
+- 真实 Provider smoke 可以作为 dry-run 的显式可选步骤存在，但默认只执行 dry-run。
+- Evidence 可以是模板或 sanitized summary，不需要提交真实环境输出。
+
+禁止的半迁移状态：
+- 默认 dry-run 或默认 release validation 触发真实 AI 调用。
+- 新增第二套真实 Provider 调用逻辑，绕过 `scripts/real-provider-smoke.sh` 或 Go 后端。
+- 脚本失败后留下项目 Compose 容器/卷而未报告。
+- 输出或文档要求用户把真实 secret 写进命令历史、仓库、日志或模板。
+- 为了 dry-run 修改后端/前端生产代码或数据库 schema。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| `--help` | 输出用法，退出 0，不执行检查 | 脚本测试 |
+| 默认模式 | 运行安全检查与 smoke dry-run，不调用真实 Provider | 脚本测试/实际命令 |
+| 子检查失败 | 输出 sanitized 阶段名，退出非 0 | 脚本测试 |
+| `--real-provider-smoke` 缺确认变量 | fail closed，不调用真实 Provider，不打印 secret | 脚本测试 |
+| `--real-provider-smoke` 有确认变量 | 只委托 `real-provider-smoke.sh --run`，不直接 Provider call | 脚本测试 |
+| `--live-compose` | 调用 release validation `--up --down` 并依赖 cleanup trap | 脚本测试/可选实际命令 |
+| fake secret 出现在子命令错误中 | dry-run 输出不包含完整 secret | 脚本测试 |
+| 备份/恢复 rehearsal | 只记录 checklist 和命令入口，不提交 dump 或真实数据 | 文档检查 |
+
+必须新增或更新的回归测试：
+- `scripts/prod-dry-run.sh --help`
+- 默认 `scripts/prod-dry-run.sh` 调用顺序测试
+- `scripts/prod-dry-run.sh --real-provider-smoke` 缺确认变量 fail closed 测试
+- `scripts/prod-dry-run.sh --live-compose` 委托 `deploy-release-validation.sh --up --down` 测试
+- 子命令失败和 fake secret 脱敏测试
+
+验收标准：
+- 新 dry-run 入口默认安全，不可能误触真实 AI 调用。
+- live Compose 模式仍受现有 cleanup trap 保护。
+- 可选真实 Provider smoke 只通过已合并 smoke 脚本执行。
+- runbook/checklist 足以支持 R18 Go/No-Go review。
+- 现有安全回归、部署发布验证、真实 Provider smoke 脚本测试和 Compose config 均通过。
+
+测试命令：
+```bash
+bash scripts/prod-dry-run.sh --help
+bash scripts/prod-dry-run.sh
+bash scripts/prod-dry-run-test.sh
+bash scripts/deploy-release-validation-test.sh
+bash scripts/deploy-release-validation.sh --help
+bash scripts/deploy-release-validation.sh
+bash scripts/security-regression.sh
+bash scripts/real-provider-smoke-test.sh
+bash scripts/real-provider-smoke.sh --dry-run
+docker compose -f deploy/docker-compose.yml config
+git diff --check main...HEAD
+```
+
+如执行 live Compose：
+```bash
+bash scripts/prod-dry-run.sh --live-compose
+docker compose -f deploy/docker-compose.yml ps -a
+docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true
+```
+
+交付要求：
+- 提交到分支 `codex/p18-prod-dry-run`。
+- 最终说明必须包含：修改文件清单、执行命令结果、failure mode 到测试名映射、安全自查、刻意未修改范围、是否实际调用真实 Provider、live Compose 是否执行以及 cleanup 结果。
+```
+
+## 最近已完成任务包：P18-E2E-REAL-PROVIDER-SMOKE
 
 ### 调度决策
 
