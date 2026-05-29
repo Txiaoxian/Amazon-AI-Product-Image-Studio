@@ -34,6 +34,7 @@ type RouterOptions struct {
 	ProviderOpts        []provider.Option
 	AuditReadRedactor   *redaction.Redactor
 	TaskEnqueuer        queue.TaskEnqueuer
+	QueueDepthInspector queue.QueueDepthInspector
 	SSEBroker           *sse.Broker
 	SSEHeartbeat        time.Duration
 	LifecycleContext    context.Context
@@ -84,6 +85,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		taskService,
 		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
 		newAdminAuditUsageService(options.Database, options.Logger, options.AuditReadRedactor),
+		newAdminDiagnosticsService(options.Database, options.Logger, options.QueueDepthInspector),
 		settingsService,
 		useradmin.NewService(options.Database, options.Logger),
 		options.HealthChecks...,
@@ -92,15 +94,15 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	return router
 }
 
-func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, userAdminService *useradmin.Service, healthChecks ...health.DependencyChecker) {
+func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, adminDiagnosticsService *adminDiagnosticsService, settingsService *settings.Service, userAdminService *useradmin.Service, healthChecks ...health.DependencyChecker) {
 	healthHandler := health.Handler("api", healthChecks...)
 	router.GET("/healthz", healthHandler)
 
 	v1 := router.Group("/api/v1")
-	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService, settingsService, userAdminService)
+	registerV1Routes(v1, healthHandler, authService, projectService, assetService, providerService, modelService, taskService, sseService, adminAuditUsageService, adminDiagnosticsService, settingsService, userAdminService)
 }
 
-func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, settingsService *settings.Service, userAdminService *useradmin.Service) {
+func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, adminDiagnosticsService *adminDiagnosticsService, settingsService *settings.Service, userAdminService *useradmin.Service) {
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
@@ -132,6 +134,9 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	}
 	if adminAuditUsageService != nil {
 		adminAuditUsageService.RegisterRoutes(protected)
+	}
+	if adminDiagnosticsService != nil {
+		adminDiagnosticsService.RegisterRoutes(protected)
 	}
 	if settingsService != nil {
 		settingsService.RegisterRoutes(protected)

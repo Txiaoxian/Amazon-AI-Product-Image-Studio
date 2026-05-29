@@ -14,6 +14,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -90,11 +91,12 @@ func loadStartupConfig() (config.Config, error) {
 
 func newRouter(ctx context.Context, cfg config.Config, log *slog.Logger, db *gorm.DB, healthChecks ...health.DependencyChecker) *gin.Engine {
 	return api.NewRouter(api.RouterOptions{
-		Config:           cfg,
-		Logger:           log,
-		HealthChecks:     healthChecks,
-		Database:         db,
-		LifecycleContext: ctx,
+		Config:              cfg,
+		Logger:              log,
+		HealthChecks:        healthChecks,
+		Database:            db,
+		QueueDepthInspector: queue.NewRedisQueueDepthInspector(cfg.Queue),
+		LifecycleContext:    ctx,
 	})
 }
 
