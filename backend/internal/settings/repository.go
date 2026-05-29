@@ -121,6 +121,14 @@ func (r Repository) Upsert(ctx context.Context, scope tenant.Scope, key string, 
 }
 
 func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, false)
+}
+
+func (r Repository) LockProvider(ctx context.Context, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	return r.findProvider(ctx, scope, providerID, true)
+}
+
+func (r Repository) findProvider(ctx context.Context, scope tenant.Scope, providerID string, lock bool) (database.AIProvider, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return database.AIProvider{}, err
@@ -131,9 +139,13 @@ func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, provid
 	}
 
 	var record database.AIProvider
-	err = db.Model(&database.AIProvider{}).
+	query := db.Model(&database.AIProvider{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		First(&record).Error
+		Limit(1)
+	if lock && db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err = query.First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.AIProvider{}, ErrValidation
 	}
@@ -141,6 +153,14 @@ func (r Repository) FindProvider(ctx context.Context, scope tenant.Scope, provid
 }
 
 func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
+	return r.findModel(ctx, scope, modelID, false)
+}
+
+func (r Repository) LockModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
+	return r.findModel(ctx, scope, modelID, true)
+}
+
+func (r Repository) findModel(ctx context.Context, scope tenant.Scope, modelID string, lock bool) (database.AIModel, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return database.AIModel{}, err
@@ -151,9 +171,13 @@ func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID s
 	}
 
 	var record database.AIModel
-	err = db.Model(&database.AIModel{}).
+	query := db.Model(&database.AIModel{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), modelID).
-		First(&record).Error
+		Limit(1)
+	if lock && db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err = query.First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.AIModel{}, ErrValidation
 	}

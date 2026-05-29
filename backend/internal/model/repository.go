@@ -9,6 +9,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -76,6 +77,14 @@ func (r Repository) ListModels(ctx context.Context, scope tenant.Scope, options 
 }
 
 func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
+	return r.findModel(ctx, scope, modelID, false)
+}
+
+func (r Repository) LockModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
+	return r.findModel(ctx, scope, modelID, true)
+}
+
+func (r Repository) findModel(ctx context.Context, scope tenant.Scope, modelID string, lock bool) (database.AIModel, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return database.AIModel{}, err
@@ -86,9 +95,13 @@ func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID s
 	}
 
 	var record database.AIModel
-	err = db.Model(&database.AIModel{}).
+	query := db.Model(&database.AIModel{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), modelID).
-		First(&record).Error
+		Limit(1)
+	if lock && db.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err = query.First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.AIModel{}, ErrNotFound
 	}
@@ -147,6 +160,30 @@ func (r Repository) SoftDeleteModel(ctx context.Context, scope tenant.Scope, mod
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r Repository) ActiveModelNameExists(ctx context.Context, scope tenant.Scope, providerID string, modelName string, excludeModelID string) (bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	providerID = strings.TrimSpace(providerID)
+	modelName = strings.TrimSpace(modelName)
+	excludeModelID = strings.TrimSpace(excludeModelID)
+	if providerID == "" || modelName == "" {
+		return false, ErrValidation
+	}
+
+	var count int64
+	query := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND provider_id = ? AND model_name = ? AND deleted_at IS NULL", scope.ID(), providerID, modelName)
+	if excludeModelID != "" {
+		query = query.Where("id <> ?", excludeModelID)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r Repository) ProviderNames(ctx context.Context, scope tenant.Scope, providerIDs []string) (map[string]string, error) {

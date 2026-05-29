@@ -213,6 +213,9 @@ func (s *Service) createModel(ctx context.Context, principal auth.Principal, inp
 		if err != nil {
 			return err
 		}
+		if err := ensureUniqueActiveModelName(ctx, s.repo.withDB(tx), scope, providerRecord.ID, input.ModelName, ""); err != nil {
+			return err
+		}
 		now := s.now()
 		record = database.AIModel{
 			ID:                         idgen.New(),
@@ -290,7 +293,7 @@ func (s *Service) updateModel(ctx context.Context, principal auth.Principal, mod
 	var updated database.AIModel
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		current, err := s.authorizeModelWithRepo(ctx, repo, principal, modelID, PermissionManage)
+		current, err := s.authorizeModelForUpdateWithRepo(ctx, repo, principal, modelID, PermissionManage)
 		if err != nil {
 			return err
 		}
@@ -350,6 +353,20 @@ func (s *Service) updateModel(ctx context.Context, principal auth.Principal, mod
 			}
 			updates["status"] = *input.Status
 		}
+		if input.ProviderID != nil || input.ModelName != nil {
+			if input.ProviderID == nil {
+				if _, err := lockProviderForModelSerialization(ctx, tx, scope, targetProviderID); err != nil {
+					return err
+				}
+			}
+			targetModelName := current.ModelName
+			if input.ModelName != nil {
+				targetModelName = *input.ModelName
+			}
+			if err := ensureUniqueActiveModelName(ctx, repo, scope, targetProviderID, targetModelName, current.ID); err != nil {
+				return err
+			}
+		}
 
 		updated, err = repo.UpdateModel(ctx, scope, current.ID, updates)
 		if err != nil {
@@ -390,7 +407,7 @@ func (s *Service) deleteModel(ctx context.Context, principal auth.Principal, mod
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		record, err := s.authorizeModelWithRepo(ctx, repo, principal, modelID, PermissionManage)
+		record, err := s.authorizeModelForUpdateWithRepo(ctx, repo, principal, modelID, PermissionManage)
 		if err != nil {
 			return err
 		}
@@ -427,7 +444,7 @@ func (s *Service) setStatus(ctx context.Context, principal auth.Principal, model
 	var updated database.AIModel
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.withDB(tx)
-		current, err := s.authorizeModelWithRepo(ctx, repo, principal, modelID, PermissionManage)
+		current, err := s.authorizeModelForUpdateWithRepo(ctx, repo, principal, modelID, PermissionManage)
 		if err != nil {
 			return err
 		}
@@ -470,11 +487,19 @@ func (s *Service) authorizeModel(ctx context.Context, principal auth.Principal, 
 }
 
 func (s *Service) authorizeModelWithRepo(ctx context.Context, repo Repository, principal auth.Principal, modelID string, permission string) (database.AIModel, error) {
+	return s.authorizeModelWithLookup(ctx, repo.FindModel, principal, modelID, permission)
+}
+
+func (s *Service) authorizeModelForUpdateWithRepo(ctx context.Context, repo Repository, principal auth.Principal, modelID string, permission string) (database.AIModel, error) {
+	return s.authorizeModelWithLookup(ctx, repo.LockModel, principal, modelID, permission)
+}
+
+func (s *Service) authorizeModelWithLookup(ctx context.Context, lookup func(context.Context, tenant.Scope, string) (database.AIModel, error), principal auth.Principal, modelID string, permission string) (database.AIModel, error) {
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
 		return database.AIModel{}, err
 	}
-	record, err := repo.FindModel(ctx, scope, modelID)
+	record, err := lookup(ctx, scope, modelID)
 	if err != nil {
 		return database.AIModel{}, err
 	}
@@ -533,6 +558,28 @@ func ensureProviderUsableForModelWrite(ctx context.Context, db *gorm.DB, scope t
 	return record, nil
 }
 
+func lockProviderForModelSerialization(ctx context.Context, db *gorm.DB, scope tenant.Scope, providerID string) (database.AIProvider, error) {
+	record, err := provider.NewRepository(db).LockProvider(ctx, scope, providerID)
+	if errors.Is(err, provider.ErrNotFound) || errors.Is(err, provider.ErrValidation) {
+		return database.AIProvider{}, ErrValidation
+	}
+	if err != nil {
+		return database.AIProvider{}, err
+	}
+	return record, nil
+}
+
+func ensureUniqueActiveModelName(ctx context.Context, repo Repository, scope tenant.Scope, providerID string, modelName string, excludeModelID string) error {
+	exists, err := repo.ActiveModelNameExists(ctx, scope, providerID, modelName, excludeModelID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrDuplicateModelName
+	}
+	return nil
+}
+
 func isTenantAdmin(principal auth.Principal) bool {
 	for _, role := range principal.Roles {
 		if role.Code == "admin" {
@@ -551,7 +598,7 @@ func hasModelPermission(principal auth.Principal, permission string) bool {
 
 func (s *Service) respondError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrValidation):
+	case errors.Is(err, ErrValidation), errors.Is(err, ErrDuplicateModelName):
 		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
 	case errors.Is(err, ErrForbidden):
 		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
