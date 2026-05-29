@@ -188,6 +188,37 @@ curl -fsS http://127.0.0.1:8081/api/v1/healthz
 curl -fsS http://127.0.0.1:8080/api/v1/healthz
 ```
 
+## Optional Real Provider Smoke
+
+The real Provider smoke is a manual, opt-in check. It is not part of default
+release validation or CI because it can create billable AI calls.
+
+Dry-run the guardrails first:
+
+```bash
+bash scripts/real-provider-smoke.sh --dry-run
+```
+
+Run it only when you intentionally want a real backend-mediated AI call:
+
+```bash
+export SMOKE_API_BASE_URL=http://127.0.0.1:8081/api/v1
+export SMOKE_ADMIN_EMAIL=admin@example.com
+export SMOKE_MODEL_NAME=your-image-model
+read -rsp "Admin password: " SMOKE_ADMIN_PASSWORD && export SMOKE_ADMIN_PASSWORD
+printf "\n"
+read -rsp "Provider API key: " SMOKE_PROVIDER_API_KEY && export SMOKE_PROVIDER_API_KEY
+printf "\n"
+REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS \
+bash scripts/real-provider-smoke.sh --run
+```
+
+Do not place real keys in committed files, shell scripts, screenshots, or
+shared logs. The script only calls this platform's `/api/v1` backend, creates
+`codex-smoke-*` Provider/model/project/task data, defaults to one output image,
+and prints sanitized IDs and counts only. Review and remove smoke data after
+the validation if the environment should stay clean.
+
 ## Backup
 
 Back up MySQL and MinIO together so object keys and objects stay consistent.
