@@ -41,7 +41,7 @@ Phase status:
 | P14 | Complete | Provider/model lifecycle integrity, backend usage/cost reporting, frontend cost observability, and R14 regression are complete. |
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
-| P17 | In Progress | Conservative MinIO orphan scan/dry-run/cleanup, strict storage quota reservation, and backend production diagnostics are complete; R17 remains. |
+| P17 | Complete | Storage governance and observability are complete. Conservative orphan cleanup, strict quota reservation, backend production diagnostics, and R17 regression passed. |
 | P18 | Planned | Final production confidence: Provider/model serialization, real Provider smoke, production dry-run, and R18 Go/No-Go review. |
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
@@ -111,6 +111,8 @@ R16 reviewed the complete P16 range from `4b1913e..HEAD` and found no blocking i
 `P17-BE-STORAGE-QUOTA-RESERVATION` was reviewed, fixed, and merged. The backend now uses tenant-scoped quota counter/reservation tables for reference uploads and Worker generated/edited outputs. Asset-creating paths reserve original bytes before MinIO writes, finalize reservations inside metadata transactions, release on validation/storage/DB failures, keep soft-deleted-but-not-purged assets counted, decrement after physical purge, and reconcile counters from MySQL metadata rather than MinIO listing. Released or malformed reservations fail closed without successful asset/task-output side effects, and concurrent upload tests verify combined over-limit requests cannot exceed tenant quota. Validation passed focused database/settings/asset/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
 
 `P17-BE-OBSERVABILITY-METRICS` was reviewed, fixed, and merged. The backend now exposes `GET /api/v1/admin/diagnostics/summary` as an admin-only, tenant-scoped, read-only diagnostics endpoint requiring `audit:read`. It returns bounded aggregate sections for task statuses and recent failures, Redis queue depth, Provider/API-call failure rates, storage quota/asset usage, and recent maintenance summaries. The endpoint does not mutate state, call Providers, trigger cleanup, enqueue tasks, decrypt Provider keys, or expose Redis keys, queue payloads, object keys, buckets, MinIO URLs, signed URLs, raw Provider/log metadata, Authorization/Cookie/JWT values, Provider secrets, or image base64. Review fixes added production Redis queue inspector wiring, untruncated Provider totals, queue `reason="queue_unavailable"`, and fail-closed maintenance metadata parsing. Validation passed focused diagnostics/queue/task/settings/asset tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks.
+
+R17 reviewed the complete P17 range after merging orphan cleanup, strict quota reservation, and production diagnostics. No blocking storage-governance or observability issues were found. Validation passed full backend tests, backend race tests, vet, API/Worker builds, full frontend lint/type-check/test/build, Docker Compose config, security regression, whitespace checks, and default deployment release validation with image builds. P18 may start from latest `main`.
 
 ## Completed Platform Capabilities
 
@@ -311,8 +313,9 @@ Suggested order:
    - Completed and merged. The diagnostics endpoint is read-only, tenant-scoped, permission-gated, bounded, and aggregate-only.
 4. `R17`
    - Review storage governance and observability behavior before final Provider/admin consistency work.
+   - Completed. Full P17 review and regression found no blocking issues.
 
-Parallelism: P17 implementation slices are merged. Execute `R17` serially before starting P18.
+Parallelism: P17 is complete. Start P18 serially from latest `main`.
 
 ### P18: Production Confidence And Go/No-Go
 
@@ -387,4 +390,4 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Execute `R17` on latest `main`. P17 orphan cleanup, strict storage quota reservation, and backend production diagnostics are merged and reviewed individually. R17 must review the combined storage governance and observability behavior, run the standard backend/frontend/deployment/security regression gates, and decide whether P18 can start from a stable `main`.
+Start `P18-BE-PROVIDER-MODEL-SERIALIZATION` from latest `main`. P17 storage governance and observability have passed R17. The next production risk is concurrent admin mutation of Provider/model/default-setting state around enabled models, disabled Providers, soft-deleted rows, and tenant defaults.

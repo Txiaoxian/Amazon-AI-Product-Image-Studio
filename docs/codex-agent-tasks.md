@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation 与 admin-only backend JSON diagnostics 已合并。
+`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL`、`R15`、`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION`、`P16-BE-THUMBNAIL-POLICY`、`R16`、`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION`、`P17-BE-OBSERVABILITY-METRICS` 和 `R17` 已完成。P15 核心 API/Worker/SSE/history/usage/log 集成路径、最终安全回归入口、部署 release validation 脚本、operator runbook 和最终 release-readiness review 均已落地；P16 部署脚本失败 cleanup trap、数据库日志保留和后端缩略图策略均已合并，并通过 R16 回归和真实 Compose `--up --down` 验证；P17 conservative MinIO orphan scan/cleanup、strict storage quota reservation、admin-only backend JSON diagnostics 与 R17 回归已完成。
 
 已完成的平台基础：
 
@@ -110,7 +110,8 @@
 - P16 已完成切片：`P16-DEPLOY-SCRIPT-HARDENING`、`P16-BE-LOG-RETENTION` 和 `P16-BE-THUMBNAIL-POLICY`。`scripts/deploy-release-validation.sh --up --down` 已具备失败、错误退出、SIGINT、SIGTERM 的项目 Compose cleanup trap；`logRetention` 已有 backend GET/PATCH 与 Worker runtime consumer，范围限定为现有数据库日志：`operation_logs`、`api_call_logs`、终态任务的 `task_events`；新 reference upload 和 Worker 输出资产会生成 MinIO thumbnail object 并通过后端鉴权访问。
 - R16 已完成：完整 P16 范围通过后端、前端、Compose、安全回归、部署验证脚本、live Compose `--up --down` 和 post-cleanup 检查。
 - P17 已完成切片：`P17-BE-ORPHAN-CLEANUP`、`P17-BE-STORAGE-QUOTA-RESERVATION` 和 `P17-BE-OBSERVABILITY-METRICS`。MinIO orphan object 已有 conservative scan、dry-run、confirmed cleanup、retry-safe 失败处理、bounded listing、opaque cursor 和 sanitized audit；reference upload 与 Worker output 已接入 tenant-scoped quota reservation/counter/reconciliation，解决并发写入下的 optimistic quota race；backend admin diagnostics 已提供 queue depth、task aggregates、Provider failure rate、storage usage 和 sanitized maintenance result。
-- 下一任务：`R17`。主 agent 直接 review P17 全部代码、运行回归，并决定是否进入 P18。
+- R17 已完成：完整 P17 范围通过后端、前端、Compose、安全回归和默认 deployment release validation，未发现阻塞问题。
+- 下一任务：`P18-BE-PROVIDER-MODEL-SERIALIZATION`。需要强化 Provider/model enable/disable/delete/update 与 default setting 交互的事务序列化。
 - Provider/模型并发管理操作可能需要更强的事务序列化。
 - 最终发布验证已完成；后续工作属于 post-R15 产品/运维 backlog。
 
@@ -538,6 +539,7 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 已完成并合并。
 4. `R17`
    - 主 agent review P17 全部代码和回归。
+   - 已完成。未发现阻塞问题。
 
 ### P18：真实上线信心与 Go/No-Go
 
@@ -549,6 +551,185 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
    - 按 runbook 在目标或准生产环境执行完整上线 dry-run。
 4. `R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
+
+## 下一个任务包：P18-BE-PROVIDER-MODEL-SERIALIZATION
+
+### 调度决策
+
+- 本任务串行执行，不与 real Provider smoke、production dry-run、前端任务或部署任务并行。
+- 理由：本任务会修改 Provider/model/default settings 的共享控制面写路径，是 P18 后续真实 Provider smoke 和上线 dry-run 的前置一致性保障。
+- 本任务不新增 API 字段，不新增前端 UI，不触发真实 Provider 调用，不解密 Provider API Key，不修改 Worker/SSE/task execution 主流程。
+
+### 任务信息
+
+- 任务名称：`P18-BE-PROVIDER-MODEL-SERIALIZATION`
+- 目标：强化 Provider/model enable/disable/delete/update 与 `taskDefaults` 写入之间的事务序列化，确保并发 admin 操作后不会留下“启用模型挂在禁用/删除 Provider 下”“默认 Provider/model 指向不可用对象”“同一 Provider 下重复 active model name”等不一致状态。
+- 推荐线程名：`P18-BE-PROVIDER-MODEL-SERIALIZATION`
+- 推荐分支名：`codex/p18-backend-provider-model-serialization`
+- 起始分支：完成 R17 后的最新 `main`
+- 前置依赖：P14 Provider/model lifecycle integrity、P13 runtime task defaults、P17 R17 回归均已合并。
+
+### 子 agent 完整启动 prompt
+
+```text
+你是本项目的子 agent，负责 `P18-BE-PROVIDER-MODEL-SERIALIZATION`。
+
+你必须在分支 `codex/p18-backend-provider-model-serialization` 上工作；如果当前不在该分支，先执行 `git switch codex/p18-backend-provider-model-serialization`，确认 `git branch --show-current` 后再继续。起始点必须包含完成 R17 后的最新 `main`；如果 `git merge-base --is-ancestor main codex/p18-backend-provider-model-serialization` 不通过，先停止并报告，不要自行修改公共合同。
+
+任务目标：
+强化 Provider/model/default settings 控制面一致性：
+- 统一 Provider/model/default settings 写路径的事务锁顺序，避免并发 admin 操作留下不可用引用。
+- Provider disable/delete 与 model create/update/enable/disable/delete、taskDefaults update 必须在同一 tenant 范围内序列化相关行。
+- 禁止启用模型挂在 disabled/deleted Provider 下。
+- 禁止 taskDefaults 写入 disabled/deleted/cross-tenant/mismatched Provider/model。
+- 对同一 tenant + same Provider + active(non-deleted) `modelName` 重复问题做明确数据完整性处理；优先在写路径 fail closed，并用测试固定行为。不要在没有迁移/backfill 方案的情况下贸然添加破坏现有数据的唯一索引。
+- 不改变外部 API 形状、错误响应格式、RBAC 合同、Provider Adapter runtime 或 Worker 执行语义。
+
+允许修改文件：
+- `backend/internal/provider/**`
+- `backend/internal/model/**`
+- `backend/internal/settings/**`
+- `backend/internal/api/provider_routes_test.go`
+- `backend/internal/api/model_routes_test.go`
+- `backend/internal/api/system_settings_routes_test.go`
+- `backend/internal/api/task_routes_test.go` 仅限补充默认设置相关回归
+- `backend/internal/database/**` 仅限确有必要的非破坏性索引/迁移与测试；如果需要破坏性唯一约束或数据 backfill，先停止报告，不要直接落地
+- backend-only 测试 helper
+
+禁止修改文件：
+- `docs/**`
+- `AGENTS.md`
+- `agent-instructions/**`
+- `frontend/**`
+- `deploy/**`
+- `scripts/**`
+- `backend/internal/provideradapter/**`
+- `backend/internal/task/**`，除 `backend/internal/api/task_routes_test.go` 中的路由测试外
+- `backend/cmd/**`
+- 认证/JWT/Cookie 主流程、SSE handler、Redis queue、Worker claim/cancel/retry/timeout 状态机、task execution 主流程、MinIO/storage cleanup/quota runtime
+- 不新增真实 AI Provider 调用、Provider test 调用、API key 解密、前端轮询、浏览器存储或新的 active writable settings
+
+前置阅读：
+- `AGENTS.md`
+- `agent-instructions/01-project-overview.md`
+- `agent-instructions/02-architecture-rules.md`
+- `agent-instructions/04-backend-rules.md`
+- `agent-instructions/05-security-rules.md`
+- `agent-instructions/06-testing-and-delivery.md`
+- `agent-instructions/07-task-package-and-review-rules.md`
+- `docs/development-plan.md`
+- `docs/codex-agent-tasks.md`
+- `docs/api-contract.md`
+- `docs/database-schema.md`
+- `docs/security.md`
+- `backend/internal/provider/service.go`
+- `backend/internal/provider/repository.go`
+- `backend/internal/model/service.go`
+- `backend/internal/model/repository.go`
+- `backend/internal/settings/service.go`
+- `backend/internal/settings/repository.go`
+
+具体开发内容：
+1. 梳理并实现 Provider/model/default settings 写路径统一锁顺序：
+   - 相关操作必须 tenant-scoped。
+   - 推荐锁顺序：Provider row -> linked model rows or target model row -> system setting row。
+   - 同一个事务内完成校验、写入和成功 audit log。
+   - SQLite 测试环境可以跳过物理 `FOR UPDATE`，但生产 MySQL 路径必须使用行级锁或等价事务序列化。
+2. Provider 写路径：
+   - disable 或 `PATCH status=DISABLED` 时，在事务内锁定 Provider 并重新检查 enabled linked models。
+   - delete 时，在事务内锁定 Provider 并重新检查 same-tenant non-deleted linked models。
+   - 失败路径不得记录成功 operation log。
+3. Model 写路径：
+   - create/update/enable 时，在事务内锁定目标 Provider 并验证 Provider enabled + non-deleted + same tenant。
+   - update/delete/disable/enable 目标模型时，锁定目标模型；如涉及 Provider 迁移或启用，按 Provider -> model 顺序避免死锁。
+   - 新增同一 tenant + provider + modelName + non-deleted 的重复检查。create 和 update modelName/providerId 都必须覆盖；同名但 deleted 的旧模型不阻塞。
+4. `taskDefaults` 写路径：
+   - 写入默认 Provider/model 时，在同一事务内锁定 Provider 和 model 并验证状态、归属和 provider/model 匹配。
+   - 清空默认值仍可成功，但必须保留当前 audit 行为和响应形状。
+   - 损坏持久化默认值的读取 fail-closed 行为不得回归。
+5. 回归测试：
+   - 补齐 Provider disable/delete、model create/update/enable/delete、taskDefaults update 的一致性负向测试。
+   - 如果可行，增加 MySQL 或事务级并发测试；如果当前测试基建只支持 SQLite，需要用 deterministic transaction/locking helper 或明确的顺序化测试覆盖不变量，并在交付中说明并发真实锁依赖 MySQL。
+
+安全要求：
+- 所有查询和写入必须带 `tenant_id`，对象级权限和 RBAC 不能降级。
+- 不得返回或记录 Provider 完整 API Key、Authorization、Cookie、JWT、base64 图片、MinIO bucket/object key 或底层数据库错误。
+- 不得因为一致性检查暴露跨租户 Provider/model 是否存在。
+- SSRF、Provider URL 校验和 API Key 加密逻辑不得削弱。
+- 失败写入不得记录成功 operation log；成功 audit metadata 必须保持 sanitized。
+
+必须保持的现有行为：
+- 现有 Provider/model CRUD、enable/disable/delete API 路径和响应形状保持兼容。
+- `taskDefaults` 只在任务创建同时省略 providerId/modelId 时生效；显式 Provider/model 请求不读取未使用的损坏默认值。
+- disabled/deleted/cross-tenant Provider 或 model 仍返回通用 validation/not-found/forbidden 语义，不泄漏内部对象详情。
+- Provider test、Provider Adapter runtime、Worker 执行、SSE、storage quota/retention/orphan cleanup 不受影响。
+- 已有 P13/P14/P15/P17 安全与回归测试继续通过。
+
+允许的中间态：
+- 后端一致性更严格，可能把以前可写入但会造成不一致的请求改为 `422 VALIDATION_ERROR` 或既有 conflict 类错误。
+- 同一 Provider 下 active modelName 重复被写路径阻止，但历史已有重复数据不做破坏性迁移。
+- 不新增前端提示；前端沿用现有错误展示。
+
+禁止的半迁移状态：
+- Provider disable/delete 成功后仍存在 enabled linked models。
+- Model enable/create/update 成功后指向 disabled、deleted、cross-tenant 或不匹配 Provider。
+- `taskDefaults` 成功保存后指向 disabled、deleted、cross-tenant 或不匹配 Provider/model。
+- 同一 tenant + Provider 下成功创建或更新出两个 non-deleted 同名 model。
+- 失败请求写入成功 operation log。
+- 为了实现校验而解密 Provider API Key、调用真实 Provider、修改 Worker/SSE/task execution 主流程或放宽 RBAC。
+
+失败模式与边界场景：
+
+| 场景 | 预期行为 | 必须覆盖 |
+| --- | --- | --- |
+| Provider disable，存在 enabled linked model | 拒绝，Provider 状态不变，无成功 audit | API/服务测试 |
+| Provider disable，只有 disabled linked model | 允许，状态变更并记录 sanitized audit | API/服务测试 |
+| Provider delete，存在任意 non-deleted linked model | 拒绝，Provider 不删除，无成功 audit | API/服务测试 |
+| Provider delete，只有 deleted linked model | 允许 soft-delete Provider | API/服务测试 |
+| Model create 指向 disabled/deleted/cross-tenant Provider | 拒绝，不创建 model，无成功 audit | API/服务测试 |
+| Model enable 时 Provider 已 disabled/deleted | 拒绝，model 仍 disabled | API/服务测试 |
+| Model update 迁移到 disabled/deleted/cross-tenant Provider | 拒绝，原 Provider 保持 | API/服务测试 |
+| Model create/update 造成 same Provider active modelName 重复 | 拒绝，不创建/不更新 | API/服务测试 |
+| Model create/update 与 deleted 同名旧 model 冲突 | 允许 | API/服务测试 |
+| taskDefaults 指向 disabled/deleted/cross-tenant/mismatched Provider/model | 拒绝，旧值保持，无成功 audit | settings/API 测试 |
+| taskDefaults 清空 | 允许，响应和 audit 保持现有形状 | settings/API 测试 |
+| 损坏已持久化 task_defaults 读取 | 继续 fail closed，不创建任务副作用 | task/API 回归 |
+| 并发或交错 admin 写入 | 最终状态满足上述不变量；无法在 SQLite 精确验证时交付说明 MySQL 锁语义 | 服务/API 或集成测试 |
+
+必须新增或更新的回归测试：
+- Provider disable/delete 对 linked model 状态的事务内重检。
+- Model create/update/enable 对 Provider 状态和租户归属的事务内重检。
+- Model create/update 对 same Provider active modelName 重复的拒绝，以及 deleted 同名模型不阻塞。
+- `taskDefaults` update 对 Provider/model 状态、归属和匹配关系的锁定校验。
+- 失败路径无成功 operation log。
+- 原有 task defaults malformed fail-closed 和 explicit Provider/model 忽略未用损坏默认值测试继续通过。
+
+验收标准：
+- Provider/model/default settings 写路径满足失败模式矩阵。
+- 未修改公共合同文档、前端、部署脚本、Worker/SSE/task execution 主流程或 Provider Adapter runtime。
+- 后端测试、race、vet、build 通过。
+- Docker Compose config 和安全回归脚本通过。
+- 子 agent 最终回复必须列出“每个 failure mode 对应的测试文件/测试名”，并说明是否使用共享本地 MySQL/Redis/MinIO 及清理情况。
+
+测试命令：
+```bash
+cd backend
+go test ./internal/provider ./internal/model ./internal/settings ./internal/api ./internal/task -count=1
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/api ./cmd/worker
+
+cd ..
+docker compose -f deploy/docker-compose.yml config
+bash scripts/security-regression.sh
+git diff --check main...HEAD
+```
+
+交付要求：
+- 提交到分支 `codex/p18-backend-provider-model-serialization`。
+- 最终说明必须包含：修改文件清单、执行命令结果、failure mode 到测试名映射、安全自查、刻意未修改范围、是否有合同缺口。
+```
 
 ## 最近已完成任务包：P17-BE-OBSERVABILITY-METRICS
 
