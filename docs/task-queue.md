@@ -183,4 +183,4 @@ P14 Provider/model lifecycle update:
 - Provider disable through both `/disable` and `PATCH status=DISABLED` must be blocked while enabled same-tenant linked models exist.
 - Model create/update/enable must reject disabled, deleted, or cross-tenant Providers.
 - Loaded `taskDefaults` must be revalidated before task creation, so disabled/deleted Provider or model references fail closed and do not enqueue tasks.
-- Same-Provider `model_name` uniqueness remains deferred because task execution uses stable `modelId` references.
+- P18 write-path integrity rejects duplicate same-tenant same-Provider non-deleted `model_name` values while task execution continues to use stable `modelId` references.

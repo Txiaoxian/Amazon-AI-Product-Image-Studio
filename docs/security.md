@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current Transition Risks After R16 Production Launch Hardening
+## Current Transition Risks During P18 Production Confidence
 
-The current `main` branch has completed P15 release hardening plus P16 deployment-script cleanup, backend database-log retention, backend thumbnail policy, and R16 regression. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 Provider/model/default-setting write serialization, and optional real Provider smoke tooling. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ The current `main` branch has completed P15 release hardening plus P16 deploymen
 
 Remaining security and hardening risks:
 
-- Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, and failed lifecycle writes do not record successful operation logs. Same-Provider `model_name` uniqueness remains a deferred data-integrity decision.
+- Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, failed lifecycle writes do not record successful operation logs, and P18 write-path serialization rejects duplicate same-tenant same-Provider non-deleted `model_name` values without a destructive migration.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 - Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, `storageQuota` is backed by reference upload and Worker output persistence checks, and `logRetention` is backed by Worker database-log cleanup. Frontend settings may expose only settings with merged backend consumers; it must not expose manual cleanup triggers, raw MinIO listing, or any field without a runtime consumer.
 
@@ -63,6 +63,8 @@ Resolved transition item:
 - P13 storage quota accounting now exposes nullable `storageQuota.maxBytes` only with real backend consumers. `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata; upload and Worker output quota failures must not create successful metadata, output events, usage records, success logs, or leak object identifiers.
 - P17 storage quota reservation now makes quota enforcement safe under concurrent writers. Reservation IDs and counter internals are server-only; responses/logs/audit metadata must not leak them or any object key/bucket/MinIO URL. Failed reservations, expired reservations, cleanup failures, released reservations with positive finalize attempts, and malformed counters must fail closed without creating successful asset metadata.
 - P17 production diagnostics is implemented as an admin-only, tenant-scoped, read-only, aggregate-only backend endpoint. Diagnostics must not expose raw Provider payloads, operation/API log metadata, queue payload contents, Redis keys, object keys, bucket names, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets. Maintenance metadata parsing is fail-closed by field type: only numeric aggregate counts, boolean flags, enum statuses, and RFC3339 timestamps may survive.
+- P18 Provider/model/default-setting serialization adds row locks and write-path duplicate model-name rejection so concurrent admin changes cannot silently leave unavailable default references or duplicate active model names.
+- P18 optional real Provider smoke tooling remains manual and cost-bounded. Its default help/dry-run modes do not call any API, explicit `--run` requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`, and direct AI Provider API bases are rejected. R18 pre-review found a parent-shell cleanup-registration bug for temporary payload files; the production dry-run slice must merge cleanup hardening and failure-path regression before Go/No-Go.
 
 Storage and P5 review hardening backlog:
 

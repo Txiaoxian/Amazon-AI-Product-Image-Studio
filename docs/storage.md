@@ -57,7 +57,7 @@ Forbidden:
 
 P5 validation must happen before any object is written. If validation fails, no image metadata row or MinIO object should remain. If a DB write fails after object upload, the implementation must either delete the just-uploaded object or record enough information for deterministic cleanup.
 
-Current P5 backend behavior validates before object write and attempts to delete the uploaded object if metadata persistence fails. P13 storage cleanup foundation must move this cleanup to an independent bounded context or equivalent background cleanup path so request cancellation cannot prevent cleanup.
+Current backend behavior validates before object write and uses the P13 cleanup foundation after object upload. If metadata persistence fails, cleanup uses an independent bounded context so request cancellation cannot prevent best-effort removal; deterministic retention/orphan cleanup paths remain available for later recovery.
 
 Current P5 frontend behavior uploads reference images through the backend multipart endpoint only. The browser never uploads directly to MinIO, and frontend MIME/size checks are only UX hints; backend validation is authoritative.
 
@@ -157,7 +157,7 @@ P13 retention runtime rules:
 - The Worker maintenance loop is the runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
 - Worker must skip tenants with absent, null, malformed, or unsupported retention settings. It must not delete anything for those tenants.
 - Storage quota accounting/enforcement is active in the backend. Frontend may display or edit quota only through the system-settings API and only for tenant admins with `system:settings:manage`.
-- Log retention, orphan object listing, manual cleanup triggers, and frontend settings remain deferred until their own runtime consumers are explicitly implemented.
+- Database log retention, conservative orphan cleanup, and frontend runtime-backed settings are implemented. Raw MinIO listing and unrestricted manual cleanup triggers remain intentionally unexposed.
 
 P13/P17 storage quota rules:
 
