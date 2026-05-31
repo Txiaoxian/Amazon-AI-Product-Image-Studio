@@ -190,22 +190,38 @@ validate_production_env_file() {
   done
 
   local -a origins=()
-  local origin normalized_origin
+  local origin authority host normalized_host
+  local first_octet second_octet third_octet fourth_octet
   IFS=',' read -r -a origins <<<"$(get_env_value CORS_ALLOWED_ORIGINS)"
   if [[ "${#origins[@]}" -eq 0 ]]; then
     fail "CORS_ALLOWED_ORIGINS must contain restricted non-localhost HTTPS origins"
   fi
   for origin in "${origins[@]}"; do
     origin="$(trim_whitespace "$origin")"
-    normalized_origin="$(printf '%s' "$origin" | tr '[:upper:]' '[:lower:]')"
     if [[ -z "$origin" ||
       ! "$origin" =~ ^https://([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(:[0-9]+)?$ ||
-      "$normalized_origin" == *"*"* ||
-      "$normalized_origin" == *"localhost"* ||
-      "$normalized_origin" == *"127."* ||
-      "$normalized_origin" == *"[::1]"* ||
-      "$normalized_origin" == *"0.0.0.0"* ]]; then
+      "$origin" == *"*"* ]]; then
       fail "CORS_ALLOWED_ORIGINS must contain restricted non-localhost HTTPS origins"
+    fi
+
+    authority="${origin#https://}"
+    host="${authority%%:*}"
+    normalized_host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$normalized_host" == "localhost" || "$normalized_host" == *".localhost" ]]; then
+      fail "CORS_ALLOWED_ORIGINS must contain restricted non-localhost HTTPS origins"
+    fi
+    if [[ "$normalized_host" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+      first_octet="${BASH_REMATCH[1]}"
+      second_octet="${BASH_REMATCH[2]}"
+      third_octet="${BASH_REMATCH[3]}"
+      fourth_octet="${BASH_REMATCH[4]}"
+      if (( first_octet > 255 || second_octet > 255 || third_octet > 255 || fourth_octet > 255 ||
+        first_octet == 0 || first_octet == 10 || first_octet == 127 ||
+        (first_octet == 169 && second_octet == 254) ||
+        (first_octet == 172 && second_octet >= 16 && second_octet <= 31) ||
+        (first_octet == 192 && second_octet == 168) )); then
+        fail "CORS_ALLOWED_ORIGINS must contain restricted non-localhost HTTPS origins"
+      fi
     fi
   done
 

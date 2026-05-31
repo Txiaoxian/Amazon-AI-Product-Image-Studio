@@ -316,6 +316,27 @@ test_production_env_preflight_rejects_localhost_cors() {
   assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
 }
 
+test_production_env_preflight_rejects_private_and_link_local_cors() {
+  local origin env_file
+  for origin in \
+    "https://10.0.0.1" \
+    "https://172.16.0.1" \
+    "https://192.168.1.1" \
+    "https://169.254.1.1" \
+    "https://[::1]" \
+    "https://[fd00::1]" \
+    "https://[fe80::1]"; do
+    env_file="$(mktemp)"
+    write_valid_production_env "$env_file"
+    printf 'CORS_ALLOWED_ORIGINS=%s\n' "$origin" >>"$env_file"
+    run_case "production env preflight rejects restricted CORS origin $origin" --production-env-file "$env_file"
+    rm -f "$env_file"
+    assert_nonzero_status "$CASE_STATUS" "restricted production CORS origin $origin"
+    assert_contains "$CASE_OUTPUT" "CORS_ALLOWED_ORIGINS must contain restricted non-localhost HTTPS origins"
+    assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
+  done
+}
+
 test_production_env_preflight_accepts_valid_template_without_leak() {
   local env_file
   env_file="$(mktemp)"
@@ -343,6 +364,7 @@ test_production_env_preflight_rejects_placeholder_without_leak
 test_production_env_preflight_rejects_invalid_cookie
 test_production_env_preflight_rejects_nonproduction_app_env
 test_production_env_preflight_rejects_localhost_cors
+test_production_env_preflight_rejects_private_and_link_local_cors
 test_production_env_preflight_accepts_valid_template_without_leak
 
 echo
