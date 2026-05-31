@@ -285,7 +285,7 @@ describe('project and asset API wrappers', () => {
     const downloaded = await assetApi.download('asset_1')
     expect(downloaded.filename).toBe('reference.png')
     expect(downloaded.blob.type).toBe('image/png')
-    expect(await downloaded.blob.text()).toBe('image-bytes')
+    expect(await readBlobText(downloaded.blob)).toBe('image-bytes')
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/projects/project_1/assets?kind=REFERENCE&category=hero&favorite=false',
@@ -317,3 +317,12 @@ describe('project and asset API wrappers', () => {
     )
   })
 })
+
+async function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
+}
