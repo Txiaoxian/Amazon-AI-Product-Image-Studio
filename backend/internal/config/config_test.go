@@ -160,7 +160,7 @@ func TestLoadOverrides(t *testing.T) {
 		"LOG_LEVEL":                                "warn",
 		"BACKEND_HTTP_HOST":                        "127.0.0.1",
 		"BACKEND_HTTP_PORT":                        "9090",
-		"CORS_ALLOWED_ORIGINS":                     "http://localhost:8080,https://studio.example.com",
+		"CORS_ALLOWED_ORIGINS":                     "https://studio.example.com,https://admin.example.com",
 		"API_READ_TIMEOUT":                         "3s",
 		"API_WRITE_TIMEOUT":                        "4s",
 		"API_SHUTDOWN_TIMEOUT":                     "5s",
@@ -246,8 +246,8 @@ func TestLoadOverrides(t *testing.T) {
 	if len(cfg.API.CORSAllowedOrigins) != 2 {
 		t.Fatalf("API.CORSAllowedOrigins length = %d, want 2", len(cfg.API.CORSAllowedOrigins))
 	}
-	if cfg.API.CORSAllowedOrigins[0] != "http://localhost:8080" {
-		t.Fatalf("first CORS origin = %q, want http://localhost:8080", cfg.API.CORSAllowedOrigins[0])
+	if cfg.API.CORSAllowedOrigins[0] != "https://studio.example.com" {
+		t.Fatalf("first CORS origin = %q, want https://studio.example.com", cfg.API.CORSAllowedOrigins[0])
 	}
 	if cfg.API.ReadTimeout != 3*time.Second {
 		t.Fatalf("API.ReadTimeout = %s, want 3s", cfg.API.ReadTimeout)
@@ -450,17 +450,60 @@ func TestLoadRejectsPlaceholderAPIKeyEncryptionSecretInProduction(t *testing.T) 
 }
 
 func TestLoadAllowsExplicitProductionSecrets(t *testing.T) {
-	values := map[string]string{
-		"APP_ENV":                "production",
-		"JWT_SIGNING_SECRET":     "0123456789abcdef0123456789abcdef",
-		"API_KEY_ENCRYPTION_KEY": "abcdef0123456789abcdef0123456789",
-	}
+	values := validProductionValues()
 
 	if _, err := load(func(key string) (string, bool) {
 		value, ok := values[key]
 		return value, ok
 	}); err != nil {
 		t.Fatalf("load returned error for explicit production secrets: %v", err)
+	}
+}
+
+func TestLoadRejectsUnsafeProductionConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		value     string
+		wantError string
+	}{
+		{name: "missing MySQL password", key: "MYSQL_PASSWORD", wantError: "invalid MYSQL_PASSWORD: value is required in production"},
+		{name: "placeholder MySQL password", key: "MYSQL_PASSWORD", value: "prod-change-me-mysql", wantError: "invalid MYSQL_PASSWORD: placeholder value is not allowed in production"},
+		{name: "missing Redis password", key: "REDIS_PASSWORD", wantError: "invalid REDIS_PASSWORD: value is required in production"},
+		{name: "placeholder Redis password", key: "REDIS_PASSWORD", value: "prod-change-me-redis", wantError: "invalid REDIS_PASSWORD: placeholder value is not allowed in production"},
+		{name: "missing MinIO access key", key: "MINIO_ACCESS_KEY", wantError: "invalid MINIO_ACCESS_KEY: value is required in production"},
+		{name: "placeholder MinIO access key", key: "MINIO_ACCESS_KEY", value: "prod-change-me-minio-access", wantError: "invalid MINIO_ACCESS_KEY: placeholder value is not allowed in production"},
+		{name: "missing MinIO secret key", key: "MINIO_SECRET_KEY", wantError: "invalid MINIO_SECRET_KEY: value is required in production"},
+		{name: "placeholder MinIO secret key", key: "MINIO_SECRET_KEY", value: "prod-change-me-minio-secret", wantError: "invalid MINIO_SECRET_KEY: placeholder value is not allowed in production"},
+		{name: "insecure cookie", key: "COOKIE_SECURE", value: "false", wantError: "invalid COOKIE_SECURE: must be true in production"},
+		{name: "missing CORS origin", key: "CORS_ALLOWED_ORIGINS", wantError: "invalid CORS_ALLOWED_ORIGINS: at least one origin is required in production"},
+		{name: "HTTP CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "http://studio.example.com", wantError: "invalid CORS_ALLOWED_ORIGINS: only https origins are allowed in production"},
+		{name: "localhost CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://localhost", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "localhost subdomain CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://app.localhost", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv4 loopback CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://127.0.0.1", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv4 private CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://10.0.0.1", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv4 link-local CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://169.254.1.1", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv6 loopback CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://[::1]", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv6 private CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://[fd00::1]", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+		{name: "IPv6 link-local CORS origin", key: "CORS_ALLOWED_ORIGINS", value: "https://[fe80::1]", wantError: "invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := validProductionValues()
+			values[tt.key] = tt.value
+
+			_, err := loadFromValues(values)
+			if err == nil {
+				t.Fatal("load returned nil error for unsafe production config")
+			}
+			if got := err.Error(); got != tt.wantError {
+				t.Fatalf("load error = %q, want %q", got, tt.wantError)
+			}
+			if tt.value != "" && strings.Contains(err.Error(), tt.value) {
+				t.Fatalf("load error leaked %s value", tt.key)
+			}
+		})
 	}
 }
 
@@ -481,6 +524,19 @@ func TestLoadAllowsPlaceholderSecretsOutsideProduction(t *testing.T) {
 	}
 	if cfg.Provider.APIKeyEncryptionKey != defaultAPIKeyEncryptionKey {
 		t.Fatal("Provider.APIKeyEncryptionKey default was not preserved outside production")
+	}
+}
+
+func TestLoadAllowsLocalCORSOriginOutsideProduction(t *testing.T) {
+	cfg, err := loadFromValues(map[string]string{
+		"APP_ENV":              "local",
+		"CORS_ALLOWED_ORIGINS": "http://localhost:8080",
+	})
+	if err != nil {
+		t.Fatalf("load returned error outside production: %v", err)
+	}
+	if got := cfg.API.CORSAllowedOrigins; len(got) != 1 || got[0] != "http://localhost:8080" {
+		t.Fatalf("API.CORSAllowedOrigins = %#v, want local HTTP origin", got)
 	}
 }
 
@@ -749,4 +805,25 @@ func TestLoadRejectsSameSiteNoneWithoutSecureCookie(t *testing.T) {
 	if err == nil {
 		t.Fatal("load returned nil error for SameSite=None without Secure")
 	}
+}
+
+func validProductionValues() map[string]string {
+	return map[string]string{
+		"APP_ENV":                "production",
+		"JWT_SIGNING_SECRET":     "0123456789abcdef0123456789abcdef",
+		"API_KEY_ENCRYPTION_KEY": "abcdef0123456789abcdef0123456789",
+		"MYSQL_PASSWORD":         "prod-mysql-password",
+		"REDIS_PASSWORD":         "prod-redis-password",
+		"MINIO_ACCESS_KEY":       "prod-minio-access",
+		"MINIO_SECRET_KEY":       "prod-minio-secret",
+		"COOKIE_SECURE":          "true",
+		"CORS_ALLOWED_ORIGINS":   "https://studio.example.com",
+	}
+}
+
+func loadFromValues(values map[string]string) (Config, error) {
+	return load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
 }
