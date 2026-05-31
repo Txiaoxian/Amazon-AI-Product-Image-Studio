@@ -72,12 +72,19 @@ interface StorageQuotaDraft {
   maxBytes: string
 }
 
+interface LogRetentionDraft {
+  operationLogRetentionDays: string
+  apiCallLogRetentionDays: string
+  taskEventRetentionDays: string
+}
+
 interface SystemSettingsDraft {
   uploadPolicy: UploadPolicyDraft
   taskDefaults: TaskDefaultsDraft
   taskConcurrency: TaskConcurrencyDraft
   storageRetention: StorageRetentionDraft
   storageQuota: StorageQuotaDraft
+  logRetention: LogRetentionDraft
 }
 
 type SystemSettingsGroup = keyof SystemSettingsDraft
@@ -1011,6 +1018,45 @@ function SystemSettingsView({
           <ReadOnlyField label="已用存储字节数" value={settings ? formatNumber(settings.storageQuota.usedBytes) : '0'} />
         </div>
       </SettingsGroupForm>
+
+      <SettingsGroupForm
+        disabled={isDisabled}
+        group="logRetention"
+        isSaving={savingGroup === 'logRetention'}
+        onSubmit={onSubmit}
+        title="Log retention"
+        submitLabel="保存日志保留期"
+      >
+        <div>
+          <p className="mt-1 text-xs text-ink-400">每项留空都会设置为 null，并禁用对应日志类别的自动清理。</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <NumberField
+            label="操作日志保留天数"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, operationLogRetentionDays: value } }))
+            }
+            value={draft.logRetention.operationLogRetentionDays}
+          />
+          <NumberField
+            label="API 调用日志保留天数"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, apiCallLogRetentionDays: value } }))
+            }
+            value={draft.logRetention.apiCallLogRetentionDays}
+          />
+          <NumberField
+            label="任务事件保留天数"
+            min={1}
+            onChange={(value) =>
+              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, taskEventRetentionDays: value } }))
+            }
+            value={draft.logRetention.taskEventRetentionDays}
+          />
+        </div>
+      </SettingsGroupForm>
     </section>
   )
 }
@@ -1314,6 +1360,11 @@ function emptySystemSettingsDraft(): SystemSettingsDraft {
     storageQuota: {
       maxBytes: '',
     },
+    logRetention: {
+      operationLogRetentionDays: '',
+      apiCallLogRetentionDays: '',
+      taskEventRetentionDays: '',
+    },
   }
 }
 
@@ -1341,6 +1392,11 @@ function draftFromSettings(settings: SystemSettings): SystemSettingsDraft {
     storageQuota: {
       maxBytes: settings.storageQuota.maxBytes === null ? '' : String(settings.storageQuota.maxBytes),
     },
+    logRetention: {
+      operationLogRetentionDays: settings.logRetention.operationLogRetentionDays === null ? '' : String(settings.logRetention.operationLogRetentionDays),
+      apiCallLogRetentionDays: settings.logRetention.apiCallLogRetentionDays === null ? '' : String(settings.logRetention.apiCallLogRetentionDays),
+      taskEventRetentionDays: settings.logRetention.taskEventRetentionDays === null ? '' : String(settings.logRetention.taskEventRetentionDays),
+    },
   }
 }
 
@@ -1364,6 +1420,15 @@ function parseSettingsGroupPatch(group: SystemSettingsGroup, draft: SystemSettin
     return {
       storageRetention: {
         deletedAssetRetentionDays: parseNullablePositiveInteger(draft.storageRetention.deletedAssetRetentionDays, '删除资产保留天数'),
+      },
+    }
+  }
+  if (group === 'logRetention') {
+    return {
+      logRetention: {
+        operationLogRetentionDays: parseNullablePositiveInteger(draft.logRetention.operationLogRetentionDays, '操作日志保留天数'),
+        apiCallLogRetentionDays: parseNullablePositiveInteger(draft.logRetention.apiCallLogRetentionDays, 'API 调用日志保留天数'),
+        taskEventRetentionDays: parseNullablePositiveInteger(draft.logRetention.taskEventRetentionDays, '任务事件保留天数'),
       },
     }
   }
@@ -1437,6 +1502,9 @@ function settingsGroupLabel(group: SystemSettingsGroup): string {
   }
   if (group === 'storageRetention') {
     return '删除资产保留期'
+  }
+  if (group === 'logRetention') {
+    return '日志保留期'
   }
   return '存储配额'
 }
