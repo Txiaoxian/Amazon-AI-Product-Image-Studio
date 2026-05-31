@@ -57,30 +57,105 @@ set -euo pipefail
 printf 'curl %s\n' "$*" >>"$FAKE_LOG"
 
 out=""
+cookie_jar=""
+method="GET"
+url=""
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     -o)
       out="$2"
       shift 2
       ;;
-    -w|-X|-H|-b|-c|--max-time|--data-binary)
+    -c)
+      cookie_jar="$2"
+      shift 2
+      ;;
+    -X)
+      method="$2"
+      shift 2
+      ;;
+    -w|-H|-b|--max-time|--data-binary)
       shift 2
       ;;
     -k|-s|-S|-N|-ksS)
       shift
       ;;
     *)
+      url="$1"
       shift
       ;;
   esac
 done
 
-if [[ -n "$out" ]]; then
-  printf '{"error":{"code":"INTERNAL_ERROR","message":"sk-fake-provider-secret Authorization Cookie JWT base64 tenants/object-key"}}' >"$out"
-fi
-printf '500'
+fail_response() {
+  if [[ -n "$out" ]]; then
+    printf '{"error":{"code":"INTERNAL_ERROR","message":"sk-fake-provider-secret Authorization Cookie JWT base64 tenants/object-key"}}' >"$out"
+  fi
+  printf '500'
+  exit 0
+}
+
+case "$url" in
+  */healthz)
+    if [[ "${FAKE_FAIL_AT:-health}" == "health" ]]; then
+      fail_response
+    fi
+    printf '{"data":{"status":"ok"}}' >"$out"
+    printf '200'
+    ;;
+  */auth/login)
+    printf '{"data":{"user":{"id":"user-fixture"}}}' >"$out"
+    printf '#HttpOnly_127.0.0.1\tFALSE\t/\tFALSE\t0\tstudio_csrf\tcsrf-fixture\n' >"$cookie_jar"
+    printf '200'
+    ;;
+  */providers)
+    if [[ "${FAKE_FAIL_AT:-}" == "provider" ]]; then
+      fail_response
+    fi
+    printf '{"data":{"id":"provider-fixture"}}' >"$out"
+    printf '200'
+    ;;
+  */models)
+    if [[ "${FAKE_FAIL_AT:-}" == "model" ]]; then
+      fail_response
+    fi
+    printf '{"data":{"id":"model-fixture"}}' >"$out"
+    printf '200'
+    ;;
+  */projects)
+    printf '{"data":{"id":"project-fixture"}}' >"$out"
+    printf '200'
+    ;;
+  */projects/project-fixture/tasks)
+    if [[ "${FAKE_FAIL_AT:-}" == "task" ]]; then
+      fail_response
+    fi
+    printf '{"data":{"id":"task-fixture"}}' >"$out"
+    printf '200'
+    ;;
+  */events/tasks?taskId=task-fixture)
+    if [[ "${FAKE_FAIL_AT:-}" == "sse" ]]; then
+      exit 7
+    fi
+    printf 'event: task.completed\n'
+    ;;
+  */tasks/task-fixture)
+    printf '{"data":{"status":"SUCCEEDED","outputAssetIds":["asset-fixture"]}}' >"$out"
+    printf '200'
+    ;;
+  *)
+    echo "unexpected fake curl request: method=$method url=$url" >&2
+    exit 9
+    ;;
+esac
 EOF
   chmod +x "$bindir/curl"
+
+  cat >"$bindir/mktemp" <<EOF
+#!$REAL_BASH
+exec /usr/bin/mktemp "\${TMPDIR%/}/real-provider-smoke.XXXXXX"
+EOF
+  chmod +x "$bindir/mktemp"
 
   cat >"$bindir/python3" <<EOF
 #!$REAL_BASH
@@ -93,6 +168,21 @@ EOF
 exec /usr/bin/dirname "\$@"
 EOF
   chmod +x "$bindir/dirname"
+}
+
+assert_runtime_tmp_clean() {
+  local runtime_tmp="$1"
+  if find "$runtime_tmp" -type f -print -quit | grep -q .; then
+    echo "[fail] expected runtime temp files to be cleaned after failure" >&2
+    find "$runtime_tmp" -type f -print | sed 's/^/[debug] residual file: /' >&2
+    exit 1
+  fi
+}
+
+assert_secret_not_leaked() {
+  local output="$1"
+  assert_not_contains "$output" "sk-fake-provider-secret"
+  assert_not_contains "$output" "correct-horse-battery-staple"
 }
 
 run_case() {
@@ -138,6 +228,19 @@ run_case() {
   echo "[ok] ran $name"
 }
 
+run_confirmed_failure_case() {
+  local name="$1"
+  local fail_at="$2"
+  run_case "$name" \
+    FAKE_FAIL_AT="$fail_at" \
+    REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS \
+    SMOKE_ADMIN_EMAIL=admin@example.com \
+    SMOKE_ADMIN_PASSWORD=correct-horse-battery-staple \
+    SMOKE_PROVIDER_API_KEY=sk-fake-provider-secret \
+    SMOKE_MODEL_NAME=fake-image-model \
+    --run
+}
+
 test_help_is_safe() {
   run_case "help is safe" --help
   assert_status 0 "$CASE_STATUS" "help"
@@ -168,7 +271,7 @@ test_run_requires_confirmation_before_any_api_call() {
     --run
   assert_nonzero_status "$CASE_STATUS" "missing confirmation"
   assert_contains "$CASE_OUTPUT" "refusing --run without REAL_PROVIDER_SMOKE_CONFIRM"
-  assert_not_contains "$CASE_OUTPUT" "sk-fake-provider-secret"
+  assert_secret_not_leaked "$CASE_OUTPUT"
   assert_not_contains "$CASE_LOG" "curl "
 }
 
@@ -182,31 +285,54 @@ test_run_reports_missing_env_without_secret_values() {
   assert_contains "$CASE_OUTPUT" "SMOKE_ADMIN_EMAIL"
   assert_contains "$CASE_OUTPUT" "SMOKE_ADMIN_PASSWORD"
   assert_contains "$CASE_OUTPUT" "SMOKE_MODEL_NAME"
-  assert_not_contains "$CASE_OUTPUT" "sk-fake-provider-secret"
+  assert_secret_not_leaked "$CASE_OUTPUT"
   assert_not_contains "$CASE_LOG" "curl "
 }
 
 test_run_failure_is_sanitized() {
-  run_case "run failure is sanitized" \
-    REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS \
-    SMOKE_ADMIN_EMAIL=admin@example.com \
-    SMOKE_ADMIN_PASSWORD=correct-horse-battery-staple \
-    SMOKE_PROVIDER_API_KEY=sk-fake-provider-secret \
-    SMOKE_MODEL_NAME=fake-image-model \
-    --run
+  run_confirmed_failure_case "run failure is sanitized" health
   assert_nonzero_status "$CASE_STATUS" "fake API failure"
   assert_contains "$CASE_LOG" "curl "
   assert_contains "$CASE_OUTPUT" "API request failed during GET /healthz with HTTP 500"
-  assert_not_contains "$CASE_OUTPUT" "sk-fake-provider-secret"
+  assert_secret_not_leaked "$CASE_OUTPUT"
   assert_not_contains "$CASE_OUTPUT" "Authorization"
   assert_not_contains "$CASE_OUTPUT" "Cookie"
   assert_not_contains "$CASE_OUTPUT" "JWT"
   assert_not_contains "$CASE_OUTPUT" "base64"
   assert_not_contains "$CASE_OUTPUT" "tenants/object-key"
-  if grep -R "sk-fake-provider-secret" "$CASE_RUNTIME_TMP" >/dev/null 2>&1; then
-    echo "[fail] expected runtime temp files to be cleaned after failure" >&2
-    exit 1
-  fi
+  assert_runtime_tmp_clean "$CASE_RUNTIME_TMP"
+}
+
+test_provider_post_failure_cleans_temp_payload() {
+  run_confirmed_failure_case "Provider POST failure cleans temp payload" provider
+  assert_nonzero_status "$CASE_STATUS" "Provider POST failure"
+  assert_contains "$CASE_OUTPUT" "API request failed during POST /providers with HTTP 500"
+  assert_secret_not_leaked "$CASE_OUTPUT"
+  assert_runtime_tmp_clean "$CASE_RUNTIME_TMP"
+}
+
+test_model_post_failure_cleans_temp_payload() {
+  run_confirmed_failure_case "model POST failure cleans temp payload" model
+  assert_nonzero_status "$CASE_STATUS" "model POST failure"
+  assert_contains "$CASE_OUTPUT" "API request failed during POST /models with HTTP 500"
+  assert_secret_not_leaked "$CASE_OUTPUT"
+  assert_runtime_tmp_clean "$CASE_RUNTIME_TMP"
+}
+
+test_task_post_failure_cleans_temp_payload() {
+  run_confirmed_failure_case "task POST failure cleans temp payload" task
+  assert_nonzero_status "$CASE_STATUS" "task POST failure"
+  assert_contains "$CASE_OUTPUT" "API request failed during POST /projects/project-fixture/tasks with HTTP 500"
+  assert_secret_not_leaked "$CASE_OUTPUT"
+  assert_runtime_tmp_clean "$CASE_RUNTIME_TMP"
+}
+
+test_sse_failure_cleans_temp_payload() {
+  run_confirmed_failure_case "SSE failure cleans temp payload" sse
+  assert_nonzero_status "$CASE_STATUS" "SSE failure"
+  assert_contains "$CASE_OUTPUT" "SSE task stream failed"
+  assert_secret_not_leaked "$CASE_OUTPUT"
+  assert_runtime_tmp_clean "$CASE_RUNTIME_TMP"
 }
 
 test_run_rejects_direct_provider_api_base_before_any_api_call() {
@@ -220,7 +346,7 @@ test_run_rejects_direct_provider_api_base_before_any_api_call() {
     --run
   assert_nonzero_status "$CASE_STATUS" "direct Provider API base"
   assert_contains "$CASE_OUTPUT" "SMOKE_API_BASE_URL must point to this platform backend"
-  assert_not_contains "$CASE_OUTPUT" "sk-fake-provider-secret"
+  assert_secret_not_leaked "$CASE_OUTPUT"
   assert_not_contains "$CASE_LOG" "curl "
 }
 
@@ -230,6 +356,10 @@ test_dry_run_does_not_call_api
 test_run_requires_confirmation_before_any_api_call
 test_run_reports_missing_env_without_secret_values
 test_run_failure_is_sanitized
+test_provider_post_failure_cleans_temp_payload
+test_model_post_failure_cleans_temp_payload
+test_task_post_failure_cleans_temp_payload
+test_sse_failure_cleans_temp_payload
 test_run_rejects_direct_provider_api_base_before_any_api_call
 
 echo

@@ -78,10 +78,11 @@ cleanup() {
 trap cleanup EXIT
 
 tracked_mktemp() {
+  local variable_name="$1"
   local file
   file="$(mktemp)"
   TMP_FILES+=("$file")
-  printf '%s\n' "$file"
+  printf -v "$variable_name" '%s' "$file"
 }
 
 trim_api_base() {
@@ -265,15 +266,15 @@ api_request() {
 
 health_check() {
   local output
-  output="$(tracked_mktemp)"
+  tracked_mktemp output
   api_request GET "/healthz" "" "$output" 0
   rm -f "$output"
 }
 
 login_or_init() {
   local payload output status
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" login
   set +e
   status="$(curl -ksS -X POST -b "$COOKIE_JAR" -c "$COOKIE_JAR" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary "@$payload" -o "$output" -w "%{http_code}" --max-time 30 "$API_BASE/auth/login")"
@@ -296,8 +297,8 @@ login_or_init() {
   fi
   [[ -n "${SMOKE_TENANT_NAME:-}" ]] || fail "missing required env for init-admin: SMOKE_TENANT_NAME"
 
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" init_admin
   api_request POST "/auth/init-admin" "$payload" "$output" 0
   rm -f "$payload" "$output"
@@ -311,8 +312,8 @@ create_provider_model_project_task() {
   export SMOKE_PROJECT_NAME="${SMOKE_PROJECT_NAME_PREFIX:-codex-smoke-project}-$(date +%Y%m%d%H%M%S)"
   export SMOKE_MODEL_NAME_EFFECTIVE="${SMOKE_MODEL_NAME:-${SMOKE_PROVIDER_MODEL_NAME:-}}"
 
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" provider
   api_request POST "/providers" "$payload" "$output" 1
   export SMOKE_PROVIDER_ID
@@ -320,8 +321,8 @@ create_provider_model_project_task() {
   rm -f "$payload" "$output"
   log "created smoke Provider id=$SMOKE_PROVIDER_ID key=[REDACTED]"
 
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" model
   api_request POST "/models" "$payload" "$output" 1
   export SMOKE_MODEL_ID
@@ -329,8 +330,8 @@ create_provider_model_project_task() {
   rm -f "$payload" "$output"
   log "created smoke model id=$SMOKE_MODEL_ID"
 
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" project
   api_request POST "/projects" "$payload" "$output" 1
   export SMOKE_PROJECT_ID
@@ -338,8 +339,8 @@ create_provider_model_project_task() {
   rm -f "$payload" "$output"
   log "created smoke project id=$SMOKE_PROJECT_ID"
 
-  payload="$(tracked_mktemp)"
-  output="$(tracked_mktemp)"
+  tracked_mktemp payload
+  tracked_mktemp output
   write_json "$payload" task
   api_request POST "/projects/$SMOKE_PROJECT_ID/tasks" "$payload" "$output" 1
   export SMOKE_TASK_ID
@@ -350,7 +351,7 @@ create_provider_model_project_task() {
 
 watch_task_sse() {
   local sse_output
-  sse_output="$(tracked_mktemp)"
+  tracked_mktemp sse_output
   set +e
   curl -ksS -N -b "$COOKIE_JAR" -H "Accept: text/event-stream" --max-time "${SMOKE_TIMEOUT_SECONDS:-180}" "$API_BASE/events/tasks?taskId=$SMOKE_TASK_ID" >"$sse_output" 2>/dev/null
   local curl_status=$?
@@ -369,7 +370,7 @@ watch_task_sse() {
 
 verify_task_output() {
   local output status asset_count
-  output="$(tracked_mktemp)"
+  tracked_mktemp output
   api_request GET "/tasks/$SMOKE_TASK_ID" "" "$output" 0
   status="$(json_get "$output" data.status || true)"
   if [[ "$status" != "SUCCEEDED" ]]; then
@@ -423,7 +424,7 @@ run_smoke() {
   require_command curl
   require_command python3
   validate_api_base
-  COOKIE_JAR="$(tracked_mktemp)"
+  tracked_mktemp COOKIE_JAR
 
   log "starting real Provider smoke through platform backend only"
   log "target API base: $API_BASE"
