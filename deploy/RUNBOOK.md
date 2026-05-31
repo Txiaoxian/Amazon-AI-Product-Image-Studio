@@ -50,7 +50,9 @@ Required groups:
 
 For production, set `APP_ENV=production`, `COOKIE_SECURE=true`, restrict
 `CORS_ALLOWED_ORIGINS` to the public frontend origin, and bind public traffic
-through a TLS-terminating reverse proxy.
+through a TLS-terminating reverse proxy. Keep `FRONTEND_BIND_HOST=127.0.0.1`
+and `BACKEND_API_BIND_HOST=127.0.0.1`; neither Compose port is a public
+listener.
 
 ## Production Secrets
 
@@ -91,6 +93,55 @@ Check status:
 docker compose -f deploy/docker-compose.yml ps
 docker compose -f deploy/docker-compose.yml logs --tail=100 backend-api backend-worker frontend
 ```
+
+## External TLS Reverse Proxy
+
+Do not open public traffic until the host-level TLS reverse proxy is enabled
+and validated. Use
+[`nginx/amazon-ai-product-image-studio.conf.template`](./nginx/amazon-ai-product-image-studio.conf.template)
+as the auditable production template.
+
+The host proxy:
+
+- redirects HTTP port `80` to HTTPS;
+- terminates TLS on port `443`;
+- adds HSTS, `X-Content-Type-Options`, `X-Frame-Options`, and
+  `Referrer-Policy`;
+- proxies `/`, `/api/`, and `/api/v1/events/` only to the loopback-bound
+  frontend at `127.0.0.1:8080`;
+- never proxies the public edge directly to `backend-api`, OpenAI, Gemini, or
+  a relay.
+
+Certificate issuance and renewal are operator or platform responsibilities.
+The repository template contains placeholder certificate and private-key
+paths only. Do not commit real certificates or private keys.
+
+To prepare the host config:
+
+```bash
+cp deploy/nginx/amazon-ai-product-image-studio.conf.template \
+  /etc/nginx/conf.d/amazon-ai-product-image-studio.conf
+# Replace __PUBLIC_HOST__ and update operator-managed TLS paths if needed.
+bash scripts/tls-reverse-proxy-check.sh \
+  --config /etc/nginx/conf.d/amazon-ai-product-image-studio.conf
+nginx -t
+# Reload Nginx only after nginx -t succeeds.
+```
+
+Use the platform-approved reload command after `nginx -t`, such as
+`systemctl reload nginx`. Then validate the HTTPS response headers, HTTP
+redirect, and SSE route before opening traffic:
+
+```bash
+curl -fsSI http://studio.example.com/
+curl -fsSI https://studio.example.com/
+curl -N --max-time 10 https://studio.example.com/api/v1/events/tasks
+```
+
+The unauthenticated SSE request may return an authorization error; it still
+checks edge routing. Before Go/No-Go, use an authenticated browser session or
+restricted cookie jar to confirm task events arrive incrementally without
+batching.
 
 ## Init Admin
 
@@ -136,13 +187,15 @@ The frontend image uses `frontend/nginx.conf`:
 - SSE buffering is disabled with `proxy_buffering off` and
   `X-Accel-Buffering: no`.
 
-If adding an external reverse proxy, preserve streaming behavior:
+The external TLS reverse proxy template preserves streaming behavior:
 
 - Use HTTP/1.1 upstream connections.
+- Clear the upstream `Connection` header.
 - Disable response buffering for `/api/v1/events/*`.
+- Disable proxy cache for `/api/v1/events/*`.
 - Set long read timeouts for SSE.
 - Forward `Host`, `X-Real-IP`, `X-Forwarded-For`, and
-  `X-Forwarded-Proto`.
+  `X-Forwarded-Proto=https`.
 
 ## Release Validation
 
@@ -150,6 +203,14 @@ Run the repeatable release gate:
 
 ```bash
 bash scripts/deploy-release-validation.sh
+```
+
+The default gate includes the host TLS reverse proxy template static check.
+Run it directly against an installed host config before reloading Nginx:
+
+```bash
+bash scripts/tls-reverse-proxy-check.sh \
+  --config /etc/nginx/conf.d/amazon-ai-product-image-studio.conf
 ```
 
 For a live Compose smoke test:

@@ -17,6 +17,7 @@ Usage: bash scripts/deploy-release-validation.sh [--up] [--down] [--help]
 Runs the P15 deployment release validation:
   - docker compose config validation
   - frontend nginx /api/ and SSE proxy safety checks
+  - host TLS reverse proxy template static checks
   - backend-api, backend-worker, and frontend image builds
   - focused security regression script
   - optional Compose up, container health checks, frontend /api/ proxy checks
@@ -293,6 +294,7 @@ fi
 
 run_quiet compose config
 check_frontend_proxy_config
+run bash "$ROOT_DIR/scripts/tls-reverse-proxy-check.sh"
 run compose build backend-api backend-worker frontend
 run bash "$ROOT_DIR/scripts/security-regression.sh"
 
