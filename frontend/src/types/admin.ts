@@ -134,12 +134,19 @@ export interface StorageQuotaSettings {
   usedBytes: number
 }
 
+export interface LogRetentionSettings {
+  operationLogRetentionDays: number | null
+  apiCallLogRetentionDays: number | null
+  taskEventRetentionDays: number | null
+}
+
 export interface SystemSettings {
   uploadPolicy: UploadPolicySettings
   taskDefaults: TaskDefaultsSettings
   taskConcurrency: TaskConcurrencySettings
   storageRetention: StorageRetentionSettings
   storageQuota: StorageQuotaSettings
+  logRetention: LogRetentionSettings
 }
 
 export interface UpdateSystemSettingsRequest {
@@ -148,6 +155,7 @@ export interface UpdateSystemSettingsRequest {
   taskConcurrency?: Partial<TaskConcurrencySettings>
   storageRetention?: StorageRetentionSettings
   storageQuota?: Pick<StorageQuotaSettings, 'maxBytes'>
+  logRetention?: LogRetentionSettings
 }
 
 export type UsageSummaryPage = ApiPage<UsageSummary>

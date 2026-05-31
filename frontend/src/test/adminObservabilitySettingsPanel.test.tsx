@@ -140,6 +140,11 @@ const systemSettings = {
     maxBytes: 1073741824,
     usedBytes: 1048576,
   },
+  logRetention: {
+    operationLogRetentionDays: 90,
+    apiCallLogRetentionDays: 60,
+    taskEventRetentionDays: null,
+  },
 }
 
 function page<TRecord>(records: TRecord[], options: Partial<Omit<ApiPage<TRecord>, 'records'>> = {}): ApiPage<TRecord> {
@@ -703,10 +708,12 @@ describe('AdminObservabilitySettingsPanel', () => {
         defaultModelId: 'legacy_root_model',
         tenantConcurrency: 2,
         storageQuotaBytes: 1000,
-        logRetention: { days: 7 },
         logRetentionDays: 7,
         orphanCleanup: { enabled: true },
         manualCleanup: { enabled: true },
+        rawMinioBucket: 'product-originals',
+        rawMinioObjectKey: 'tenant_1/raw.png',
+        rawMinioUrl: 'http://minio.invalid/product-originals/tenant_1/raw.png',
         allowedMimeTypes: ['image/svg+xml'],
       } as unknown as typeof systemSettings),
       updateSystemSettings: vi.fn().mockRejectedValueOnce(validationError).mockResolvedValueOnce(updatedSettings),
@@ -738,6 +745,9 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(screen.getByLabelText('最大存储字节数')).toHaveValue(1073741824)
     expect(screen.getByLabelText('已用存储字节数')).toHaveValue('1,048,576')
     expect(screen.getByLabelText('已用存储字节数')).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('操作日志保留天数')).toHaveValue(90)
+    expect(screen.getByLabelText('API 调用日志保留天数')).toHaveValue(60)
+    expect(screen.getByLabelText('任务事件保留天数')).toHaveValue(null)
     expect(screen.queryByText('defaultProviderId')).not.toBeInTheDocument()
     expect(screen.queryByText('defaultModelId')).not.toBeInTheDocument()
     expect(screen.queryByText('tenantConcurrency')).not.toBeInTheDocument()
@@ -745,6 +755,12 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(screen.queryByText('logRetentionDays')).not.toBeInTheDocument()
     expect(screen.queryByText('orphanCleanup')).not.toBeInTheDocument()
     expect(screen.queryByText('manualCleanup')).not.toBeInTheDocument()
+    expect(screen.queryByText('rawMinioBucket')).not.toBeInTheDocument()
+    expect(screen.queryByText('rawMinioObjectKey')).not.toBeInTheDocument()
+    expect(screen.queryByText('rawMinioUrl')).not.toBeInTheDocument()
+    expect(screen.queryByText('product-originals')).not.toBeInTheDocument()
+    expect(screen.queryByText('tenant_1/raw.png')).not.toBeInTheDocument()
+    expect(screen.queryByText('http://minio.invalid/product-originals/tenant_1/raw.png')).not.toBeInTheDocument()
     expect(screen.queryByText('allowedMimeTypes')).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('最大宽度'))
@@ -780,6 +796,7 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('logRetentionDays')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('orphanCleanup')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('manualCleanup')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('rawMinio')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('allowedMimeTypes')
     expect(getBrowserStorage('local').length).toBe(0)
     expect(getBrowserStorage('session').length).toBe(0)
@@ -1028,5 +1045,122 @@ describe('AdminObservabilitySettingsPanel', () => {
     )
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('usedBytes')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('storageQuotaBytes')
+  })
+
+  it('PATCHes only logRetention settings and clears nullable retention values', async () => {
+    const user = userEvent.setup()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          logRetention: {
+            operationLogRetentionDays: 120,
+            apiCallLogRetentionDays: 30,
+            taskEventRetentionDays: 14,
+          },
+        })
+        .mockResolvedValueOnce({
+          ...systemSettings,
+          logRetention: {
+            operationLogRetentionDays: null,
+            apiCallLogRetentionDays: null,
+            taskEventRetentionDays: null,
+          },
+        }),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.clear(await screen.findByLabelText('操作日志保留天数'))
+    await user.type(screen.getByLabelText('操作日志保留天数'), '120')
+    await user.clear(screen.getByLabelText('API 调用日志保留天数'))
+    await user.type(screen.getByLabelText('API 调用日志保留天数'), '30')
+    await user.type(screen.getByLabelText('任务事件保留天数'), '14')
+    await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
+
+    expect(await screen.findByText('日志保留期已更新。')).toBeInTheDocument()
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      1,
+      {
+        logRetention: {
+          operationLogRetentionDays: 120,
+          apiCallLogRetentionDays: 30,
+          taskEventRetentionDays: 14,
+        },
+      },
+      'csrf_memory_only',
+    )
+
+    await user.clear(screen.getByLabelText('操作日志保留天数'))
+    await user.clear(screen.getByLabelText('API 调用日志保留天数'))
+    await user.clear(screen.getByLabelText('任务事件保留天数'))
+    await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
+
+    expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
+      2,
+      {
+        logRetention: {
+          operationLogRetentionDays: null,
+          apiCallLogRetentionDays: null,
+          taskEventRetentionDays: null,
+        },
+      },
+      'csrf_memory_only',
+    )
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('uploadPolicy')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('storageRetention')
+    expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('storageQuota')
+  })
+
+  it('rejects invalid logRetention input without requesting and preserves drafts after backend errors', async () => {
+    const user = userEvent.setup()
+    const validationError = new ApiClientError({
+      code: 'VALIDATION_ERROR',
+      message: 'Invalid request.',
+      status: 422,
+    })
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi.fn().mockRejectedValue(validationError),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings
+        canReadAudit={false}
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.clear(await screen.findByLabelText('操作日志保留天数'))
+    await user.type(screen.getByLabelText('操作日志保留天数'), '1.5')
+    await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
+
+    expect(screen.getByLabelText('操作日志保留天数')).toHaveValue(1.5)
+    expect(adminApi.updateSystemSettings).not.toHaveBeenCalled()
+
+    await user.clear(screen.getByLabelText('操作日志保留天数'))
+    await user.type(screen.getByLabelText('操作日志保留天数'), '120')
+    await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
+
+    expect(await screen.findByText('表单内容未通过校验：Invalid request.')).toBeInTheDocument()
+    expect(screen.getByLabelText('操作日志保留天数')).toHaveValue(120)
+    expect(screen.getByLabelText('API 调用日志保留天数')).toHaveValue(60)
+    expect(screen.getByLabelText('任务事件保留天数')).toHaveValue(null)
+    expect(adminApi.updateSystemSettings).toHaveBeenCalledTimes(1)
   })
 })
