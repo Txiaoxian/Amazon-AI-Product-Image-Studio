@@ -188,6 +188,48 @@ curl -fsS http://127.0.0.1:8081/api/v1/healthz
 curl -fsS http://127.0.0.1:8080/api/v1/healthz
 ```
 
+## Production Dry-Run
+
+Before a Go/No-Go review, run the sanitized operator rehearsal:
+
+```bash
+bash scripts/prod-dry-run.sh
+```
+
+The default mode runs release validation, focused security regression, the
+real Provider smoke guardrail dry-run, and Compose config validation. It does
+not start persistent services or call a real AI Provider.
+
+For an explicit production environment acceptance check, point the script at
+the existing restricted runtime env file outside the repository:
+
+```bash
+bash scripts/prod-dry-run.sh \
+  --production-env-file /secure/runtime/production.env
+```
+
+The preflight reads but never sources the file and never prints values. It
+fails closed unless production mode, secure cookies, restricted non-localhost
+HTTPS CORS origins, and required non-placeholder secrets are present.
+
+For a live Compose rehearsal with cleanup:
+
+```bash
+bash scripts/prod-dry-run.sh --live-compose
+docker compose -f deploy/docker-compose.yml ps -a
+docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true
+```
+
+`--live-compose` delegates to `deploy-release-validation.sh --up --down`, so
+the existing scoped cleanup trap removes this project's Compose containers and
+volumes even when live validation fails. Do not replace it with broad Docker
+prune commands.
+
+Use [PRODUCTION_DRY_RUN_TEMPLATE.md](./PRODUCTION_DRY_RUN_TEMPLATE.md) for the
+R18 review evidence. Record sanitized stage results only. Do not attach env
+files, dumps, secrets, Provider responses, image outputs, bucket names, object
+keys, signed URLs, or service credentials.
+
 ## Optional Real Provider Smoke
 
 The real Provider smoke is a manual, opt-in check. It is not part of default
@@ -212,6 +254,18 @@ printf "\n"
 REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS \
 bash scripts/real-provider-smoke.sh --run
 ```
+
+To include that same optional check in the production dry-run summary, keep
+using the hidden-input setup above and explicitly opt in:
+
+```bash
+REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS \
+bash scripts/prod-dry-run.sh --real-provider-smoke
+```
+
+This only delegates to `real-provider-smoke.sh --run`; there is no second
+Provider call path. Skip it unless an operator has approved the billable
+backend-mediated smoke.
 
 Do not place real keys in committed files, shell scripts, screenshots, or
 shared logs. The script only calls this platform's `/api/v1` backend, creates
