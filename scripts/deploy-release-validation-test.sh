@@ -190,6 +190,10 @@ if [[ "\${1:-}" == "$ROOT_DIR/scripts/security-regression.sh" ]]; then
   printf 'security-regression\\n' >>"\$FAKE_LOG"
   exit 0
 fi
+if [[ "\${1:-}" == "$ROOT_DIR/scripts/tls-reverse-proxy-check.sh" ]]; then
+  printf 'tls-reverse-proxy-check\\n' >>"\$FAKE_LOG"
+  exit 0
+fi
 exec "$REAL_BASH" "\$@"
 EOF
   chmod +x "$bindir/bash"
@@ -252,6 +256,7 @@ test_default_mode_does_not_start_or_cleanup() {
   run_case "default mode does not start or cleanup"
   assert_status 0 "$CASE_STATUS" "default mode"
   assert_contains "$CASE_LOG" "docker compose config"
+  assert_contains "$CASE_LOG" "tls-reverse-proxy-check"
   assert_contains "$CASE_LOG" "docker compose build backend-api backend-worker frontend"
   assert_contains "$CASE_LOG" "security-regression"
   assert_not_contains "$CASE_LOG" "docker compose up -d"
@@ -263,6 +268,7 @@ test_down_only_runs_cleanup_only() {
   assert_status 0 "$CASE_STATUS" "--down"
   assert_contains "$CASE_LOG" "docker compose down -v --remove-orphans"
   assert_not_contains "$CASE_LOG" "docker compose config"
+  assert_not_contains "$CASE_LOG" "tls-reverse-proxy-check"
   assert_not_contains "$CASE_LOG" "docker compose build backend-api backend-worker frontend"
   assert_not_contains "$CASE_LOG" "security-regression"
   assert_not_contains "$CASE_LOG" "docker compose up -d"
