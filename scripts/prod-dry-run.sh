@@ -169,6 +169,11 @@ validate_production_env_file() {
   if [[ "$(get_env_value COOKIE_SECURE)" != "true" ]]; then
     fail "COOKIE_SECURE must be true"
   fi
+  if value="$(get_env_value CSRF_HEADER_NAME)"; then
+    if [[ "$value" != "X-CSRF-Token" ]]; then
+      fail "CSRF_HEADER_NAME must be X-CSRF-Token when set"
+    fi
+  fi
 
   local secret_keys=(
     MYSQL_ROOT_PASSWORD

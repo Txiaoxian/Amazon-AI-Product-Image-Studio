@@ -157,6 +157,12 @@ func TestCORSHandlesAllowedPreflight(t *testing.T) {
 	if response.Header().Get("Access-Control-Allow-Origin") != "https://studio.example.com" {
 		t.Fatalf("allowed origin header = %q, want https://studio.example.com", response.Header().Get("Access-Control-Allow-Origin"))
 	}
+	if got := response.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, X-Request-ID, X-CSRF-Token" {
+		t.Fatalf("allowed headers = %q, want fixed CSRF header", got)
+	}
+	if strings.Contains(response.Header().Get("Access-Control-Allow-Headers"), "X-Test-CSRF") {
+		t.Fatal("preflight unexpectedly exposed configurable CSRF header alias")
+	}
 }
 
 func TestAccessLogDoesNotLogSensitiveHeaders(t *testing.T) {

@@ -188,7 +188,7 @@ func TestLoadOverrides(t *testing.T) {
 		"COOKIE_SAME_SITE":                         "Strict",
 		"CSRF_ENABLED":                             "false",
 		"CSRF_COOKIE_NAME":                         "csrf_test",
-		"CSRF_HEADER_NAME":                         "X-Test-CSRF",
+		"CSRF_HEADER_NAME":                         "X-CSRF-Token",
 		"MINIO_ENDPOINT":                           "https://minio.example.com",
 		"MINIO_REGION":                             "us-west-2",
 		"MINIO_ACCESS_KEY":                         "local-access",
@@ -330,8 +330,8 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Auth.CSRF.CookieName != "csrf_test" {
 		t.Fatalf("Auth.CSRF.CookieName = %q, want csrf_test", cfg.Auth.CSRF.CookieName)
 	}
-	if cfg.Auth.CSRF.HeaderName != "X-Test-CSRF" {
-		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-Test-CSRF", cfg.Auth.CSRF.HeaderName)
+	if cfg.Auth.CSRF.HeaderName != "X-CSRF-Token" {
+		t.Fatalf("Auth.CSRF.HeaderName = %q, want X-CSRF-Token", cfg.Auth.CSRF.HeaderName)
 	}
 	if cfg.Storage.Endpoint != "https://minio.example.com" {
 		t.Fatalf("Storage.Endpoint = %q, want https://minio.example.com", cfg.Storage.Endpoint)
@@ -537,6 +537,30 @@ func TestLoadAllowsLocalCORSOriginOutsideProduction(t *testing.T) {
 	}
 	if got := cfg.API.CORSAllowedOrigins; len(got) != 1 || got[0] != "http://localhost:8080" {
 		t.Fatalf("API.CORSAllowedOrigins = %#v, want local HTTP origin", got)
+	}
+}
+
+func TestLoadRejectsNonDefaultCSRFHeaderName(t *testing.T) {
+	for _, configuredHeader := range []string{
+		"X-Test-CSRF",
+		"",
+		"x-csrf-token",
+		"X-CSRF-Token\nInjected",
+	} {
+		t.Run(configuredHeader, func(t *testing.T) {
+			_, err := loadFromValues(map[string]string{
+				"CSRF_HEADER_NAME": configuredHeader,
+			})
+			if err == nil {
+				t.Fatal("load returned nil error for non-default CSRF header name")
+			}
+			if got := err.Error(); got != "invalid CSRF_HEADER_NAME: must be X-CSRF-Token" {
+				t.Fatalf("load error = %q", got)
+			}
+			if configuredHeader != "" && strings.Contains(err.Error(), configuredHeader) {
+				t.Fatal("load error leaked the configured CSRF header name")
+			}
+		})
 	}
 }
 

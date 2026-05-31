@@ -64,6 +64,12 @@ func TestAPIStartupRejectsUnsafeProductionConfig(t *testing.T) {
 			value:            "http://studio.example.com",
 			wantErrorMessage: "invalid CORS_ALLOWED_ORIGINS: only https origins are allowed in production",
 		},
+		{
+			name:             "non-default CSRF header",
+			key:              "CSRF_HEADER_NAME",
+			value:            "X-Test-CSRF",
+			wantErrorMessage: "invalid CSRF_HEADER_NAME: must be X-CSRF-Token",
+		},
 	}
 
 	for _, tt := range tests {
