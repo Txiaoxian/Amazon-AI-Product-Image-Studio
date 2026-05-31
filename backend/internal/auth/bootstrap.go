@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -88,6 +89,33 @@ var builtInRoles = []builtInRole{
 			"task:read",
 		},
 	},
+}
+
+func ReconcileBuiltInRoles(ctx context.Context, db *gorm.DB) error {
+	if db == nil {
+		return database.ErrNilDB
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var tenants []database.Tenant
+	if err := db.WithContext(ctx).Select("id").Order("id ASC").Find(&tenants).Error; err != nil {
+		return fmt.Errorf("list tenants for built-in role reconciliation: %w", err)
+	}
+
+	now := time.Now().UTC()
+	service := &Service{}
+	for _, tenant := range tenants {
+		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			_, err := service.seedBuiltInRoles(ctx, tx, tenant.ID, now)
+			return err
+		}); err != nil {
+			return fmt.Errorf("reconcile tenant built-in roles: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) seedBuiltInRoles(ctx context.Context, tx *gorm.DB, tenantID string, now time.Time) (map[string]database.Role, error) {
