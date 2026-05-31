@@ -64,8 +64,10 @@ Generate unique high-entropy values per environment for:
 - `API_KEY_ENCRYPTION_KEY`.
 
 `API_KEY_ENCRYPTION_KEY` must be a valid 32-byte key encoded as expected by the
-backend configuration. When rotating it, also change
-`API_KEY_ENCRYPTION_KEY_ID` and follow the application key-rotation procedure.
+backend configuration. The current application has one active encryption key
+and does not yet ship an in-place Provider-key re-encryption workflow. Do not
+rotate this key on an environment with stored Provider credentials until an
+approved migration procedure has been implemented and rehearsed.
 
 ## Startup Order
 

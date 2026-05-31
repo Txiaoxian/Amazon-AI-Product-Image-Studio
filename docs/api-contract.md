@@ -331,7 +331,7 @@ P14 Provider lifecycle policy:
 - The conflict response uses `PROVIDER_HAS_ENABLED_MODELS` and must not leak model names, Provider secrets, cross-tenant identifiers, Authorization headers, Cookies, or raw Provider payloads.
 - Provider disable may succeed when linked same-tenant models are already disabled; it does not cascade-delete or cascade-disable models.
 - Model create, model Provider migration, and model enable must reject disabled, deleted, or cross-tenant Providers. Failed writes must not record successful `provider.*` or `model.*` operation logs.
-- Current P14 implementation status: Provider/model lifecycle integrity is implemented and merged. Same-Provider `model_name` uniqueness remains deferred because runtime task execution uses stable `modelId` references.
+- Current P18 implementation status: Provider/model lifecycle integrity is implemented and merged. Provider/model/default-setting writes use stronger row locking, and model create/update paths reject duplicate same-tenant same-Provider non-deleted `model_name` values without a destructive unique-index migration.
 
 ## Model APIs
 
@@ -365,9 +365,9 @@ Current P6 model backend implementation status:
 - Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
-- Current P7 task execution uses stable `modelId` references, so `(tenant_id, provider_id, model_name)` uniqueness is not required by the runtime path. A later admin/data-integrity decision may still tighten that invariant.
+- Current P7 task execution uses stable `modelId` references. P18 nevertheless tightens admin/data integrity by rejecting duplicate `(tenant_id, provider_id, model_name)` values for non-deleted models in write paths.
 - P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first.
-- P14 tightens model write behavior: create/update/enable must reject disabled, deleted, or cross-tenant Providers; task defaults loaded from persisted settings must also fail closed when the referenced Provider/model is no longer enabled and same-tenant. Same-Provider `model_name` uniqueness remains deferred.
+- P14 tightens model write behavior: create/update/enable must reject disabled, deleted, or cross-tenant Providers; task defaults loaded from persisted settings must also fail closed when the referenced Provider/model is no longer enabled and same-tenant. P18 adds row-lock serialization and rejects duplicate same-Provider non-deleted `model_name` values in write paths.
 
 Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
 

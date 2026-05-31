@@ -56,7 +56,7 @@ Current P6 model capability result:
 - Model records are tenant-scoped, reference a Provider in the same tenant, and expose generation/edit capabilities, multi-reference support, `n` support, max output count, supported sizes, supported qualities, supported output formats, pricing metadata, and enabled/disabled state.
 - Capability and pricing JSON are validated before persistence.
 - P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
-- Current P7 runtime uses stable `modelId` references, so same-Provider `model_name` uniqueness was not required for execution. P14 keeps model-name uniqueness deferred and strengthens Provider/model lifecycle behavior.
+- Current P7 runtime uses stable `modelId` references. P18 strengthens control-plane integrity by serializing Provider/model/default-setting writes and rejecting duplicate same-tenant same-Provider non-deleted `model_name` values in model write paths.
 - P14 Provider/model lifecycle policy is implemented and merged: Provider deletion is blocked while any non-deleted same-tenant model still references the Provider; Provider disable is blocked while enabled linked models exist; model create/update/enable rejects disabled, deleted, or cross-tenant Providers; soft-deleted models do not block Provider deletion.
 
 Current P6 frontend management result:
