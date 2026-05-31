@@ -270,7 +270,7 @@ func load(lookup lookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if err := validateProductionSecrets(appEnv, auth.JWTSigningSecret, provider.APIKeyEncryptionKey); err != nil {
+	if err := validateProductionConfig(appEnv, auth, provider, corsAllowedOrigins, lookup); err != nil {
 		return Config{}, err
 	}
 
@@ -279,7 +279,7 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
-	return Config{
+	cfg := Config{
 		AppEnv:   appEnv,
 		LogLevel: logLevel,
 		API: APIConfig{
@@ -304,7 +304,8 @@ func load(lookup lookupFunc) (Config, error) {
 		Upload:   upload,
 		Provider: provider,
 		Queue:    queue,
-	}, nil
+	}
+	return cfg, nil
 }
 
 func stringFromEnv(lookup lookupFunc, key, fallback string) string {
@@ -339,16 +340,61 @@ func validateLogLevel(logLevel string) error {
 	}
 }
 
-func validateProductionSecrets(appEnv, jwtSigningSecret, apiKeyEncryptionKey string) error {
+func validateProductionConfig(appEnv string, auth AuthConfig, provider ProviderConfig, corsAllowedOrigins []string, lookup lookupFunc) error {
 	if !strings.EqualFold(appEnv, "production") {
 		return nil
 	}
 
-	if jwtSigningSecret == defaultJWTSigningSecret {
+	if auth.JWTSigningSecret == defaultJWTSigningSecret {
 		return fmt.Errorf("invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production")
 	}
-	if apiKeyEncryptionKey == defaultAPIKeyEncryptionKey {
+	if provider.APIKeyEncryptionKey == defaultAPIKeyEncryptionKey {
 		return fmt.Errorf("invalid API_KEY_ENCRYPTION_KEY: placeholder secret is not allowed in production")
+	}
+	for _, key := range []string{
+		"MYSQL_PASSWORD",
+		"REDIS_PASSWORD",
+		"MINIO_ACCESS_KEY",
+		"MINIO_SECRET_KEY",
+	} {
+		value, ok := lookup(key)
+		if !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("invalid %s: value is required in production", key)
+		}
+		if strings.Contains(strings.ToLower(value), "change-me") {
+			return fmt.Errorf("invalid %s: placeholder value is not allowed in production", key)
+		}
+	}
+	if !auth.Cookie.Secure {
+		return fmt.Errorf("invalid COOKIE_SECURE: must be true in production")
+	}
+	if len(corsAllowedOrigins) == 0 {
+		return fmt.Errorf("invalid CORS_ALLOWED_ORIGINS: at least one origin is required in production")
+	}
+	for _, origin := range corsAllowedOrigins {
+		if err := validateProductionCORSOrigin(origin); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateProductionCORSOrigin(origin string) error {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return fmt.Errorf("invalid CORS_ALLOWED_ORIGINS: origin must be valid in production")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("invalid CORS_ALLOWED_ORIGINS: only https origins are allowed in production")
+	}
+
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production")
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+		return fmt.Errorf("invalid CORS_ALLOWED_ORIGINS: localhost, loopback, private, and link-local origins are not allowed in production")
 	}
 
 	return nil
