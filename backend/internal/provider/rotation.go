@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
@@ -76,7 +77,7 @@ func (s *APIKeyRotationService) Rotate(ctx context.Context, oldCipher APIKeyCiph
 			}
 		}
 		return nil
-	}); err != nil {
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable}); err != nil {
 		return APIKeyRotationSummary{}, ErrAPIKeyRotationFailed
 	}
 
