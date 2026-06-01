@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func TestNewRouterServesHealthRoutes(t *testing.T) {
@@ -85,6 +88,58 @@ func TestAPIStartupRejectsUnsafeProductionConfig(t *testing.T) {
 				t.Fatalf("loadStartupConfig returned unexpected error: %q", got)
 			}
 		})
+	}
+}
+
+func TestRunDatabaseStartupTasksPropagatesBuiltInRoleReconciliationFailure(t *testing.T) {
+	var calls []string
+	reconciliationErr := errors.New("reconciliation failed")
+	err := runDatabaseStartupTasks(
+		context.Background(),
+		nil,
+		config.DatabaseConfig{MigrationsMode: "startup-gate"},
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "migrations")
+			return nil
+		},
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "reconciliation")
+			return reconciliationErr
+		},
+	)
+	if !errors.Is(err, errBuiltInRoleReconciliationFailed) {
+		t.Fatalf("runDatabaseStartupTasks error = %v, want %v", err, errBuiltInRoleReconciliationFailed)
+	}
+	if errors.Is(err, reconciliationErr) {
+		t.Fatalf("runDatabaseStartupTasks error = %v, must not expose underlying reconciliation error", err)
+	}
+	if want := []string{"migrations", "reconciliation"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("startup task calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRunDatabaseStartupTasksReconcilesWhenMigrationsDisabled(t *testing.T) {
+	var calls []string
+	err := runDatabaseStartupTasks(
+		context.Background(),
+		nil,
+		config.DatabaseConfig{MigrationsMode: "disabled"},
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "migrations")
+			return nil
+		},
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "reconciliation")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runDatabaseStartupTasks returned error: %v", err)
+	}
+	if want := []string{"reconciliation"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("startup task calls = %v, want %v", calls, want)
 	}
 }
 
