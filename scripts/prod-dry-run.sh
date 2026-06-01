@@ -20,6 +20,7 @@ Default safe checks:
   - deployment release validation without persistent services
   - focused security regression
   - real Provider smoke guardrail dry-run only
+  - backup/restore rehearsal guardrail dry-run only
   - docker compose config validation
 
 Options:
@@ -274,6 +275,7 @@ log "starting sanitized production dry-run"
 run_stage "deployment release validation" bash "$ROOT_DIR/scripts/deploy-release-validation.sh"
 run_stage "security regression" bash "$ROOT_DIR/scripts/security-regression.sh"
 run_stage "real Provider smoke guardrail dry-run" bash "$ROOT_DIR/scripts/real-provider-smoke.sh" --dry-run
+run_stage "backup/restore rehearsal guardrail dry-run" bash "$ROOT_DIR/scripts/backup-restore-rehearsal.sh"
 run_stage "Compose config validation" docker compose -f "$COMPOSE_FILE" config
 
 if [[ "$RUN_LIVE_COMPOSE" -eq 1 ]]; then
@@ -287,4 +289,4 @@ if [[ "$RUN_REAL_PROVIDER_SMOKE" -eq 1 ]]; then
 fi
 
 log "sanitized evidence summary: all requested stages passed"
-log "backup/restore rehearsal: operator checklist remains manual; do not attach dumps, secrets, object keys, signed URLs, Provider responses, or image outputs"
+log "backup/restore rehearsal: isolated live mode remains explicit; do not attach dumps, secrets, object keys, signed URLs, Provider responses, or image outputs"

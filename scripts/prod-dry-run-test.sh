@@ -184,6 +184,7 @@ test_default_mode_runs_safe_checks_in_order() {
     "bash $ROOT_DIR/scripts/deploy-release-validation.sh" \
     "bash $ROOT_DIR/scripts/security-regression.sh" \
     "bash $ROOT_DIR/scripts/real-provider-smoke.sh --dry-run" \
+    "bash $ROOT_DIR/scripts/backup-restore-rehearsal.sh" \
     "docker compose -f $ROOT_DIR/deploy/docker-compose.yml config"
   assert_not_contains "$CASE_LOG" "real-provider-smoke.sh --run"
 }
@@ -210,6 +211,7 @@ test_real_provider_smoke_delegates_run_after_safe_checks() {
   assert_status 0 "$CASE_STATUS" "confirmed real Provider smoke"
   assert_line_order "$CASE_LOG" \
     "bash $ROOT_DIR/scripts/real-provider-smoke.sh --dry-run" \
+    "bash $ROOT_DIR/scripts/backup-restore-rehearsal.sh" \
     "docker compose -f $ROOT_DIR/deploy/docker-compose.yml config" \
     "bash $ROOT_DIR/scripts/real-provider-smoke.sh --run"
   assert_not_contains "$CASE_OUTPUT" "sk-fake-provider-secret"

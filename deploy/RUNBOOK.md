@@ -263,8 +263,9 @@ bash scripts/prod-dry-run.sh
 ```
 
 The default mode runs release validation, focused security regression, the
-real Provider smoke guardrail dry-run, and Compose config validation. It does
-not start persistent services or call a real AI Provider.
+real Provider smoke guardrail dry-run, the backup/restore rehearsal guardrail
+dry-run, and Compose config validation. It does not start persistent services,
+replace data, or call a real AI Provider.
 
 For an explicit production environment acceptance check, point the script at
 the existing restricted runtime env file outside the repository:
@@ -344,6 +345,23 @@ the validation if the environment should stay clean.
 Back up MySQL and MinIO together so object keys and objects stay consistent.
 Pause writes or take a maintenance window when possible.
 
+Before using production data, rehearse the repository Compose procedure in its
+disposable isolated project:
+
+```bash
+bash scripts/backup-restore-rehearsal.sh
+BACKUP_RESTORE_REHEARSAL_CONFIRM=I_UNDERSTAND_DATA_REPLACEMENT \
+  bash scripts/backup-restore-rehearsal.sh --live
+```
+
+The default command is guardrail-only. `--live` creates a dynamically named
+Compose project, starts only its isolated MySQL and MinIO services, creates a
+task-owned fixture, backs up and restores a matching pair, repeats the restore
+as a rollback rehearsal, and removes its containers and volumes. It must never
+be pointed at the shared local development services or a production runtime.
+Record sanitized evidence with
+[PRODUCTION_BACKUP_RESTORE_TEMPLATE.md](./PRODUCTION_BACKUP_RESTORE_TEMPLATE.md).
+
 MySQL logical backup:
 
 ```bash
@@ -366,8 +384,10 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   '
 ```
 
-In production, prefer the approved backup tool for the runtime platform and
-store backups outside the Compose host.
+In production, the operator must use the approved backup tool for the runtime
+platform, establish a write-stop or platform-supported consistency point, keep
+the MySQL and MinIO backups as one matching set, and store backups outside the
+Compose host. The repository rehearsal script is not a production backup tool.
 
 ## Restore
 
@@ -398,6 +418,11 @@ docker compose -f deploy/docker-compose.yml up -d backend-api backend-worker fro
 
 Validate with the release checks before allowing users back in.
 
+For production restore, the operator must use the approved platform restore
+tooling and restore the matching MySQL and MinIO set from the same consistency
+point. Do not use the repository rehearsal script against a production
+runtime.
+
 ## Upgrade
 
 1. Pull or check out the release.
@@ -426,8 +451,9 @@ Rollback must keep MySQL and MinIO consistent:
 
 1. Stop writes or put the service in maintenance.
 2. Check out the previous release and restore the matching `.env`.
-3. If migrations or task writes occurred, restore the matching MySQL and MinIO
-   backups from the same point in time.
+3. If migrations or task writes occurred, use operator-approved tooling to
+   restore the matching MySQL and MinIO backups from the same consistency
+   point.
 4. Rebuild and start:
 
 ```bash
