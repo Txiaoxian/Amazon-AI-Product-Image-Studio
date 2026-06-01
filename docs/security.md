@@ -77,11 +77,13 @@ Storage and P5 review hardening backlog:
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
 - Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.
 
-P20 operational backlog:
+P20 operational controls:
 
-- Provider master-key rotation must use an operator-only transactional CLI with default dry-run, explicit apply confirmation, and sanitized output.
-- Second and later tenant provisioning must use an operator-only transactional CLI until a deliberate platform-level administration model exists.
-- Tenant HTTP APIs must remain tenant-scoped; do not infer platform-wide super-admin rights from a tenant admin role.
+- Provider master-key rotation uses the operator-only `backend/cmd/provider-key-rotation` CLI with default dry-run, explicit apply confirmation, serialized transaction processing, full rollback on any bad row, and sanitized count-only output.
+- Second and later tenant provisioning uses the operator-only `backend/cmd/provision-tenant` CLI until a deliberate platform-level administration model exists. Its apply path is explicitly confirmed and transactional.
+- Tenant HTTP APIs remain tenant-scoped; tenant admin sessions never imply platform-wide super-admin rights.
+- Custom-role HTTP writes are tenant-scoped, CSRF protected, audited, and blocked for built-in roles. Deletion fails while a user assignment exists.
+- Backup/restore/rollback rehearsal runs only against a disposable dynamically named Compose project and never against shared development or production services.
 
 ## Authentication
 

@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依赖审计修复与持续门禁、主机 TLS Nginx 模板/静态检查、前端 `logRetention` 设置和既有租户内置角色授权 reconciliation。P20 已完成固定 `X-CSRF-Token` 合同，正在收口 Provider 主密钥轮换、第二租户开通、当前租户资料、自定义角色管理和备份恢复演练。
+P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依赖审计修复与持续门禁、主机 TLS Nginx 模板/静态检查、前端 `logRetention` 设置和既有租户内置角色授权 reconciliation。P20 后端与部署切片已完成：固定 `X-CSRF-Token` 合同、Provider 主密钥轮换 CLI、第二租户开通 CLI、当前租户资料 API、自定义角色 CRUD/权限替换、备份恢复回滚演练。当前仅剩前端租户/自定义角色管理和最终 Go/No-Go。
 
 已完成的平台基础：
 
@@ -114,7 +114,7 @@ P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依
 - P18 已完成切片：`P18-BE-PROVIDER-MODEL-SERIALIZATION` 和 `P18-E2E-REAL-PROVIDER-SMOKE`。Provider/model/default settings 写路径已补强 MySQL 行锁、模型写路径目标行锁、`taskDefaults` 保存前锁定 Provider/model，并拒绝同租户同 Provider 非删除 `modelName` 重复；可选真实 Provider smoke 脚本已具备 help/dry-run/explicit run、费用控制、直接 Provider API base 拒绝、临时文件清理和 fake-curl 安全测试。
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
-- P20 当前优先级：Provider 主密钥轮换 CLI、租户开通 CLI、当前租户 API、自定义角色 CRUD/权限替换、前端租户/自定义角色管理、备份恢复演练和最终 Go/No-Go。
+- P20 当前优先级：前端租户/自定义角色管理和最终 Go/No-Go。
 
 ## P20：稳定生产运营收口
 
@@ -131,40 +131,16 @@ P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依
 
 - `P20-CSRF-CONTRACT-HARDENING`
   - 后端、Compose、CORS 和 production-env preflight 已固定使用 `X-CSRF-Token`；别名 fail closed。
+- `P20-BE-PROVIDER-KEY-ROTATION`
+  - 已提供 `backend/cmd/provider-key-rotation`。默认 dry-run；`--apply` 需要强确认；未删除 Provider 在串行化事务内重加密；坏行整体回滚；输出仅 sanitized 计数；payload key ID 错配 fail closed。
+- `P20-DEPLOY-BACKUP-RESTORE-REHEARSAL`
+  - 已提供 `scripts/backup-restore-rehearsal.sh` 和 sanitized evidence 模板。默认 guardrail-only；显式 live 模式只操作动态隔离 Compose project；真实 matching MySQL/MinIO restore 和 rollback rehearsal 已通过并完成 scoped cleanup。
+- `P20-BE-TENANT-PROVISIONING`
+  - 已提供 `backend/cmd/provision-tenant`。默认 dry-run；`--apply` 需要强确认；单事务创建第二及后续 tenant、内置角色/grants、首任 admin 和脱敏审计记录。
+- `P20-BE-TENANT-ROLE-ADMIN`
+  - 已实现 tenant-scoped `GET/PATCH /tenants/current` 与 custom role create/update/delete/permission replacement；写路径走 CSRF、RBAC、事务和 sanitized audit；内置角色不可变；被用户引用的 custom role 不可删除。
 
 ### 待完成切片
-
-#### `P20-BE-PROVIDER-KEY-ROTATION`
-
-- 目标：新增 operator-only CLI，在单事务内 dry-run 或显式 apply 全量重加密未删除 Provider API Key。
-- 允许修改：`backend/internal/provider/**`、`backend/cmd/provider-key-rotation/**`、必要的脚本 guardrail 测试、`.env.example`。
-- 禁止修改：前端、HTTP API、task runtime、公共合同。
-- 安全要求：默认 dry-run；apply 必须显式确认；输出仅 sanitized 数量；不能打印明文、密文、hint、URL、租户或对象细节；任何坏行整体回滚。
-- 验收：旧 key 可读、新 key 可写、key ID 不同、坏行回滚、deleted Provider 跳过、空表可运行、CLI 参数和 env fail closed。
-
-#### `P20-DEPLOY-BACKUP-RESTORE-REHEARSAL`
-
-- 目标：新增可重复、默认安全的备份/恢复/回滚 rehearsal 入口和 sanitized evidence 模板。
-- 允许修改：`scripts/**`、`deploy/**`，公共文档由主 agent 更新。
-- 禁止修改：业务代码、真实 secret、真实 dump、共享本地服务数据。
-- 安全要求：默认只做 guardrail/dry-run；任何破坏性 restore 必须显式确认并限定到 project Compose rehearsal 环境；禁止 broad prune、共享环境删除、明文 secret 输出。
-- 验收：脚本 tests 覆盖默认安全、确认门禁、失败 cleanup、输出脱敏、Compose 项目范围限制。
-
-#### `P20-BE-TENANT-PROVISIONING`
-
-- 目标：新增 operator-only CLI，事务性创建第二及后续 tenant、内置角色/grants 和首个 tenant admin。
-- 允许修改：`backend/internal/auth/**`、`backend/cmd/provision-tenant/**`。
-- 禁止修改：HTTP API、前端、deploy、公共合同。
-- 安全要求：密码仅从 env/stdin 进入内存；输出不得包含密码/hash/JWT/CSRF/Cookie；重复 email/非法输入失败不留半租户；不能调用无认证公开 HTTP 入口。
-- 验收：成功、回滚、重复/非法输入、内置角色、admin grant、多租户登录、敏感输出排除。
-
-#### `P20-BE-TENANT-ROLE-ADMIN`
-
-- 目标：落地 `GET/PATCH /tenants/current` 和 custom role CRUD/权限替换。
-- 允许修改：新增或既有 tenant-admin/useradmin API 代码与测试。
-- 禁止修改：Provider/task/asset runtime、前端、公共合同。
-- 安全要求：当前 tenant scope、CSRF、RBAC、对象级权限、内置角色不可变、自定义角色删除前检查用户引用、事务和 sanitized audit。
-- 验收：跨租户 not-found、权限不足 forbidden、最后 admin 保护不回归、所有写路径 audit、安全响应无敏感字段。
 
 #### `P20-FE-TENANT-ROLE-ADMIN`
 

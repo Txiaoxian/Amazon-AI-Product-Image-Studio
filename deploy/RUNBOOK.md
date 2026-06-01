@@ -69,10 +69,9 @@ Generate unique high-entropy values per environment for:
 - `API_KEY_ENCRYPTION_KEY`.
 
 `API_KEY_ENCRYPTION_KEY` must be a valid 32-byte key encoded as expected by the
-backend configuration. The current application has one active encryption key
-and does not yet ship an in-place Provider-key re-encryption workflow. Do not
-rotate this key on an environment with stored Provider credentials until an
-approved migration procedure has been implemented and rehearsed.
+backend configuration. The current application has one active encryption key.
+Use the operator workflow below before changing that active key in an
+environment with stored Provider credentials.
 
 ## Startup Order
 
@@ -163,6 +162,76 @@ curl -fsS -X POST http://127.0.0.1:8081/api/v1/auth/init-admin \
 
 The endpoint returns conflict after an admin already exists. Do not automate
 this with hard-coded production credentials.
+
+## Additional Tenant Provisioning
+
+The unauthenticated init-admin endpoint is only for the first tenant. Create
+second and later tenants through the operator CLI. The default command validates
+input without opening the database or writing rows:
+
+```bash
+export PROVISION_TENANT_NAME='Seller Team'
+export PROVISION_TENANT_ADMIN_EMAIL='seller-admin@example.com'
+export PROVISION_TENANT_ADMIN_DISPLAY_NAME='Seller Admin'
+docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME \
+  --entrypoint provision-tenant backend-api
+```
+
+Apply only after reviewing the dry-run:
+
+```bash
+PROVISION_TENANT_CONFIRM=I_UNDERSTAND_TENANT_PROVISIONING \
+  docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_CONFIRM \
+  --entrypoint provision-tenant backend-api --apply
+unset PROVISION_TENANT_CONFIRM
+```
+
+The apply path transactionally creates one tenant, built-in roles and grants,
+one tenant admin, and a sanitized audit record. It prints only the new tenant ID
+needed for login. Both commands read the initial password from container stdin
+without echo when `PROVISION_TENANT_ADMIN_PASSWORD` is not passed. Do not retain
+the password in the shell environment.
+
+## Provider Master-Key Rotation
+
+Rotate the Provider API-key encryption master key only during an approved
+maintenance window with Provider writes paused. First run the default dry-run
+against all non-deleted Provider rows:
+
+```bash
+export PROVIDER_KEY_ROTATION_OLD_SECRET='<current secret>'
+export PROVIDER_KEY_ROTATION_OLD_KEY_ID='<current key id>'
+export PROVIDER_KEY_ROTATION_NEW_SECRET='<new secret>'
+export PROVIDER_KEY_ROTATION_NEW_KEY_ID='<new key id>'
+docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVIDER_KEY_ROTATION_OLD_SECRET -e PROVIDER_KEY_ROTATION_OLD_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_NEW_SECRET -e PROVIDER_KEY_ROTATION_NEW_KEY_ID \
+  --entrypoint provider-key-rotation backend-api
+```
+
+Apply only after the dry-run succeeds:
+
+```bash
+PROVIDER_KEY_ROTATION_CONFIRM=I_UNDERSTAND_PROVIDER_KEY_ROTATION \
+  docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVIDER_KEY_ROTATION_OLD_SECRET -e PROVIDER_KEY_ROTATION_OLD_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_NEW_SECRET -e PROVIDER_KEY_ROTATION_NEW_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_CONFIRM \
+  --entrypoint provider-key-rotation backend-api --apply
+unset PROVIDER_KEY_ROTATION_OLD_SECRET PROVIDER_KEY_ROTATION_OLD_KEY_ID
+unset PROVIDER_KEY_ROTATION_NEW_SECRET PROVIDER_KEY_ROTATION_NEW_KEY_ID
+unset PROVIDER_KEY_ROTATION_CONFIRM
+```
+
+The apply path serializes one database transaction, re-encrypts all eligible
+credentials, and rolls back fully if any row fails. It never prints plaintext,
+ciphertext, hint, URL, tenant, or Provider details. After apply succeeds, deploy
+API and Worker with the new `API_KEY_ENCRYPTION_KEY` and
+`API_KEY_ENCRYPTION_KEY_ID`, then run backend-mediated Provider smoke checks.
 
 ## MinIO Bootstrap
 

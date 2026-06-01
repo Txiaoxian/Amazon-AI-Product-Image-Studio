@@ -30,7 +30,7 @@ Important current facts:
 - The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays` and `logRetention` settings; unset/null/malformed settings fail closed and do not delete anything.
 - Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, P18 live dry-run cleanup evidence, a deployment runbook, an external TLS reverse-proxy template/static checker, and optional real Provider smoke tooling. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P20 must finish Provider master-key rotation, operator tenant provisioning, tenant/custom-role operations, backup/restore rehearsal, and final stable-production Go/No-Go review. Writable settings still cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P20 backend and deployment operational hardening is merged; the frontend tenant/custom-role management slice and final stable-production Go/No-Go review remain. Writable settings still cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 

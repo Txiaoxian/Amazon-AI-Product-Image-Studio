@@ -96,6 +96,11 @@ Tenant contract:
 - `PATCH /tenants/current` may update the current tenant `name` only. It must not accept `tenantId`, `status`, credentials, settings, or arbitrary metadata.
 - Tenant metadata writes require tenant admin access plus `system:settings:manage`, use the authenticated tenant scope, and write a sanitized operation log.
 
+P20 tenant implementation status:
+
+- `backend/cmd/provision-tenant` implements additional-tenant provisioning as a default-safe operator CLI with explicitly confirmed transactional apply.
+- `GET /tenants/current` and `PATCH /tenants/current` are implemented with authenticated tenant scope. PATCH accepts only `name`.
+
 P11 implementation status:
 
 - `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
@@ -124,6 +129,11 @@ Role-management contract:
 - `PUT /roles/{roleId}/permissions` replaces grants for one custom role transactionally using permission IDs from the global permission dictionary.
 - Deleting a custom role must fail while it is assigned to any user. Successful deletion removes only that role's tenant-scoped grants and role row.
 - Role write endpoints require tenant admin access or `role:manage`, enforce object-level tenant scope, use CSRF protection, and record sanitized operation logs.
+
+P20 role-management implementation status:
+
+- Custom-role create/update/delete and permission replacement are implemented.
+- Built-in role mutation, cross-tenant role IDs, invalid permission IDs, and deletion of assigned custom roles fail without partial writes.
 
 ## Project APIs
 
@@ -522,4 +532,4 @@ The active runtime-backed settings slices are intentionally narrow:
   - Malformed persisted `log_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
 - Manual cleanup triggers remain absent from `system-settings`. P17 dedicated admin storage orphan endpoints have real runtime behavior and must not be mirrored as writable settings.
 - Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`; backend strict quota reservation/counter/reconciliation is merged in `P17-BE-STORAGE-QUOTA-RESERVATION`; backend `logRetention` read/write and Worker maintenance cleanup are merged in `P16-BE-LOG-RETENTION`; backend thumbnail generation and authorized thumbnail streaming are merged in `P16-BE-THUMBNAIL-POLICY`; backend admin storage orphan scan/cleanup is merged in `P17-BE-ORPHAN-CLEANUP`.
-- Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes only active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`. It sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps deferred settings absent from UI and requests. Frontend `logRetention` controls are deferred until after the backend runtime consumer is merged and reviewed.
+- Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`; P19 added runtime-backed nullable `logRetention` controls after the backend consumer was merged and reviewed. Each save sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps non-consumed settings absent from UI and requests.

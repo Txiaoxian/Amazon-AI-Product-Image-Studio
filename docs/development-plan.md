@@ -44,7 +44,7 @@ Phase status:
 | P17 | Complete | Storage governance and observability are complete. Conservative orphan cleanup, strict quota reservation, backend production diagnostics, and R17 regression passed. |
 | P18 | Complete | Provider/model/default-setting serialization, opt-in real Provider smoke tooling, sanitized production dry-run, live Compose rehearsal, and cleanup checks are complete. |
 | P19 | Complete | Production config guards, CI quality gates, frontend dependency audit remediation and gate, host TLS reverse-proxy template/checks, frontend log-retention controls, and existing-tenant built-in-role reconciliation are complete. |
-| P20 | In Progress | CSRF header contract is pinned and verified. Provider master-key rotation, tenant provisioning/current-tenant management, custom role CRUD, and backup/restore rehearsal remain. |
+| P20 | In Progress | Backend operational hardening is merged: fixed CSRF header contract, transactional Provider master-key rotation CLI, transactional tenant provisioning CLI, current-tenant APIs, custom-role CRUD/permission replacement, and isolated backup/restore/rollback rehearsal. Frontend tenant/custom-role administration and final Go/No-Go remain. |
 
 P18/P19/P20 operational hardening results:
 
@@ -55,6 +55,10 @@ P18/P19/P20 operational hardening results:
 - Frontend system settings now exposes backend-consumed nullable `logRetention`.
 - API startup reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
 - Platform CSRF header is fixed to `X-CSRF-Token` across frontend, backend, Compose, CORS, and production-env preflight.
+- `backend/cmd/provider-key-rotation` provides default dry-run and explicitly confirmed transactional apply for Provider credential master-key rotation. Payload key IDs now fail closed when they do not match the decrypting cipher.
+- `backend/cmd/provision-tenant` provides default dry-run and explicitly confirmed transactional creation of second and later tenants with built-in roles/grants and one initial tenant admin.
+- Tenant-scoped `GET/PATCH /api/v1/tenants/current` and custom-role CRUD/permission replacement APIs are merged. Built-in roles remain immutable through HTTP APIs.
+- `scripts/backup-restore-rehearsal.sh` provides a default-safe guardrail mode and an explicitly confirmed isolated Compose rehearsal. The live matching MySQL/MinIO restore plus rollback rehearsal completed and left no project containers or volumes.
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -413,8 +417,5 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 Finish P20 from latest `main`:
 
-1. Add an operator-only transactional Provider master-key rotation CLI with dry-run and explicit apply confirmation.
-2. Add an operator-only transactional tenant provisioning CLI for second and later tenants.
-3. Implement tenant-scoped `GET/PATCH /tenants/current` and custom-role CRUD/permission replacement with backend and frontend management UI.
-4. Add a repeatable backup/restore/rollback rehearsal entry point and sanitized evidence.
-5. Run the final stable-production requirement-by-requirement audit, full regression, live Compose rehearsal, and hosted-CI verification after pushing `main`.
+1. Complete the frontend tenant-name and custom-role administration UI.
+2. Run the final stable-production requirement-by-requirement audit, full regression, live Compose rehearsal, and hosted-CI verification after pushing `main`.
