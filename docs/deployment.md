@@ -39,6 +39,7 @@ Current verified state:
 - Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
 - `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation.
 - `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
+- The `backend-api` image bundles both operator CLI binaries so Compose servers can run them through scoped `docker compose run --rm --no-deps` commands without a host Go toolchain.
 - `scripts/backup-restore-rehearsal.sh` passed an isolated live Compose matching MySQL/MinIO restore and rollback rehearsal with scoped cleanup.
 
 Known runtime notes:

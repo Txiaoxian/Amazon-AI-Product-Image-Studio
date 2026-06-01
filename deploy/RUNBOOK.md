@@ -176,14 +176,21 @@ export PROVISION_TENANT_ADMIN_DISPLAY_NAME='Seller Admin'
 read -rsp 'Initial tenant admin password: ' PROVISION_TENANT_ADMIN_PASSWORD
 export PROVISION_TENANT_ADMIN_PASSWORD
 printf '\n'
-(cd backend && go run ./cmd/provision-tenant)
+docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_ADMIN_PASSWORD \
+  --entrypoint provision-tenant backend-api
 ```
 
 Apply only after reviewing the dry-run:
 
 ```bash
 PROVISION_TENANT_CONFIRM=I_UNDERSTAND_TENANT_PROVISIONING \
-  sh -c 'cd backend && go run ./cmd/provision-tenant --apply'
+  docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_ADMIN_PASSWORD \
+  -e PROVISION_TENANT_CONFIRM \
+  --entrypoint provision-tenant backend-api --apply
 unset PROVISION_TENANT_ADMIN_PASSWORD PROVISION_TENANT_CONFIRM
 ```
 
@@ -203,14 +210,21 @@ export PROVIDER_KEY_ROTATION_OLD_SECRET='<current secret>'
 export PROVIDER_KEY_ROTATION_OLD_KEY_ID='<current key id>'
 export PROVIDER_KEY_ROTATION_NEW_SECRET='<new secret>'
 export PROVIDER_KEY_ROTATION_NEW_KEY_ID='<new key id>'
-(cd backend && go run ./cmd/provider-key-rotation)
+docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVIDER_KEY_ROTATION_OLD_SECRET -e PROVIDER_KEY_ROTATION_OLD_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_NEW_SECRET -e PROVIDER_KEY_ROTATION_NEW_KEY_ID \
+  --entrypoint provider-key-rotation backend-api
 ```
 
 Apply only after the dry-run succeeds:
 
 ```bash
 PROVIDER_KEY_ROTATION_CONFIRM=I_UNDERSTAND_PROVIDER_KEY_ROTATION \
-  sh -c 'cd backend && go run ./cmd/provider-key-rotation --apply'
+  docker compose -f deploy/docker-compose.yml run --rm --no-deps \
+  -e PROVIDER_KEY_ROTATION_OLD_SECRET -e PROVIDER_KEY_ROTATION_OLD_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_NEW_SECRET -e PROVIDER_KEY_ROTATION_NEW_KEY_ID \
+  -e PROVIDER_KEY_ROTATION_CONFIRM \
+  --entrypoint provider-key-rotation backend-api --apply
 unset PROVIDER_KEY_ROTATION_OLD_SECRET PROVIDER_KEY_ROTATION_OLD_KEY_ID
 unset PROVIDER_KEY_ROTATION_NEW_SECRET PROVIDER_KEY_ROTATION_NEW_KEY_ID
 unset PROVIDER_KEY_ROTATION_CONFIRM

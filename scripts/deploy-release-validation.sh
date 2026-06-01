@@ -18,6 +18,7 @@ Runs the P15 deployment release validation:
   - docker compose config validation
   - frontend nginx /api/ and SSE proxy safety checks
   - host TLS reverse proxy template static checks
+  - backend-api image operator CLI build/copy checks
   - backend-api, backend-worker, and frontend image builds
   - focused security regression script
   - optional Compose up, container health checks, frontend /api/ proxy checks
@@ -188,6 +189,27 @@ check_frontend_proxy_config() {
   echo "[ok]"
 }
 
+check_backend_operator_cli_image() {
+  local dockerfile="$ROOT_DIR/backend/Dockerfile"
+  echo
+  echo "==> backend operator CLI image checks"
+  if [[ ! -f "$dockerfile" ]]; then
+    echo "[fail] missing backend Dockerfile: $dockerfile" >&2
+    exit 1
+  fi
+  for binary in provision-tenant provider-key-rotation; do
+    if ! grep -Fq "go build -trimpath -ldflags=\"-s -w\" -o /out/$binary ./cmd/$binary" "$dockerfile"; then
+      echo "[fail] backend Dockerfile does not build operator CLI: $binary" >&2
+      exit 1
+    fi
+    if ! grep -Fq "COPY --from=build /out/$binary /usr/local/bin/$binary" "$dockerfile"; then
+      echo "[fail] backend-api image does not include operator CLI: $binary" >&2
+      exit 1
+    fi
+  done
+  echo "[ok]"
+}
+
 wait_for_service_health() {
   local service="$1"
   local deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
@@ -294,6 +316,7 @@ fi
 
 run_quiet compose config
 check_frontend_proxy_config
+check_backend_operator_cli_image
 run bash "$ROOT_DIR/scripts/tls-reverse-proxy-check.sh"
 run compose build backend-api backend-worker frontend
 run bash "$ROOT_DIR/scripts/security-regression.sh"
