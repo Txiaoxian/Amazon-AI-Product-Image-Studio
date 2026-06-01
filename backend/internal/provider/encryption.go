@@ -82,7 +82,7 @@ func (c APIKeyCipher) Decrypt(encrypted string) (string, error) {
 	}
 
 	parts := strings.Split(encrypted, ":")
-	if len(parts) != 3 || parts[0] != encryptedPayloadVersion || parts[1] == "" {
+	if len(parts) != 3 || parts[0] != encryptedPayloadVersion || parts[1] == "" || parts[1] != c.keyID {
 		return "", ErrEncryption
 	}
 
