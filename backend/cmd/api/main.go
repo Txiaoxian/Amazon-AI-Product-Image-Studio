@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/api"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
@@ -18,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+var errBuiltInRoleReconciliationFailed = errors.New("built-in role reconciliation failed")
 
 func main() {
 	bootstrapLog := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -122,15 +125,35 @@ func openDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if cfg.Database.MigrationsMode == "startup-gate" {
-		if err := database.RunMigrations(ctx, db); err != nil {
-			_ = database.Close(db)
-			return nil, err
-		}
-		log.Info("database migrations complete")
-	} else {
-		log.Info("database migrations skipped", slog.String("mode", cfg.Database.MigrationsMode))
+	if err := runDatabaseStartupTasks(ctx, db, cfg.Database, log, database.RunMigrations, auth.ReconcileBuiltInRoles); err != nil {
+		_ = database.Close(db)
+		return nil, err
 	}
 
 	return db, nil
+}
+
+func runDatabaseStartupTasks(
+	ctx context.Context,
+	db *gorm.DB,
+	cfg config.DatabaseConfig,
+	log *slog.Logger,
+	runMigrations func(context.Context, *gorm.DB) error,
+	reconcileBuiltInRoles func(context.Context, *gorm.DB) error,
+) error {
+	if cfg.MigrationsMode == "startup-gate" {
+		if err := runMigrations(ctx, db); err != nil {
+			return err
+		}
+		log.Info("database migrations complete")
+	} else {
+		log.Info("database migrations skipped", slog.String("mode", cfg.MigrationsMode))
+	}
+
+	if err := reconcileBuiltInRoles(ctx, db); err != nil {
+		return errBuiltInRoleReconciliationFailed
+	}
+	log.Info("built-in role reconciliation complete")
+
+	return nil
 }
