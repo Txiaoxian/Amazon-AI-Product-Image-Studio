@@ -69,10 +69,9 @@ Generate unique high-entropy values per environment for:
 - `API_KEY_ENCRYPTION_KEY`.
 
 `API_KEY_ENCRYPTION_KEY` must be a valid 32-byte key encoded as expected by the
-backend configuration. The current application has one active encryption key
-and does not yet ship an in-place Provider-key re-encryption workflow. Do not
-rotate this key on an environment with stored Provider credentials until an
-approved migration procedure has been implemented and rehearsed.
+backend configuration. The current application has one active encryption key.
+Use the operator workflow below before changing that active key in an
+environment with stored Provider credentials.
 
 ## Startup Order
 
@@ -163,6 +162,65 @@ curl -fsS -X POST http://127.0.0.1:8081/api/v1/auth/init-admin \
 
 The endpoint returns conflict after an admin already exists. Do not automate
 this with hard-coded production credentials.
+
+## Additional Tenant Provisioning
+
+The unauthenticated init-admin endpoint is only for the first tenant. Create
+second and later tenants through the operator CLI. The default command validates
+input without opening the database or writing rows:
+
+```bash
+export PROVISION_TENANT_NAME='Seller Team'
+export PROVISION_TENANT_ADMIN_EMAIL='seller-admin@example.com'
+export PROVISION_TENANT_ADMIN_DISPLAY_NAME='Seller Admin'
+read -rsp 'Initial tenant admin password: ' PROVISION_TENANT_ADMIN_PASSWORD
+export PROVISION_TENANT_ADMIN_PASSWORD
+printf '\n'
+(cd backend && go run ./cmd/provision-tenant)
+```
+
+Apply only after reviewing the dry-run:
+
+```bash
+PROVISION_TENANT_CONFIRM=I_UNDERSTAND_TENANT_PROVISIONING \
+  sh -c 'cd backend && go run ./cmd/provision-tenant --apply'
+unset PROVISION_TENANT_ADMIN_PASSWORD PROVISION_TENANT_CONFIRM
+```
+
+The apply path transactionally creates one tenant, built-in roles and grants,
+one tenant admin, and a sanitized audit record. It prints only the new tenant ID
+needed for login. Prefer stdin input when running an installed binary so the
+password is not retained in the shell environment.
+
+## Provider Master-Key Rotation
+
+Rotate the Provider API-key encryption master key only during an approved
+maintenance window with Provider writes paused. First run the default dry-run
+against all non-deleted Provider rows:
+
+```bash
+export PROVIDER_KEY_ROTATION_OLD_SECRET='<current secret>'
+export PROVIDER_KEY_ROTATION_OLD_KEY_ID='<current key id>'
+export PROVIDER_KEY_ROTATION_NEW_SECRET='<new secret>'
+export PROVIDER_KEY_ROTATION_NEW_KEY_ID='<new key id>'
+(cd backend && go run ./cmd/provider-key-rotation)
+```
+
+Apply only after the dry-run succeeds:
+
+```bash
+PROVIDER_KEY_ROTATION_CONFIRM=I_UNDERSTAND_PROVIDER_KEY_ROTATION \
+  sh -c 'cd backend && go run ./cmd/provider-key-rotation --apply'
+unset PROVIDER_KEY_ROTATION_OLD_SECRET PROVIDER_KEY_ROTATION_OLD_KEY_ID
+unset PROVIDER_KEY_ROTATION_NEW_SECRET PROVIDER_KEY_ROTATION_NEW_KEY_ID
+unset PROVIDER_KEY_ROTATION_CONFIRM
+```
+
+The apply path serializes one database transaction, re-encrypts all eligible
+credentials, and rolls back fully if any row fails. It never prints plaintext,
+ciphertext, hint, URL, tenant, or Provider details. After apply succeeds, deploy
+API and Worker with the new `API_KEY_ENCRYPTION_KEY` and
+`API_KEY_ENCRYPTION_KEY_ID`, then run backend-mediated Provider smoke checks.
 
 ## MinIO Bootstrap
 

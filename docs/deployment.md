@@ -37,6 +37,9 @@ Current verified state:
 - `scripts/prod-dry-run.sh` passed safe default and live Compose rehearsal modes with scoped cleanup; no project containers or volumes remained afterwards.
 - `deploy/nginx/amazon-ai-product-image-studio.conf.template` and `scripts/tls-reverse-proxy-check.sh` define and validate the host TLS edge. External traffic routes only to loopback frontend `127.0.0.1:8080`.
 - Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
+- `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation.
+- `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
+- `scripts/backup-restore-rehearsal.sh` passed an isolated live Compose matching MySQL/MinIO restore and rollback rehearsal with scoped cleanup.
 
 Known runtime notes:
 
@@ -45,7 +48,7 @@ Known runtime notes:
 - Frontend Nginx must not proxy AI Provider traffic.
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
-- Provider master-key rotation and backup/restore rehearsal are the remaining deployment-specific P20 slices. They must keep default paths non-destructive and avoid committing or printing real secrets.
+- Provider master-key rotation and backup/restore rehearsal are implemented. Operators must still execute their default-safe checks and approved target-environment procedures before production changes.
 
 ## Services
 

@@ -80,6 +80,12 @@ Tenant and custom-role operations:
 - Custom role object APIs must filter by `tenant_id`; cross-tenant IDs return the existing sanitized not-found shape.
 - Custom role deletion must fail while users still reference the role. Grant replacement and successful deletion are transactional and auditable.
 
+P20 status:
+
+- Additional-tenant provisioning is implemented by the operator-only `backend/cmd/provision-tenant` CLI.
+- Current-tenant read/name update and custom-role CRUD/permission replacement are implemented in the backend.
+- The P20 frontend tenant/custom-role administration UI remains the final UI integration slice.
+
 Project:
 
 - `project:read`

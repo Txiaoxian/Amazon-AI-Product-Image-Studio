@@ -96,6 +96,11 @@ Tenant contract:
 - `PATCH /tenants/current` may update the current tenant `name` only. It must not accept `tenantId`, `status`, credentials, settings, or arbitrary metadata.
 - Tenant metadata writes require tenant admin access plus `system:settings:manage`, use the authenticated tenant scope, and write a sanitized operation log.
 
+P20 tenant implementation status:
+
+- `backend/cmd/provision-tenant` implements additional-tenant provisioning as a default-safe operator CLI with explicitly confirmed transactional apply.
+- `GET /tenants/current` and `PATCH /tenants/current` are implemented with authenticated tenant scope. PATCH accepts only `name`.
+
 P11 implementation status:
 
 - `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
@@ -124,6 +129,11 @@ Role-management contract:
 - `PUT /roles/{roleId}/permissions` replaces grants for one custom role transactionally using permission IDs from the global permission dictionary.
 - Deleting a custom role must fail while it is assigned to any user. Successful deletion removes only that role's tenant-scoped grants and role row.
 - Role write endpoints require tenant admin access or `role:manage`, enforce object-level tenant scope, use CSRF protection, and record sanitized operation logs.
+
+P20 role-management implementation status:
+
+- Custom-role create/update/delete and permission replacement are implemented.
+- Built-in role mutation, cross-tenant role IDs, invalid permission IDs, and deletion of assigned custom roles fail without partial writes.
 
 ## Project APIs
 
