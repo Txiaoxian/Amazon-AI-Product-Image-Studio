@@ -43,12 +43,16 @@ docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' ||
 | Deployment release validation | PASS / FAIL | |
 | Security regression | PASS / FAIL | |
 | Real Provider smoke guardrail dry-run | PASS / FAIL | |
+| Backup/restore rehearsal guardrail dry-run | PASS / FAIL | |
 | Compose config validation | PASS / FAIL | |
 | Live Compose health path | PASS / FAIL / NOT RUN | |
 | Live Compose cleanup | PASS / FAIL / NOT RUN | Record container/volume absence only. |
 | Optional real Provider smoke | PASS / FAIL / NOT RUN | Manual billable step; sanitized status only. |
 
 ## Backup And Restore Rehearsal
+
+Use [PRODUCTION_BACKUP_RESTORE_TEMPLATE.md](./PRODUCTION_BACKUP_RESTORE_TEMPLATE.md)
+for the isolated live rehearsal and production operator procedure evidence.
 
 - [ ] MySQL and MinIO backups are treated as one consistency point.
 - [ ] Backup destination is outside the repository and access restricted.
