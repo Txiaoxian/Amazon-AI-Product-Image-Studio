@@ -173,12 +173,9 @@ input without opening the database or writing rows:
 export PROVISION_TENANT_NAME='Seller Team'
 export PROVISION_TENANT_ADMIN_EMAIL='seller-admin@example.com'
 export PROVISION_TENANT_ADMIN_DISPLAY_NAME='Seller Admin'
-read -rsp 'Initial tenant admin password: ' PROVISION_TENANT_ADMIN_PASSWORD
-export PROVISION_TENANT_ADMIN_PASSWORD
-printf '\n'
 docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
-  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_ADMIN_PASSWORD \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME \
   --entrypoint provision-tenant backend-api
 ```
 
@@ -188,16 +185,16 @@ Apply only after reviewing the dry-run:
 PROVISION_TENANT_CONFIRM=I_UNDERSTAND_TENANT_PROVISIONING \
   docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -e PROVISION_TENANT_NAME -e PROVISION_TENANT_ADMIN_EMAIL \
-  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_ADMIN_PASSWORD \
-  -e PROVISION_TENANT_CONFIRM \
+  -e PROVISION_TENANT_ADMIN_DISPLAY_NAME -e PROVISION_TENANT_CONFIRM \
   --entrypoint provision-tenant backend-api --apply
-unset PROVISION_TENANT_ADMIN_PASSWORD PROVISION_TENANT_CONFIRM
+unset PROVISION_TENANT_CONFIRM
 ```
 
 The apply path transactionally creates one tenant, built-in roles and grants,
 one tenant admin, and a sanitized audit record. It prints only the new tenant ID
-needed for login. Prefer stdin input when running an installed binary so the
-password is not retained in the shell environment.
+needed for login. Both commands read the initial password from container stdin
+without echo when `PROVISION_TENANT_ADMIN_PASSWORD` is not passed. Do not retain
+the password in the shell environment.
 
 ## Provider Master-Key Rotation
 
