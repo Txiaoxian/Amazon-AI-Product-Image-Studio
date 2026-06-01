@@ -11,17 +11,21 @@ const (
 	UserStatusActive   = "ACTIVE"
 	UserStatusDisabled = "DISABLED"
 
-	PermissionUserRead    = "user:read"
-	PermissionUserCreate  = "user:create"
-	PermissionUserUpdate  = "user:update"
-	PermissionUserDisable = "user:disable"
-	PermissionRoleRead    = "role:read"
-	PermissionRoleManage  = "role:manage"
+	PermissionUserRead       = "user:read"
+	PermissionUserCreate     = "user:create"
+	PermissionUserUpdate     = "user:update"
+	PermissionUserDisable    = "user:disable"
+	PermissionRoleRead       = "role:read"
+	PermissionRoleManage     = "role:manage"
+	PermissionSettingsManage = "system:settings:manage"
 
 	maxPageSize          = 100
 	defaultPageNum       = 1
 	defaultPageSize      = 20
 	maxDisplayNameRunes  = 255
+	maxTenantNameRunes   = 255
+	maxRoleNameRunes     = 255
+	maxDescriptionRunes  = 2000
 	maxQueryRunes        = 128
 	maxRoleIDsPerRequest = 100
 )
@@ -85,6 +89,12 @@ type PermissionResponse struct {
 	Description string `json:"description"`
 }
 
+type TenantResponse struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 type CreateInput struct {
 	Email       string
 	DisplayName string
@@ -99,6 +109,23 @@ type UpdateInput struct {
 
 type RolesInput struct {
 	RoleIDs []string
+}
+
+type CreateRoleInput struct {
+	Code        string
+	Name        string
+	Description string
+	Status      string
+}
+
+type UpdateRoleInput struct {
+	Name        *string
+	Description *string
+	Status      *string
+}
+
+type PermissionIDsInput struct {
+	PermissionIDs []string
 }
 
 func userResponse(record database.User, roles []database.Role) UserResponse {
@@ -163,6 +190,15 @@ func formatTime(value time.Time) string {
 }
 
 func validUserStatus(status string) bool {
+	switch status {
+	case UserStatusActive, UserStatusDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRoleStatus(status string) bool {
 	switch status {
 	case UserStatusActive, UserStatusDisabled:
 		return true

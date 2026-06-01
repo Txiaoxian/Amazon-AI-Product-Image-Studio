@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,7 +48,29 @@ type replaceRolesRequest struct {
 	RoleIDs []string `json:"roleIds"`
 }
 
+type updateTenantRequest struct {
+	Name *string `json:"name"`
+}
+
+type createRoleRequest struct {
+	Code        string  `json:"code"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Status      *string `json:"status"`
+}
+
+type updateRoleRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Status      *string `json:"status"`
+}
+
+type replaceRolePermissionsRequest struct {
+	PermissionIDs []string `json:"permissionIds"`
+}
+
 var errMalformedJSON = errors.New("malformed json")
+var roleCodePattern = regexp.MustCompile(`^[a-z][a-z0-9:_-]{0,127}$`)
 
 func NewService(db *gorm.DB, log *slog.Logger) *Service {
 	if log == nil {
@@ -64,6 +87,8 @@ func NewService(db *gorm.DB, log *slog.Logger) *Service {
 }
 
 func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
+	group.GET("/tenants/current", s.GetCurrentTenant)
+	group.PATCH("/tenants/current", s.UpdateCurrentTenant)
 	group.GET("/users", s.ListUsers)
 	group.POST("/users", s.CreateUser)
 	group.GET("/users/:userId", s.GetUser)
@@ -72,7 +97,47 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/users/:userId/enable", s.EnableUser)
 	group.POST("/users/:userId/roles", s.ReplaceUserRoles)
 	group.GET("/roles", s.ListRoles)
+	group.POST("/roles", s.CreateRole)
+	group.PATCH("/roles/:roleId", s.UpdateRole)
+	group.DELETE("/roles/:roleId", s.DeleteRole)
+	group.PUT("/roles/:roleId/permissions", s.ReplaceRolePermissions)
 	group.GET("/permissions", s.ListPermissions)
+}
+
+func (s *Service) GetCurrentTenant(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	response, err := s.getCurrentTenant(c.Request.Context(), principal)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
+func (s *Service) UpdateCurrentTenant(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	request, err := parseUpdateTenantRequest(c.Request.Body)
+	if err != nil {
+		respondParseError(c, err)
+		return
+	}
+	name, err := normalizeUpdateTenantRequest(request)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+	response, err := s.updateCurrentTenant(c.Request.Context(), principal, name, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
 }
 
 func (s *Service) ListUsers(c *gin.Context) {
@@ -214,6 +279,88 @@ func (s *Service) ListPermissions(c *gin.Context) {
 	httpx.JSON(c, http.StatusOK, response)
 }
 
+func (s *Service) CreateRole(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	request, err := parseCreateRoleRequest(c.Request.Body)
+	if err != nil {
+		respondParseError(c, err)
+		return
+	}
+	input, err := normalizeCreateRoleRequest(request)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+	response, err := s.createRole(c.Request.Context(), principal, input, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusCreated, response)
+}
+
+func (s *Service) UpdateRole(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	request, err := parseUpdateRoleRequest(c.Request.Body)
+	if err != nil {
+		respondParseError(c, err)
+		return
+	}
+	input, changedFields, err := normalizeUpdateRoleRequest(request)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+	response, err := s.updateRole(c.Request.Context(), principal, c.Param("roleId"), input, changedFields, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
+func (s *Service) DeleteRole(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	response, err := s.deleteRole(c.Request.Context(), principal, c.Param("roleId"), c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
+func (s *Service) ReplaceRolePermissions(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	request, err := parseReplaceRolePermissionsRequest(c.Request.Body)
+	if err != nil {
+		respondParseError(c, err)
+		return
+	}
+	input, err := normalizePermissionIDsRequest(request)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+	response, err := s.replaceRolePermissions(c.Request.Context(), principal, c.Param("roleId"), input, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
 func (s *Service) setUserStatus(c *gin.Context, status string, action string) {
 	principal, ok := requirePrincipal(c)
 	if !ok {
@@ -252,6 +399,55 @@ func (s *Service) listUsers(ctx context.Context, principal auth.Principal, query
 		responses = append(responses, userResponse(record, rolesByUser[record.ID]))
 	}
 	return Page{Records: responses, Total: total, PageNum: query.PageNum, PageSize: query.PageSize}, nil
+}
+
+func (s *Service) getCurrentTenant(ctx context.Context, principal auth.Principal) (TenantResponse, error) {
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return TenantResponse{}, err
+	}
+	record, err := s.repo.FindTenant(ctx, scope)
+	if err != nil {
+		return TenantResponse{}, err
+	}
+	return tenantResponse(record), nil
+}
+
+func (s *Service) updateCurrentTenant(ctx context.Context, principal auth.Principal, name string, ip string, userAgent string) (TenantResponse, error) {
+	if !isTenantAdmin(principal) || !principal.HasPermission(PermissionSettingsManage) {
+		return TenantResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return TenantResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return TenantResponse{}, err
+	}
+	var updated database.Tenant
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		updated, err = repo.UpdateTenant(ctx, scope, name, s.now())
+		if err != nil {
+			return err
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "tenant.update",
+			ResourceType: "tenant",
+			ResourceID:   scope.ID(),
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"changedFields": []string{"name"},
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return TenantResponse{}, err
+	}
+	return tenantResponse(updated), nil
 }
 
 func (s *Service) createUser(ctx context.Context, principal auth.Principal, input CreateInput, ip string, userAgent string) (UserResponse, error) {
@@ -559,6 +755,230 @@ func (s *Service) listPermissions(ctx context.Context, principal auth.Principal)
 	return permissionResponses(permissions), nil
 }
 
+func (s *Service) createRole(ctx context.Context, principal auth.Principal, input CreateRoleInput, ip string, userAgent string) (RoleResponse, error) {
+	if !hasPermissionOrAdmin(principal, PermissionRoleManage) {
+		return RoleResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return RoleResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	var created database.Role
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		exists, err := repo.RoleCodeExists(ctx, scope, input.Code)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrConflict
+		}
+		now := s.now()
+		created = database.Role{
+			ID:          idgen.New(),
+			TenantID:    scope.ID(),
+			Code:        input.Code,
+			Name:        input.Name,
+			Description: input.Description,
+			Status:      input.Status,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := repo.CreateRole(ctx, scope, &created); err != nil {
+			return err
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "role.create",
+			ResourceType: "role",
+			ResourceID:   created.ID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"code":   created.Code,
+				"status": created.Status,
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	return roleResponse(created, nil), nil
+}
+
+func (s *Service) updateRole(ctx context.Context, principal auth.Principal, roleID string, input UpdateRoleInput, changedFields []string, ip string, userAgent string) (RoleResponse, error) {
+	if !hasPermissionOrAdmin(principal, PermissionRoleManage) {
+		return RoleResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return RoleResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	var updated database.Role
+	var permissions []database.Permission
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		current, err := repo.FindRole(ctx, scope, roleID)
+		if err != nil {
+			return err
+		}
+		if isBuiltInRoleCode(current.Code) {
+			return ErrConflict
+		}
+		updates := map[string]any{"updated_at": s.now()}
+		if input.Name != nil {
+			updates["name"] = *input.Name
+		}
+		if input.Description != nil {
+			updates["description"] = *input.Description
+		}
+		if input.Status != nil {
+			updates["status"] = *input.Status
+		}
+		updated, err = repo.UpdateRole(ctx, scope, current.ID, updates)
+		if err != nil {
+			return err
+		}
+		permissions, err = permissionsForRole(ctx, repo, scope, updated.ID)
+		if err != nil {
+			return err
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "role.update",
+			ResourceType: "role",
+			ResourceID:   updated.ID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"code":          updated.Code,
+				"changedFields": changedFields,
+				"oldStatus":     current.Status,
+				"newStatus":     updated.Status,
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	return roleResponse(updated, permissions), nil
+}
+
+func (s *Service) deleteRole(ctx context.Context, principal auth.Principal, roleID string, ip string, userAgent string) (RoleResponse, error) {
+	if !hasPermissionOrAdmin(principal, PermissionRoleManage) {
+		return RoleResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return RoleResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	var deleted database.Role
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		deleted, err = repo.FindRole(ctx, scope, roleID)
+		if err != nil {
+			return err
+		}
+		if isBuiltInRoleCode(deleted.Code) {
+			return ErrConflict
+		}
+		count, err := repo.RoleAssignmentCount(ctx, scope, deleted.ID)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrConflict
+		}
+		if err := repo.DeleteRole(ctx, scope, deleted.ID); err != nil {
+			return err
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "role.delete",
+			ResourceType: "role",
+			ResourceID:   deleted.ID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"code": deleted.Code,
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	return roleResponse(deleted, nil), nil
+}
+
+func (s *Service) replaceRolePermissions(ctx context.Context, principal auth.Principal, roleID string, input PermissionIDsInput, ip string, userAgent string) (RoleResponse, error) {
+	if !hasPermissionOrAdmin(principal, PermissionRoleManage) {
+		return RoleResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return RoleResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	var roleRecord database.Role
+	var permissions []database.Permission
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		roleRecord, err = repo.FindRole(ctx, scope, roleID)
+		if err != nil {
+			return err
+		}
+		if isBuiltInRoleCode(roleRecord.Code) {
+			return ErrConflict
+		}
+		permissions, err = repo.PermissionsByIDs(ctx, input.PermissionIDs)
+		if err != nil {
+			return err
+		}
+		if err := repo.ReplaceRolePermissions(ctx, scope, roleRecord.ID, permissionIDsFromPermissions(permissions)); err != nil {
+			return err
+		}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "role.permissions.replace",
+			ResourceType: "role",
+			ResourceID:   roleRecord.ID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"code":            roleRecord.Code,
+				"permissionCount": len(permissions),
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return RoleResponse{}, err
+	}
+	return roleResponse(roleRecord, permissions), nil
+}
+
+func permissionsForRole(ctx context.Context, repo Repository, scope tenant.Scope, roleID string) ([]database.Permission, error) {
+	byRoleID, err := repo.ListPermissionsForRoles(ctx, scope, []string{roleID})
+	if err != nil {
+		return nil, err
+	}
+	return byRoleID[roleID], nil
+}
+
 func (s *Service) ensureCanDisableUser(ctx context.Context, repo Repository, scope tenant.Scope, principal auth.Principal, user database.User) error {
 	if user.ID == principal.UserID {
 		return ErrConflict
@@ -689,6 +1109,55 @@ func parseReplaceRolesRequest(body io.Reader) (replaceRolesRequest, error) {
 	return request, nil
 }
 
+func parseUpdateTenantRequest(body io.Reader) (updateTenantRequest, error) {
+	var request updateTenantRequest
+	if err := decodeStrictObject(body, map[string]bool{"name": true}, &request); err != nil {
+		return updateTenantRequest{}, err
+	}
+	return request, nil
+}
+
+func parseCreateRoleRequest(body io.Reader) (createRoleRequest, error) {
+	var request createRoleRequest
+	if err := decodeStrictObject(body, map[string]bool{
+		"code": true, "name": true, "description": true, "status": true,
+	}, &request); err != nil {
+		return createRoleRequest{}, err
+	}
+	return request, nil
+}
+
+func parseUpdateRoleRequest(body io.Reader) (updateRoleRequest, error) {
+	var request updateRoleRequest
+	if err := decodeStrictObject(body, map[string]bool{
+		"name": true, "description": true, "status": true,
+	}, &request); err != nil {
+		return updateRoleRequest{}, err
+	}
+	return request, nil
+}
+
+func parseReplaceRolePermissionsRequest(body io.Reader) (replaceRolePermissionsRequest, error) {
+	fields, err := decodeRawObject(body)
+	if err != nil {
+		return replaceRolePermissionsRequest{}, err
+	}
+	for key := range fields {
+		if key != "permissionIds" {
+			return replaceRolePermissionsRequest{}, ErrValidation
+		}
+	}
+	raw, ok := fields["permissionIds"]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return replaceRolePermissionsRequest{}, ErrValidation
+	}
+	var request replaceRolePermissionsRequest
+	if err := json.Unmarshal(raw, &request.PermissionIDs); err != nil {
+		return replaceRolePermissionsRequest{}, errMalformedJSON
+	}
+	return request, nil
+}
+
 func normalizeCreateRequest(request createRequest) (CreateInput, error) {
 	email, err := auth.NormalizeEmail(request.Email)
 	if err != nil {
@@ -741,26 +1210,109 @@ func normalizeRolesRequest(request replaceRolesRequest) (RolesInput, error) {
 	return RolesInput{RoleIDs: roleIDs}, nil
 }
 
+func normalizeUpdateTenantRequest(request updateTenantRequest) (string, error) {
+	if request.Name == nil {
+		return "", ErrValidation
+	}
+	return cleanRequired(*request.Name, maxTenantNameRunes)
+}
+
+func normalizeCreateRoleRequest(request createRoleRequest) (CreateRoleInput, error) {
+	code := strings.ToLower(strings.TrimSpace(request.Code))
+	if !roleCodePattern.MatchString(code) || isBuiltInRoleCode(code) {
+		return CreateRoleInput{}, ErrValidation
+	}
+	name, err := cleanRequired(request.Name, maxRoleNameRunes)
+	if err != nil {
+		return CreateRoleInput{}, err
+	}
+	description, err := cleanOptional(request.Description, maxDescriptionRunes)
+	if err != nil {
+		return CreateRoleInput{}, err
+	}
+	status := UserStatusActive
+	if request.Status != nil {
+		status = strings.ToUpper(strings.TrimSpace(*request.Status))
+		if !validRoleStatus(status) {
+			return CreateRoleInput{}, ErrValidation
+		}
+	}
+	return CreateRoleInput{Code: code, Name: name, Description: description, Status: status}, nil
+}
+
+func normalizeUpdateRoleRequest(request updateRoleRequest) (UpdateRoleInput, []string, error) {
+	input := UpdateRoleInput{}
+	changedFields := make([]string, 0, 3)
+	if request.Name != nil {
+		name, err := cleanRequired(*request.Name, maxRoleNameRunes)
+		if err != nil {
+			return UpdateRoleInput{}, nil, err
+		}
+		input.Name = &name
+		changedFields = append(changedFields, "name")
+	}
+	if request.Description != nil {
+		description, err := cleanOptional(*request.Description, maxDescriptionRunes)
+		if err != nil {
+			return UpdateRoleInput{}, nil, err
+		}
+		input.Description = &description
+		changedFields = append(changedFields, "description")
+	}
+	if request.Status != nil {
+		status := strings.ToUpper(strings.TrimSpace(*request.Status))
+		if !validRoleStatus(status) {
+			return UpdateRoleInput{}, nil, ErrValidation
+		}
+		input.Status = &status
+		changedFields = append(changedFields, "status")
+	}
+	if len(changedFields) == 0 {
+		return UpdateRoleInput{}, nil, ErrValidation
+	}
+	return input, changedFields, nil
+}
+
+func normalizePermissionIDsRequest(request replaceRolePermissionsRequest) (PermissionIDsInput, error) {
+	permissionIDs, err := normalizeIDs(request.PermissionIDs, maxRoleIDsPerRequest)
+	if err != nil {
+		return PermissionIDsInput{}, err
+	}
+	return PermissionIDsInput{PermissionIDs: permissionIDs}, nil
+}
+
 func normalizeRoleIDs(values []string) ([]string, error) {
-	if len(values) > maxRoleIDsPerRequest {
+	return normalizeIDs(values, maxRoleIDsPerRequest)
+}
+
+func normalizeIDs(values []string, max int) ([]string, error) {
+	if len(values) > max {
 		return nil, ErrValidation
 	}
-	seen := map[string]bool{}
-	roleIDs := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	ids := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" || len(value) > 128 || seen[value] {
 			return nil, ErrValidation
 		}
 		seen[value] = true
-		roleIDs = append(roleIDs, value)
+		ids = append(ids, value)
 	}
-	return roleIDs, nil
+	return ids, nil
 }
 
 func cleanRequired(value string, max int) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || utf8.RuneCountInString(value) > max {
+		return "", ErrValidation
+	}
+	return value, nil
+}
+
+func cleanOptional(value string, max int) (string, error) {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > max {
 		return "", ErrValidation
 	}
 	return value, nil
@@ -842,6 +1394,32 @@ func roleCodesFromRoles(roles []database.Role) []string {
 	}
 	sort.Strings(codes)
 	return codes
+}
+
+func permissionIDsFromPermissions(permissions []database.Permission) []string {
+	permissionIDs := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		permissionIDs = append(permissionIDs, permission.ID)
+	}
+	sort.Strings(permissionIDs)
+	return permissionIDs
+}
+
+func tenantResponse(record database.Tenant) TenantResponse {
+	return TenantResponse{ID: record.ID, Name: record.Name, Status: record.Status}
+}
+
+func roleResponse(record database.Role, permissions []database.Permission) RoleResponse {
+	return roleResponses([]database.Role{record}, map[string][]database.Permission{record.ID: permissions})[0]
+}
+
+func isBuiltInRoleCode(code string) bool {
+	switch strings.TrimSpace(code) {
+	case "admin", "seller", "viewer":
+		return true
+	default:
+		return false
+	}
 }
 
 func rolesContainCode(roles []database.Role, code string) bool {
