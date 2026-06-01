@@ -70,6 +70,16 @@ P11 user-admin role mapping:
 - The frontend user/role admin panel must mirror these boundaries: do not load `/users` without `user:read`, do not load `/roles` or `/permissions` without `role:read`, do not submit `roleIds` without `role:manage`, do not expose status actions without `user:disable`, and disable current-user status actions in the UI.
 - Created-user passwords are transient UI input only. They must not be written to localStorage, sessionStorage, IndexedDB, logs, or rendered after successful creation.
 
+Tenant and custom-role operations:
+
+- Additional tenant creation is an operator CLI responsibility. Tenant HTTP APIs must never infer a platform-wide super-admin from a tenant admin session.
+- `GET /tenants/current` reads only the authenticated tenant.
+- `PATCH /tenants/current` updates only the authenticated tenant name and requires tenant admin access plus `system:settings:manage`.
+- Built-in `admin`, `seller`, and `viewer` roles are reserved. Tenant HTTP APIs must not mutate, disable, delete, or replace their grants.
+- Custom role create/update/delete and permission replacement require tenant admin access or `role:manage`.
+- Custom role object APIs must filter by `tenant_id`; cross-tenant IDs return the existing sanitized not-found shape.
+- Custom role deletion must fail while users still reference the role. Grant replacement and successful deletion are transactional and auditable.
+
 Project:
 
 - `project:read`

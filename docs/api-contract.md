@@ -89,6 +89,13 @@ Error:
 
 All user APIs require tenant scope and appropriate RBAC permissions.
 
+Tenant contract:
+
+- Additional tenant provisioning is an operator-only CLI workflow, not an unauthenticated HTTP endpoint and not an implicit platform-super-admin API. The CLI creates one tenant, its built-in roles/grants, and one initial tenant admin transactionally.
+- `GET /tenants/current` returns only the authenticated caller's tenant metadata.
+- `PATCH /tenants/current` may update the current tenant `name` only. It must not accept `tenantId`, `status`, credentials, settings, or arbitrary metadata.
+- Tenant metadata writes require tenant admin access plus `system:settings:manage`, use the authenticated tenant scope, and write a sanitized operation log.
+
 P11 implementation status:
 
 - `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
@@ -109,6 +116,14 @@ P11 implementation status:
 - `DELETE /roles/{roleId}`
 - `GET /permissions`
 - `PUT /roles/{roleId}/permissions`
+
+Role-management contract:
+
+- The built-in `admin`, `seller`, and `viewer` roles are reserved and immutable through tenant HTTP APIs. Startup reconciliation owns their required grants.
+- Tenant admins may create, update, disable, and delete custom roles only within the authenticated tenant.
+- `PUT /roles/{roleId}/permissions` replaces grants for one custom role transactionally using permission IDs from the global permission dictionary.
+- Deleting a custom role must fail while it is assigned to any user. Successful deletion removes only that role's tenant-scoped grants and role row.
+- Role write endpoints require tenant admin access or `role:manage`, enforce object-level tenant scope, use CSRF protection, and record sanitized operation logs.
 
 ## Project APIs
 

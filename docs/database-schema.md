@@ -18,6 +18,8 @@ Stores tenant/team metadata.
 
 Key fields: `id`, `name`, `status`, `created_at`, `updated_at`.
 
+Additional tenant provisioning is an operator-only transactional workflow: create the tenant root, reconcile built-in roles/grants, create the initial tenant admin, and assign the built-in `admin` role atomically. A failed provisioning attempt must not leave a partial tenant.
+
 ### users
 
 Stores user accounts.
@@ -34,6 +36,8 @@ Tables:
 - `role_permissions`
 
 All role assignment tables include `tenant_id`. System permissions may be seeded globally but assignments remain tenant scoped.
+
+The built-in role codes `admin`, `seller`, and `viewer` are reserved and reconciled by backend startup. Tenant HTTP APIs may manage custom roles only; they must not mutate the built-in role definitions or grants.
 
 ### projects
 

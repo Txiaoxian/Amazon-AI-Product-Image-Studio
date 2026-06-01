@@ -13,9 +13,9 @@ The repository started as a pure frontend local app:
 
 This baseline was preserved during the early platformization phases so existing UI concepts could be migrated instead of rewritten.
 
-## Current Platform State During P18
+## Current Platform State During P20
 
-The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has completed P17 storage governance plus the first two P18 production-confidence slices. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, MinIO-backed reference/generated/edited assets, backend-generated authorized thumbnails for new assets, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, conservative orphan cleanup, strict quota reservations, admin diagnostics, release validation, security regression, deployment runbook, optional real Provider smoke tooling, and Docker Compose release checks.
+The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has completed P18 production dry-run plus the merged P19/P20 operational hardening slices. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, MinIO-backed reference/generated/edited assets, backend-generated authorized thumbnails for new assets, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, conservative orphan cleanup, strict quota reservations, admin diagnostics, release validation, security regression, deployment runbook, optional real Provider smoke tooling, host TLS proxy template checks, frontend dependency audit gates, existing-tenant built-in-role reconciliation, fixed CSRF header contract, and Docker Compose release checks.
 
 Important current facts:
 
@@ -28,9 +28,9 @@ Important current facts:
 - The backend now exposes tenant `taskDefaults` and consumes them only when task creation omits both Provider/model IDs. Malformed persisted defaults fail closed for default-backed requests without task creation side effects.
 - The backend now exposes tenant `taskConcurrency` only with a Worker runtime consumer. Tenant values can narrow environment hard caps, global concurrency remains deployment-owned, and malformed persisted concurrency settings fail closed before Provider execution.
 - The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays` and `logRetention` settings; unset/null/malformed settings fail closed and do not delete anything.
-- Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, R16/R17 validation, a deployment runbook, and optional real Provider smoke tooling. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
+- Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, P18 live dry-run cleanup evidence, a deployment runbook, an external TLS reverse-proxy template/static checker, and optional real Provider smoke tooling. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P18 production dry-run and final stable-production Go/No-Go review remain. Writable settings still cannot be exposed before their runtime consumers exist.
+Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P20 must finish Provider master-key rotation, operator tenant provisioning, tenant/custom-role operations, backup/restore rehearsal, and final stable-production Go/No-Go review. Writable settings still cannot be exposed before their runtime consumers exist.
 
 ## Target platform architecture
 

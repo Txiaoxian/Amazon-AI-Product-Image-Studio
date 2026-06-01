@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P18 Real Provider Smoke Merge
+## Current State After P20 Operational Hardening
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -42,7 +42,19 @@ Phase status:
 | P15 | Complete | Release hardening is complete. Core flow E2E, final security regression, deployment runbook validation, and R15 release-readiness review passed. |
 | P16 | Complete | Production launch hardening is complete: deployment cleanup traps, runtime database log retention, backend thumbnail policy, and R16 regression passed. |
 | P17 | Complete | Storage governance and observability are complete. Conservative orphan cleanup, strict quota reservation, backend production diagnostics, and R17 regression passed. |
-| P18 | In Progress | Provider/model/default-setting serialization and opt-in real Provider smoke tooling are complete; production dry-run and R18 Go/No-Go review remain. |
+| P18 | Complete | Provider/model/default-setting serialization, opt-in real Provider smoke tooling, sanitized production dry-run, live Compose rehearsal, and cleanup checks are complete. |
+| P19 | Complete | Production config guards, CI quality gates, frontend dependency audit remediation and gate, host TLS reverse-proxy template/checks, frontend log-retention controls, and existing-tenant built-in-role reconciliation are complete. |
+| P20 | In Progress | CSRF header contract is pinned and verified. Provider master-key rotation, tenant provisioning/current-tenant management, custom role CRUD, and backup/restore rehearsal remain. |
+
+P18/P19/P20 operational hardening results:
+
+- `scripts/prod-dry-run.sh` now provides safe default, production-env preflight, optional live Compose with scoped cleanup, and optional billable Provider-smoke delegation. The live Compose rehearsal completed and left no project containers or volumes.
+- Production config now rejects placeholder or missing database, Redis, MinIO, JWT, and Provider-encryption secrets; insecure cookies; unsafe CORS origins; and non-default CSRF header aliases.
+- CI now runs frontend lint/type-check/test/build, backend test/race/vet/build, repository security/deploy gates, Compose config, and `npm audit --audit-level=moderate`.
+- Host TLS deployment now has an auditable Nginx template and static checker. Public traffic terminates TLS and routes only to loopback frontend `127.0.0.1:8080`; SSE buffering remains disabled.
+- Frontend system settings now exposes backend-consumed nullable `logRetention`.
+- API startup reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
+- Platform CSRF header is fixed to `X-CSRF-Token` across frontend, backend, Compose, CORS, and production-env preflight.
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 
@@ -116,7 +128,7 @@ R17 reviewed the complete P17 range after merging orphan cleanup, strict quota r
 
 `P18-BE-PROVIDER-MODEL-SERIALIZATION` was reviewed and merged. Provider/model/default settings write paths now use stronger row-locking on MySQL paths, model create/update/enable/delete paths lock target rows where needed, `taskDefaults` updates lock Provider/model rows before persisting, and same-tenant same-Provider non-deleted `modelName` duplicates are rejected without a destructive unique-index migration. Validation passed focused backend Provider/model/settings/API/task tests, full backend tests, race tests, vet, API/Worker builds, Docker Compose config, security regression, and whitespace checks. Existing Provider API shape, frontend, Provider Adapter runtime, Worker/SSE/task execution, storage lifecycle, and deployment scripts were not changed.
 
-`P18-E2E-REAL-PROVIDER-SMOKE` was reviewed and merged. The repository now has an optional, manual `scripts/real-provider-smoke.sh` entry point plus `scripts/real-provider-smoke-test.sh`. The script is safe by default, supports `--help`, `--dry-run`, and explicit `--run`, requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS` before any billable path, rejects direct AI Provider API bases, bounds output count and timeout, uses only the platform `/api/v1` backend, and keeps secrets out of stdout/stderr. `deploy/RUNBOOK.md` documents manual usage without putting secrets into shell history. Validation passed the script test, default deployment release validation, security regression, Docker Compose config, dry-run/manual guard checks, and whitespace checks. No real Provider call was executed during automated validation. The R18 pre-review found that temporary-file registration inside command substitution did not reliably reach the parent-shell exit trap; `P18-PROD-DRY-RUN` must merge the cleanup hardening and failure-path regression before Go/No-Go.
+`P18-E2E-REAL-PROVIDER-SMOKE` was reviewed and merged. The repository now has an optional, manual `scripts/real-provider-smoke.sh` entry point plus `scripts/real-provider-smoke-test.sh`. The script is safe by default, supports `--help`, `--dry-run`, and explicit `--run`, requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS` before any billable path, rejects direct AI Provider API bases, bounds output count and timeout, uses only the platform `/api/v1` backend, and keeps secrets out of stdout/stderr. `deploy/RUNBOOK.md` documents manual usage without putting secrets into shell history. Validation passed the script test, default deployment release validation, security regression, Docker Compose config, dry-run/manual guard checks, and whitespace checks. No real Provider call was executed during automated validation. The later production dry-run slice fixed the temporary-file cleanup registration bug and added failure-path regression.
 
 ## Completed Platform Capabilities
 
@@ -338,10 +350,12 @@ Suggested order:
    - Completed and merged. The script is opt-in, backend-only, cost-bounded, direct-Provider guarded, and covered by fake-curl safety tests.
 3. `P18-PROD-DRY-RUN`
    - Execute the runbook against the target or staging server: init admin, tenant/user setup, Provider/model config, fake or real task, backup/restore, rollback, and security/deploy gates.
+   - Completed for repository-controlled evidence: safe default and live Compose modes passed, cleanup left no project containers or volumes, and no real Provider call was executed.
 4. `R18-STABLE-PRODUCTION-READINESS`
    - Main-agent Go/No-Go review for stable production launch.
+   - Continued as P19/P20 operational hardening after the audit identified TLS, CI, key rotation, tenant provisioning, and rehearsal gaps.
 
-Parallelism: keep P18 mostly serial because real Provider smoke and production dry-run rely on all earlier hardening being merged.
+Parallelism: P18 repository-controlled work is complete. Remaining production operations work is tracked in P19/P20.
 
 ## Worktree Scheduling Policy
 
@@ -397,4 +411,10 @@ Full deployment validation is reserved for deployment/release tasks and must cle
 
 ## Current Priority
 
-Start `P18-PROD-DRY-RUN` from latest `main`. Provider/model/default-setting serialization and optional real Provider smoke tooling have been merged. The next production risk is proving the operator runbook end to end with deployment validation, security regression, backup/restore rehearsal, optional real Provider smoke dry-run, and a sanitized Go/No-Go evidence package.
+Finish P20 from latest `main`:
+
+1. Add an operator-only transactional Provider master-key rotation CLI with dry-run and explicit apply confirmation.
+2. Add an operator-only transactional tenant provisioning CLI for second and later tenants.
+3. Implement tenant-scoped `GET/PATCH /tenants/current` and custom-role CRUD/permission replacement with backend and frontend management UI.
+4. Add a repeatable backup/restore/rollback rehearsal entry point and sanitized evidence.
+5. Run the final stable-production requirement-by-requirement audit, full regression, live Compose rehearsal, and hosted-CI verification after pushing `main`.

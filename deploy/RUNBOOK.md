@@ -54,6 +54,9 @@ through a TLS-terminating reverse proxy. Keep `FRONTEND_BIND_HOST=127.0.0.1`
 and `BACKEND_API_BIND_HOST=127.0.0.1`; neither Compose port is a public
 listener.
 
+`CSRF_HEADER_NAME` is a fixed compatibility contract and must remain
+`X-CSRF-Token`. The backend and production preflight reject aliases.
+
 ## Production Secrets
 
 Generate unique high-entropy values per environment for:

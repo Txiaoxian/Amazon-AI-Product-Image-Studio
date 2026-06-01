@@ -10,6 +10,8 @@ Build a multi-user platform for Amazon sellers to generate, edit, organize, and 
 - Users belong to a tenant.
 - Tenant data is isolated by `tenant_id`.
 - Roles include at least admin, seller, and viewer.
+- Operators can provision second and later tenants safely without reopening the one-time first-admin bootstrap endpoint.
+- Tenant administrators can update their own tenant name and manage custom roles without gaining platform-wide access.
 - Later expansion should support multiple stores or seller teams under the same platform.
 
 ## Product projects

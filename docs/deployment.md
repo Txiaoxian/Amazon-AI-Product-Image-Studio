@@ -17,7 +17,7 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after P18 real Provider smoke tooling
+## Current state after P20 operational hardening
 
 The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. P15 security regression added `scripts/security-regression.sh`, which now validates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety, Compose config, and whitespace checks.
 
@@ -34,6 +34,9 @@ Current verified state:
 - R12 validation confirmed `docker compose -f deploy/docker-compose.yml config` still passes after unified frontend history, seller project/asset workflow polish, and backend project-member last-`OWNER` hardening.
 - Shared local `dev-mysql8`, `dev-redis`, and `dev-minio` are the expected routine validation services and were verified reachable in R5.
 - `scripts/real-provider-smoke.sh` exists as an optional manual smoke entry point for backend-mediated real Provider validation. Its default help/dry-run paths do not call AI Providers or consume credits.
+- `scripts/prod-dry-run.sh` passed safe default and live Compose rehearsal modes with scoped cleanup; no project containers or volumes remained afterwards.
+- `deploy/nginx/amazon-ai-product-image-studio.conf.template` and `scripts/tls-reverse-proxy-check.sh` define and validate the host TLS edge. External traffic routes only to loopback frontend `127.0.0.1:8080`.
+- Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
 
 Known runtime notes:
 
@@ -42,7 +45,7 @@ Known runtime notes:
 - Frontend Nginx must not proxy AI Provider traffic.
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
-- `P18-PROD-DRY-RUN` is the next deployment-specific slice. It should execute the operator evidence path without committing real secrets or changing business runtime behavior.
+- Provider master-key rotation and backup/restore rehearsal are the remaining deployment-specific P20 slices. They must keep default paths non-destructive and avoid committing or printing real secrets.
 
 ## Services
 
@@ -55,9 +58,9 @@ Docker Compose must support:
 - `redis`
 - `minio`
 
-Optional later service:
+Required host service:
 
-- reverse proxy for TLS and routing.
+- TLS reverse proxy for public HTTPS routing using `deploy/nginx/amazon-ai-product-image-studio.conf.template` or an equivalent configuration validated by `scripts/tls-reverse-proxy-check.sh`.
 
 ## Target Compose layout
 

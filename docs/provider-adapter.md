@@ -26,6 +26,8 @@ Provider records store:
 
 API keys must be encrypted at rest and never returned in full to the frontend.
 
+Provider master-key rotation is an operator-only maintenance workflow. It must use a backend CLI with a safe dry-run default and an explicit apply confirmation. Rotation must re-encrypt all eligible Provider credentials in one database transaction, leave Provider credential hints and credential-update timestamps unchanged, roll back fully if any row cannot be processed, and never print plaintext keys, encrypted payloads, hints, base URLs, or tenant/object details.
+
 ## P6 management boundary
 
 P6 implements Provider/model management and safe Provider testing only. It does not implement generation/edit execution, Redis task processing, output asset creation, or frontend workbench backendization.

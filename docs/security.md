@@ -1,8 +1,8 @@
 # Security Plan
 
-## Current Transition Risks During P18 Production Confidence
+## Current Transition Risks During P20 Operational Hardening
 
-The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 Provider/model/default-setting write serialization, and optional real Provider smoke tooling. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 production dry-run, and the merged P19/P20 operational hardening slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
 | Risk | Previous location | Current status after R12 | Acceptance check |
 | --- | --- | --- | --- |
@@ -64,18 +64,24 @@ Resolved transition item:
 - P17 storage quota reservation now makes quota enforcement safe under concurrent writers. Reservation IDs and counter internals are server-only; responses/logs/audit metadata must not leak them or any object key/bucket/MinIO URL. Failed reservations, expired reservations, cleanup failures, released reservations with positive finalize attempts, and malformed counters must fail closed without creating successful asset metadata.
 - P17 production diagnostics is implemented as an admin-only, tenant-scoped, read-only, aggregate-only backend endpoint. Diagnostics must not expose raw Provider payloads, operation/API log metadata, queue payload contents, Redis keys, object keys, bucket names, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets. Maintenance metadata parsing is fail-closed by field type: only numeric aggregate counts, boolean flags, enum statuses, and RFC3339 timestamps may survive.
 - P18 Provider/model/default-setting serialization adds row locks and write-path duplicate model-name rejection so concurrent admin changes cannot silently leave unavailable default references or duplicate active model names.
-- P18 optional real Provider smoke tooling remains manual and cost-bounded. Its default help/dry-run modes do not call any API, explicit `--run` requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`, and direct AI Provider API bases are rejected. R18 pre-review found a parent-shell cleanup-registration bug for temporary payload files; the production dry-run slice must merge cleanup hardening and failure-path regression before Go/No-Go.
+- P18 optional real Provider smoke tooling remains manual and cost-bounded. Its default help/dry-run modes do not call any API, explicit `--run` requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`, and direct AI Provider API bases are rejected.
+- P18 production dry-run fixed the temporary-file cleanup registration bug, added failure-path regression, and passed safe default plus live Compose rehearsal with project-scoped cleanup.
+- P19 host TLS reverse-proxy hardening added an auditable Nginx template and static guardrails. Public traffic must terminate TLS and proxy only to loopback frontend `127.0.0.1:8080`; it must never route directly to backend-api, AI Providers, or relays.
+- P19 API startup now reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
+- P20 pins the CSRF request-header contract to `X-CSRF-Token` across frontend, backend, CORS, Compose, and production-env preflight. Custom header aliases are rejected fail closed.
 
 Storage and P5 review hardening backlog:
 
-- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`; frontend `logRetention` controls remain a separate UI decision after the backend slice, and the UI must still hide orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
-- Built-in `asset:*` permissions are seeded for new tenants; existing tenants need a future permission reconciliation path.
+- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes`, read-only `storageQuota.usedBytes`, and nullable `logRetention`; the UI must still hide orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
+- Built-in `asset:*` permissions and other built-in grants are reconciled for existing tenants during API startup.
 - MinIO bucket creation or verification remains an environment/deployment responsibility.
 - Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.
 
-P4 review hardening backlog:
+P20 operational backlog:
 
-- Frontend CSRF header handling currently uses the default `X-CSRF-Token`; non-default `CSRF_HEADER_NAME` deployments need an explicit frontend config/source of truth before use.
+- Provider master-key rotation must use an operator-only transactional CLI with default dry-run, explicit apply confirmation, and sanitized output.
+- Second and later tenant provisioning must use an operator-only transactional CLI until a deliberate platform-level administration model exists.
+- Tenant HTTP APIs must remain tenant-scoped; do not infer platform-wide super-admin rights from a tenant admin role.
 
 ## Authentication
 
