@@ -337,6 +337,33 @@ test_production_env_preflight_rejects_private_and_link_local_cors() {
   done
 }
 
+test_production_env_preflight_rejects_non_default_csrf_header() {
+  local env_file
+  env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  printf 'CSRF_HEADER_NAME=X-Test-CSRF\n' >>"$env_file"
+  run_case "production env preflight rejects non-default CSRF header" --production-env-file "$env_file"
+  rm -f "$env_file"
+  assert_nonzero_status "$CASE_STATUS" "non-default production CSRF header"
+  assert_contains "$CASE_OUTPUT" "CSRF_HEADER_NAME must be X-CSRF-Token when set"
+  assert_not_contains "$CASE_OUTPUT" "X-Test-CSRF"
+  if [[ -s "$CASE_LOG" ]]; then
+    echo "[fail] non-default CSRF header must fail before delegated commands" >&2
+    exit 1
+  fi
+}
+
+test_production_env_preflight_accepts_default_csrf_header() {
+  local env_file
+  env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  printf 'CSRF_HEADER_NAME=X-CSRF-Token\n' >>"$env_file"
+  run_case "production env preflight accepts default CSRF header" --production-env-file "$env_file"
+  rm -f "$env_file"
+  assert_status 0 "$CASE_STATUS" "default production CSRF header"
+  assert_contains "$CASE_OUTPUT" "production env preflight passed"
+}
+
 test_production_env_preflight_accepts_valid_template_without_leak() {
   local env_file
   env_file="$(mktemp)"
@@ -365,6 +392,8 @@ test_production_env_preflight_rejects_invalid_cookie
 test_production_env_preflight_rejects_nonproduction_app_env
 test_production_env_preflight_rejects_localhost_cors
 test_production_env_preflight_rejects_private_and_link_local_cors
+test_production_env_preflight_rejects_non_default_csrf_header
+test_production_env_preflight_accepts_default_csrf_header
 test_production_env_preflight_accepts_valid_template_without_leak
 
 echo

@@ -80,7 +80,7 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       CSRF_ENABLED: ${CSRF_ENABLED:-true}
       CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-studio_csrf}
-      CSRF_HEADER_NAME: ${CSRF_HEADER_NAME:-X-CSRF-Token}
+      CSRF_HEADER_NAME: X-CSRF-Token
       API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-change-me-32-byte-base64-key-prod-must-replace}
       API_KEY_ENCRYPTION_KEY_ID: ${API_KEY_ENCRYPTION_KEY_ID:-local-dev-v1}
       UPLOAD_MAX_FILE_SIZE_MB: ${UPLOAD_MAX_FILE_SIZE_MB:-25}
@@ -174,7 +174,7 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       CSRF_ENABLED: ${CSRF_ENABLED:-true}
       CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-studio_csrf}
-      CSRF_HEADER_NAME: ${CSRF_HEADER_NAME:-X-CSRF-Token}
+      CSRF_HEADER_NAME: X-CSRF-Token
       API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-change-me-32-byte-base64-key-prod-must-replace}
       API_KEY_ENCRYPTION_KEY_ID: ${API_KEY_ENCRYPTION_KEY_ID:-local-dev-v1}
       TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-image-tasks}

@@ -673,9 +673,12 @@ func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
 		return AuthConfig{}, fmt.Errorf("invalid CSRF_COOKIE_NAME: must differ from AUTH_COOKIE_NAME")
 	}
 
-	csrfHeaderName := stringFromEnv(lookup, "CSRF_HEADER_NAME", defaultCSRFHeaderName)
-	if err := validateHeaderName("CSRF_HEADER_NAME", csrfHeaderName); err != nil {
-		return AuthConfig{}, err
+	csrfHeaderName := defaultCSRFHeaderName
+	if configuredHeaderName, ok := lookup("CSRF_HEADER_NAME"); ok {
+		csrfHeaderName = strings.TrimSpace(configuredHeaderName)
+		if csrfHeaderName != defaultCSRFHeaderName {
+			return AuthConfig{}, fmt.Errorf("invalid CSRF_HEADER_NAME: must be X-CSRF-Token")
+		}
 	}
 
 	return AuthConfig{
@@ -1093,19 +1096,6 @@ func validateCookieDomain(domain string) error {
 	for _, r := range domain {
 		if r <= 31 || r == 127 || r == '/' || r == ':' {
 			return fmt.Errorf("invalid COOKIE_DOMAIN: contains an illegal character")
-		}
-	}
-	return nil
-}
-
-func validateHeaderName(key, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("invalid %s: value is required", key)
-	}
-	for _, r := range name {
-		if r <= 32 || r >= 127 || strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
-			return fmt.Errorf("invalid %s: contains an illegal header name character", key)
 		}
 	}
 	return nil

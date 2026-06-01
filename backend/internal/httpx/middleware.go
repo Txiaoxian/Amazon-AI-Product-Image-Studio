@@ -13,7 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const RequestIDHeader = "X-Request-ID"
+const (
+	RequestIDHeader = "X-Request-ID"
+	csrfHeaderName  = "X-CSRF-Token"
+)
 
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -57,7 +60,7 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 			headers := c.Writer.Header()
 			headers.Set("Access-Control-Allow-Origin", origin)
 			headers.Set("Access-Control-Allow-Credentials", "true")
-			headers.Set("Access-Control-Allow-Headers", "Content-Type, X-Request-ID, X-CSRF-Token")
+			headers.Set("Access-Control-Allow-Headers", "Content-Type, X-Request-ID, "+csrfHeaderName)
 			headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			appendVary(headers, "Origin")
 		}
