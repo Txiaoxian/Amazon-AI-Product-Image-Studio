@@ -74,8 +74,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Build API and worker
-        run: go build ./cmd/api ./cmd/worker
+      - name: Build API, worker, and operator CLIs
+        run: go build ./cmd/api ./cmd/worker ./cmd/provider-key-rotation ./cmd/provision-tenant
 
   repo-gates:
     name: Repository Gates
