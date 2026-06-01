@@ -9,12 +9,19 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { isApiClientError } from '../../api/client'
 import { userAdminApi as defaultUserAdminApi, type UserAdminApi } from '../../api/userAdmin'
 import type { UserId, UserStatus } from '../../types/platform'
-import type { UserAdminPermission, UserAdminRole, UserAdminUser } from '../../types/userAdmin'
+import type {
+  CurrentTenantAdminResponse,
+  UserAdminPermission,
+  UserAdminRole,
+  UserAdminRoleStatus,
+  UserAdminUser,
+} from '../../types/userAdmin'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 
@@ -30,6 +37,7 @@ interface UserRoleAdminPanelProps {
   canDisableUsers: boolean
   canReadRoles: boolean
   canManageRoles: boolean
+  canManageTenant: boolean
   onClose: () => void
   userAdminApi?: UserAdminApi
 }
@@ -48,7 +56,20 @@ interface CreateUserDraft {
   roleIds: string[]
 }
 
+interface CreateRoleDraft {
+  code: string
+  name: string
+  description: string
+}
+
+interface EditRoleDraft {
+  name: string
+  description: string
+  status: UserAdminRoleStatus
+}
+
 const PAGE_SIZE = 10
+const BUILT_IN_ROLE_CODES = new Set(['admin', 'seller', 'viewer'])
 
 const userStatuses: Array<{ value: UserStatus | ''; label: string }> = [
   { value: '', label: '全部状态' },
@@ -66,12 +87,14 @@ export function UserRoleAdminPanel({
   canDisableUsers,
   canReadRoles,
   canManageRoles,
+  canManageTenant,
   onClose,
   userAdminApi = defaultUserAdminApi,
 }: UserRoleAdminPanelProps) {
   const panelSeqRef = useRef(0)
   const usersRequestSeqRef = useRef(0)
   const rolesRequestSeqRef = useRef(0)
+  const tenantRequestSeqRef = useRef(0)
   const availableTabs = useMemo(
     () => getAvailableTabs({ canCreateUsers, canDisableUsers, canManageRoles, canReadRoles, canReadUsers, canUpdateUsers }),
     [canCreateUsers, canDisableUsers, canManageRoles, canReadRoles, canReadUsers, canUpdateUsers],
@@ -80,13 +103,16 @@ export function UserRoleAdminPanel({
   const [usersPage, setUsersPage] = useState<UserPageState>(() => emptyUserPage())
   const [roles, setRoles] = useState<UserAdminRole[]>([])
   const [permissions, setPermissions] = useState<UserAdminPermission[]>([])
+  const [currentTenant, setCurrentTenant] = useState<CurrentTenantAdminResponse | null>(null)
   const [userPageNum, setUserPageNum] = useState(1)
   const [userStatus, setUserStatus] = useState<UserStatus | ''>('')
   const [userQuery, setUserQuery] = useState('')
   const [isLoadingUsers, setLoadingUsers] = useState(false)
   const [isLoadingRoles, setLoadingRoles] = useState(false)
+  const [isLoadingTenant, setLoadingTenant] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
   const [rolesError, setRolesError] = useState<string | null>(null)
+  const [tenantError, setTenantError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [createDraft, setCreateDraft] = useState<CreateUserDraft>(() => emptyCreateDraft())
@@ -98,16 +124,37 @@ export function UserRoleAdminPanel({
   const [roleEditUserId, setRoleEditUserId] = useState<string | null>(null)
   const [roleDraftIds, setRoleDraftIds] = useState<string[]>([])
   const [isSavingRoles, setSavingRoles] = useState(false)
+  const [isEditingTenant, setEditingTenant] = useState(false)
+  const [tenantNameDraft, setTenantNameDraft] = useState('')
+  const [isSavingTenant, setSavingTenant] = useState(false)
+  const [createRoleDraft, setCreateRoleDraft] = useState<CreateRoleDraft>(() => emptyCreateRoleDraft())
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null)
+  const [editRoleDraft, setEditRoleDraft] = useState<EditRoleDraft | null>(null)
+  const [permissionEditRoleId, setPermissionEditRoleId] = useState<string | null>(null)
+  const [permissionDraftIds, setPermissionDraftIds] = useState<string[]>([])
+  const [deleteConfirmRoleId, setDeleteConfirmRoleId] = useState<string | null>(null)
+  const [roleMutation, setRoleMutation] = useState<string | null>(null)
 
   const resetTransientState = useCallback(() => {
     setNotice(null)
     setUsersError(null)
     setRolesError(null)
+    setTenantError(null)
     setCreateError(null)
     setEditingUserId(null)
     setEditDisplayName('')
     setRoleEditUserId(null)
     setRoleDraftIds([])
+    setCurrentTenant(null)
+    setEditingTenant(false)
+    setTenantNameDraft('')
+    setLoadingTenant(false)
+    setCreateRoleDraft(emptyCreateRoleDraft())
+    setEditingRoleId(null)
+    setEditRoleDraft(null)
+    setPermissionEditRoleId(null)
+    setPermissionDraftIds([])
+    setDeleteConfirmRoleId(null)
   }, [])
 
   useEffect(() => {
@@ -115,6 +162,7 @@ export function UserRoleAdminPanel({
       panelSeqRef.current += 1
       usersRequestSeqRef.current += 1
       rolesRequestSeqRef.current += 1
+      tenantRequestSeqRef.current += 1
       resetTransientState()
       return
     }
@@ -161,6 +209,33 @@ export function UserRoleAdminPanel({
     }
   }, [canReadUsers, isOpen, userAdminApi, userPageNum, userQuery, userStatus])
 
+  const loadCurrentTenant = useCallback(async () => {
+    if (!isOpen) {
+      return
+    }
+
+    const panelSeq = panelSeqRef.current
+    const requestSeq = tenantRequestSeqRef.current + 1
+    tenantRequestSeqRef.current = requestSeq
+    setLoadingTenant(true)
+    setTenantError(null)
+    try {
+      const nextTenant = await userAdminApi.getCurrentTenant()
+      if (tenantRequestSeqRef.current !== requestSeq || panelSeqRef.current !== panelSeq || !isOpen) {
+        return
+      }
+      setCurrentTenant(nextTenant)
+    } catch (error) {
+      if (tenantRequestSeqRef.current === requestSeq && panelSeqRef.current === panelSeq) {
+        setTenantError(formatAdminError(error))
+      }
+    } finally {
+      if (tenantRequestSeqRef.current === requestSeq && panelSeqRef.current === panelSeq) {
+        setLoadingTenant(false)
+      }
+    }
+  }, [isOpen, userAdminApi])
+
   const loadRolesAndPermissions = useCallback(async () => {
     if (!isOpen || !canReadRoles) {
       return
@@ -193,6 +268,13 @@ export function UserRoleAdminPanel({
   }, [canReadRoles, isOpen, userAdminApi])
 
   useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+    void loadCurrentTenant()
+  }, [isOpen, loadCurrentTenant])
+
+  useEffect(() => {
     if (!isOpen || activeTab !== 'users' || !canReadUsers) {
       return
     }
@@ -210,8 +292,37 @@ export function UserRoleAdminPanel({
     panelSeqRef.current += 1
     usersRequestSeqRef.current += 1
     rolesRequestSeqRef.current += 1
+    tenantRequestSeqRef.current += 1
+    setLoadingTenant(false)
     setCreateDraft(emptyCreateDraft())
     onClose()
+  }
+
+  const saveCurrentTenant = async () => {
+    if (isSavingTenant) {
+      return
+    }
+    if (!csrfToken || !canManageTenant) {
+      setTenantError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+
+    tenantRequestSeqRef.current += 1
+    setLoadingTenant(false)
+    setSavingTenant(true)
+    setTenantError(null)
+    setNotice(null)
+    try {
+      const updated = await userAdminApi.updateCurrentTenant({ name: tenantNameDraft.trim() }, csrfToken)
+      setCurrentTenant(updated)
+      setEditingTenant(false)
+      setTenantNameDraft('')
+      setNotice('租户名称已更新。')
+    } catch (error) {
+      setTenantError(formatAdminError(error))
+    } finally {
+      setSavingTenant(false)
+    }
   }
 
   const createUser = async () => {
@@ -331,6 +442,120 @@ export function UserRoleAdminPanel({
     }
   }
 
+  const createCustomRole = async () => {
+    if (roleMutation) {
+      return
+    }
+    if (!csrfToken) {
+      setRolesError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+
+    rolesRequestSeqRef.current += 1
+    setLoadingRoles(false)
+    setRoleMutation('create')
+    setRolesError(null)
+    setNotice(null)
+    try {
+      await userAdminApi.createRole({
+        code: createRoleDraft.code.trim(),
+        name: createRoleDraft.name.trim(),
+        description: createRoleDraft.description.trim(),
+      }, csrfToken)
+      setCreateRoleDraft(emptyCreateRoleDraft())
+      setNotice('自定义角色已创建。')
+      await loadRolesAndPermissions()
+    } catch (error) {
+      setRolesError(formatAdminError(error))
+    } finally {
+      setRoleMutation(null)
+    }
+  }
+
+  const saveCustomRole = async () => {
+    if (roleMutation) {
+      return
+    }
+    if (!csrfToken || !editingRoleId || !editRoleDraft) {
+      setRolesError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+
+    rolesRequestSeqRef.current += 1
+    setLoadingRoles(false)
+    setRoleMutation(editingRoleId)
+    setRolesError(null)
+    setNotice(null)
+    try {
+      await userAdminApi.updateRole(editingRoleId, {
+        name: editRoleDraft.name.trim(),
+        description: editRoleDraft.description.trim(),
+        status: editRoleDraft.status,
+      }, csrfToken)
+      setEditingRoleId(null)
+      setEditRoleDraft(null)
+      setNotice('自定义角色已更新。')
+      await loadRolesAndPermissions()
+    } catch (error) {
+      setRolesError(formatAdminError(error))
+    } finally {
+      setRoleMutation(null)
+    }
+  }
+
+  const saveRolePermissions = async () => {
+    if (roleMutation) {
+      return
+    }
+    if (!csrfToken || !permissionEditRoleId) {
+      setRolesError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+
+    rolesRequestSeqRef.current += 1
+    setLoadingRoles(false)
+    setRoleMutation(permissionEditRoleId)
+    setRolesError(null)
+    setNotice(null)
+    try {
+      await userAdminApi.replaceRolePermissions(permissionEditRoleId, { permissionIds: permissionDraftIds }, csrfToken)
+      setPermissionEditRoleId(null)
+      setPermissionDraftIds([])
+      setNotice('角色权限已更新。')
+      await loadRolesAndPermissions()
+    } catch (error) {
+      setRolesError(formatAdminError(error))
+    } finally {
+      setRoleMutation(null)
+    }
+  }
+
+  const deleteCustomRole = async (roleId: string) => {
+    if (roleMutation) {
+      return
+    }
+    if (!csrfToken) {
+      setRolesError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+
+    rolesRequestSeqRef.current += 1
+    setLoadingRoles(false)
+    setRoleMutation(roleId)
+    setRolesError(null)
+    setNotice(null)
+    try {
+      await userAdminApi.deleteRole(roleId, csrfToken)
+      setDeleteConfirmRoleId(null)
+      setNotice('自定义角色已删除。')
+      await loadRolesAndPermissions()
+    } catch (error) {
+      setRolesError(formatAdminError(error))
+    } finally {
+      setRoleMutation(null)
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(usersPage.total / usersPage.pageSize))
 
   return (
@@ -351,8 +576,9 @@ export function UserRoleAdminPanel({
           </div>
 
           <Button
-            icon={<RefreshCw className={`h-4 w-4 ${isLoadingUsers || isLoadingRoles ? 'animate-spin' : ''}`} />}
+            icon={<RefreshCw className={`h-4 w-4 ${isLoadingUsers || isLoadingRoles || isLoadingTenant ? 'animate-spin' : ''}`} />}
             onClick={() => {
+              void loadCurrentTenant()
               if (activeTab === 'users') {
                 void loadUsers()
               }
@@ -366,9 +592,31 @@ export function UserRoleAdminPanel({
           </Button>
         </div>
 
+        <TenantManagementSection
+          canManageTenant={canManageTenant}
+          currentTenant={currentTenant}
+          draftName={tenantNameDraft}
+          error={tenantError}
+          isEditing={isEditingTenant}
+          isLoading={isLoadingTenant}
+          isSaving={isSavingTenant}
+          onCancel={() => {
+            setEditingTenant(false)
+            setTenantNameDraft('')
+          }}
+          onDraftNameChange={setTenantNameDraft}
+          onSave={() => void saveCurrentTenant()}
+          onStartEdit={() => {
+            if (currentTenant) {
+              setEditingTenant(true)
+              setTenantNameDraft(currentTenant.name)
+            }
+          }}
+        />
+
         <StatusMessage message={notice} tone="success" />
 
-        {activeTab === 'users' ? (
+        {activeTab === 'users' && availableTabs.includes('users') ? (
           <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="min-w-0 space-y-3">
               {canReadUsers ? (
@@ -491,10 +739,47 @@ export function UserRoleAdminPanel({
           </section>
         ) : null}
 
-        {activeTab === 'roles' ? (
+        {activeTab === 'roles' && availableTabs.includes('roles') ? (
           <RolePermissionView
+            canManageRoles={canManageRoles}
+            createDraft={createRoleDraft}
+            deleteConfirmRoleId={deleteConfirmRoleId}
+            editDraft={editRoleDraft}
+            editingRoleId={editingRoleId}
             error={rolesError}
             isLoading={isLoadingRoles}
+            mutationId={roleMutation}
+            onCancelDelete={() => setDeleteConfirmRoleId(null)}
+            onCancelEdit={() => {
+              setEditingRoleId(null)
+              setEditRoleDraft(null)
+            }}
+            onCancelPermissions={() => {
+              setPermissionEditRoleId(null)
+              setPermissionDraftIds([])
+            }}
+            onConfirmDelete={(roleId) => void deleteCustomRole(roleId)}
+            onCreateDraftChange={setCreateRoleDraft}
+            onCreateRole={() => void createCustomRole()}
+            onEditDraftChange={setEditRoleDraft}
+            onRequestDelete={setDeleteConfirmRoleId}
+            onSaveEdit={() => void saveCustomRole()}
+            onSavePermissions={() => void saveRolePermissions()}
+            onStartEdit={(role) => {
+              setEditingRoleId(role.id)
+              setEditRoleDraft({
+                name: role.name,
+                description: role.description,
+                status: role.status,
+              })
+            }}
+            onStartPermissions={(role) => {
+              setPermissionEditRoleId(role.id)
+              setPermissionDraftIds((role.permissions ?? []).map((permission) => String(permission.id)))
+            }}
+            onPermissionDraftChange={setPermissionDraftIds}
+            permissionDraftIds={permissionDraftIds}
+            permissionEditRoleId={permissionEditRoleId}
             permissions={permissions}
             roles={roles}
           />
@@ -740,38 +1025,277 @@ function UserListItem({
   )
 }
 
+interface TenantManagementSectionProps {
+  canManageTenant: boolean
+  currentTenant: CurrentTenantAdminResponse | null
+  draftName: string
+  error: string | null
+  isEditing: boolean
+  isLoading: boolean
+  isSaving: boolean
+  onCancel: () => void
+  onDraftNameChange: (value: string) => void
+  onSave: () => void
+  onStartEdit: () => void
+}
+
+function TenantManagementSection({
+  canManageTenant,
+  currentTenant,
+  draftName,
+  error,
+  isEditing,
+  isLoading,
+  isSaving,
+  onCancel,
+  onDraftNameChange,
+  onSave,
+  onStartEdit,
+}: TenantManagementSectionProps) {
+  return (
+    <section className="rounded-lg border border-ink-200 bg-ink-50 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-900">当前租户</h3>
+          {isLoading ? <p className="mt-1 text-xs text-ink-500">正在加载租户信息...</p> : null}
+          {!isLoading && currentTenant ? <p className="mt-1 text-sm text-ink-700">{currentTenant.name}</p> : null}
+          {!isLoading && !currentTenant && !error ? <p className="mt-1 text-xs text-ink-500">暂无租户信息。</p> : null}
+        </div>
+        {canManageTenant && currentTenant && !isEditing ? (
+          <button
+            aria-label="编辑当前租户名称"
+            className="icon-button h-8 w-8"
+            onClick={onStartEdit}
+            title="编辑当前租户名称"
+            type="button"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      <StatusMessage message={error} tone="error" />
+
+      {isEditing ? (
+        <form
+          className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onSave()
+          }}
+        >
+          <input
+            aria-label="当前租户名称"
+            className="field-input"
+            onChange={(event) => onDraftNameChange(event.target.value)}
+            required
+            value={draftName}
+          />
+          <Button disabled={isSaving} icon={isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
+            保存租户名称
+          </Button>
+          <Button disabled={isSaving} onClick={onCancel}>
+            取消
+          </Button>
+        </form>
+      ) : null}
+    </section>
+  )
+}
+
 interface RolePermissionViewProps {
   roles: UserAdminRole[]
   permissions: UserAdminPermission[]
   isLoading: boolean
   error: string | null
+  canManageRoles: boolean
+  createDraft: CreateRoleDraft
+  editingRoleId: string | null
+  editDraft: EditRoleDraft | null
+  permissionEditRoleId: string | null
+  permissionDraftIds: string[]
+  deleteConfirmRoleId: string | null
+  mutationId: string | null
+  onCreateDraftChange: (draft: CreateRoleDraft | ((current: CreateRoleDraft) => CreateRoleDraft)) => void
+  onCreateRole: () => void
+  onStartEdit: (role: UserAdminRole) => void
+  onEditDraftChange: (draft: EditRoleDraft) => void
+  onCancelEdit: () => void
+  onSaveEdit: () => void
+  onStartPermissions: (role: UserAdminRole) => void
+  onPermissionDraftChange: (permissionIds: string[]) => void
+  onCancelPermissions: () => void
+  onSavePermissions: () => void
+  onRequestDelete: (roleId: string) => void
+  onCancelDelete: () => void
+  onConfirmDelete: (roleId: string) => void
 }
 
-function RolePermissionView({ error, isLoading, permissions, roles }: RolePermissionViewProps) {
+function RolePermissionView({
+  canManageRoles,
+  createDraft,
+  deleteConfirmRoleId,
+  editDraft,
+  editingRoleId,
+  error,
+  isLoading,
+  mutationId,
+  onCancelDelete,
+  onCancelEdit,
+  onCancelPermissions,
+  onConfirmDelete,
+  onCreateDraftChange,
+  onCreateRole,
+  onEditDraftChange,
+  onPermissionDraftChange,
+  onRequestDelete,
+  onSaveEdit,
+  onSavePermissions,
+  onStartEdit,
+  onStartPermissions,
+  permissionDraftIds,
+  permissionEditRoleId,
+  permissions,
+  roles,
+}: RolePermissionViewProps) {
   return (
     <section className="space-y-4">
       <StatusMessage message={error} tone="error" />
       {isLoading ? <p className="rounded-md bg-ink-50 px-4 py-8 text-center text-sm text-ink-500">正在加载角色与权限...</p> : null}
       {!isLoading && roles.length === 0 ? <EmptyState title="暂无角色" body="当前租户没有可见角色。" /> : null}
 
+      {canManageRoles ? (
+        <form
+          className="grid gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3 md:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onCreateRole()
+          }}
+        >
+          <Field label="角色代码">
+            <input
+              className="field-input"
+              onChange={(event) => onCreateDraftChange((current) => ({ ...current, code: event.target.value }))}
+              required
+              value={createDraft.code}
+            />
+          </Field>
+          <Field label="角色名称">
+            <input
+              className="field-input"
+              onChange={(event) => onCreateDraftChange((current) => ({ ...current, name: event.target.value }))}
+              required
+              value={createDraft.name}
+            />
+          </Field>
+          <Field label="角色说明">
+            <input
+              className="field-input"
+              onChange={(event) => onCreateDraftChange((current) => ({ ...current, description: event.target.value }))}
+              value={createDraft.description}
+            />
+          </Field>
+          <Button className="md:col-span-3 md:w-fit" disabled={Boolean(mutationId)} icon={mutationId === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} type="submit" variant="primary">
+            创建角色
+          </Button>
+        </form>
+      ) : null}
+
       <div className="grid gap-3 lg:grid-cols-2">
-        {roles.map((role) => (
-          <article className="rounded-lg border border-ink-200 bg-white p-3" key={role.id}>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-ink-900">{role.name}</h3>
-              <span className="rounded-md bg-ink-100 px-2 py-1 text-xs font-semibold text-ink-600">{role.code}</span>
-              <StatusBadge status={role.status} />
-            </div>
-            {role.description ? <p className="mt-2 text-xs text-ink-500">{role.description}</p> : null}
-            <div className="mt-3 flex flex-wrap gap-1">
-              {(role.permissions ?? []).length > 0 ? (
-                role.permissions?.map((permission) => <PermissionPill key={String(permission.code)} permission={permission} />)
-              ) : (
-                <span className="text-xs text-ink-400">未返回权限明细</span>
-              )}
-            </div>
-          </article>
-        ))}
+        {roles.map((role) => {
+          const isBuiltIn = isBuiltInRole(role)
+          const isEditing = editingRoleId === role.id && editDraft
+          const isEditingPermissions = permissionEditRoleId === role.id
+          const isConfirmingDelete = deleteConfirmRoleId === role.id
+          const isMutating = mutationId === role.id
+
+          return (
+            <article className="rounded-lg border border-ink-200 bg-white p-3" key={role.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-ink-900">{role.name}</h3>
+                  <span className="rounded-md bg-ink-100 px-2 py-1 text-xs font-semibold text-ink-600">{role.code}</span>
+                  <StatusBadge status={role.status} />
+                </div>
+                {!isBuiltIn && canManageRoles ? (
+                  <div className="flex gap-1">
+                    <button aria-label={`编辑角色 ${role.name}`} className="icon-button h-8 w-8" disabled={Boolean(mutationId)} onClick={() => onStartEdit(role)} title="编辑角色" type="button">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button aria-label={`配置角色权限 ${role.name}`} className="icon-button h-8 w-8" disabled={Boolean(mutationId)} onClick={() => onStartPermissions(role)} title="配置角色权限" type="button">
+                      <ShieldCheck className="h-4 w-4" />
+                    </button>
+                    <button aria-label={`删除角色 ${role.name}`} className="icon-button h-8 w-8" disabled={Boolean(mutationId)} onClick={() => onRequestDelete(role.id)} title="删除角色" type="button">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {isBuiltIn ? <p className="mt-2 text-xs font-semibold text-ink-500">系统内置，只读</p> : null}
+              {role.description ? <p className="mt-2 text-xs text-ink-500">{role.description}</p> : null}
+              <div className="mt-3 flex flex-wrap gap-1">
+                {(role.permissions ?? []).length > 0 ? (
+                  role.permissions?.map((permission) => <PermissionPill key={String(permission.code)} permission={permission} />)
+                ) : (
+                  <span className="text-xs text-ink-400">未返回权限明细</span>
+                )}
+              </div>
+
+              {isEditing ? (
+                <form
+                  className="mt-3 space-y-2 rounded-md border border-ink-200 bg-ink-50 p-3"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    onSaveEdit()
+                  }}
+                >
+                  <Field label="编辑角色名称">
+                    <input className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, name: event.target.value })} required value={editDraft.name} />
+                  </Field>
+                  <Field label="编辑角色说明">
+                    <input className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, description: event.target.value })} value={editDraft.description} />
+                  </Field>
+                  <Field label="编辑角色状态">
+                    <select className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, status: event.target.value as UserAdminRoleStatus })} value={editDraft.status}>
+                      <option value="ACTIVE">启用</option>
+                      <option value="DISABLED">禁用</option>
+                    </select>
+                  </Field>
+                  <div className="flex flex-wrap gap-2">
+                    <Button disabled={Boolean(mutationId)} icon={isMutating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
+                      保存角色
+                    </Button>
+                    <Button disabled={Boolean(mutationId)} onClick={onCancelEdit}>取消</Button>
+                  </div>
+                </form>
+              ) : null}
+
+              {isEditingPermissions ? (
+                <div className="mt-3 space-y-2 rounded-md border border-ink-200 bg-ink-50 p-3">
+                  <PermissionCheckboxes onChange={onPermissionDraftChange} permissionIds={permissionDraftIds} permissions={permissions} />
+                  <div className="flex flex-wrap gap-2">
+                    <Button disabled={Boolean(mutationId)} icon={isMutating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} onClick={onSavePermissions} variant="primary">
+                      保存权限
+                    </Button>
+                    <Button disabled={Boolean(mutationId)} onClick={onCancelPermissions}>取消</Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {isConfirmingDelete ? (
+                <div className="mt-3 space-y-2 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  <p>确认删除此自定义角色？</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button aria-label={`确认删除角色 ${role.name}`} disabled={Boolean(mutationId)} onClick={() => onConfirmDelete(role.id)} variant="danger">
+                      确认删除
+                    </Button>
+                    <Button disabled={Boolean(mutationId)} onClick={onCancelDelete}>取消</Button>
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          )
+        })}
       </div>
 
       <div>
@@ -786,6 +1310,45 @@ function RolePermissionView({ error, isLoading, permissions, roles }: RolePermis
         </div>
       </div>
     </section>
+  )
+}
+
+function PermissionCheckboxes({
+  onChange,
+  permissionIds,
+  permissions,
+}: {
+  permissionIds: string[]
+  permissions: UserAdminPermission[]
+  onChange: (permissionIds: string[]) => void
+}) {
+  return (
+    <fieldset className="rounded-md border border-ink-200 bg-white px-3 py-2">
+      <legend className="px-1 text-xs font-semibold text-ink-600">角色权限</legend>
+      {permissions.length === 0 ? <p className="text-xs text-ink-400">权限目录为空。</p> : null}
+      <div className="mt-2 grid gap-2">
+        {permissions.map((permission) => {
+          const id = String(permission.id)
+          return (
+            <label className="flex items-center gap-2 text-sm text-ink-700" key={id}>
+              <input
+                aria-label={`角色权限 ${String(permission.code)}`}
+                checked={permissionIds.includes(id)}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    onChange([...permissionIds, id])
+                  } else {
+                    onChange(permissionIds.filter((permissionId) => permissionId !== id))
+                  }
+                }}
+                type="checkbox"
+              />
+              <span>{String(permission.code)}</span>
+            </label>
+          )
+        })}
+      </div>
+    </fieldset>
   )
 }
 
@@ -917,6 +1480,18 @@ function emptyCreateDraft(): CreateUserDraft {
     password: '',
     roleIds: [],
   }
+}
+
+function emptyCreateRoleDraft(): CreateRoleDraft {
+  return {
+    code: '',
+    name: '',
+    description: '',
+  }
+}
+
+function isBuiltInRole(role: UserAdminRole): boolean {
+  return BUILT_IN_ROLE_CODES.has(role.code)
 }
 
 function upsertById<TItem extends { id: string }>(items: TItem[], nextItem: TItem): TItem[] {

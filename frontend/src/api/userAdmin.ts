@@ -1,8 +1,13 @@
 import type { QueryParamRecord } from '../types/api'
 import type {
   CreateUserAdminUserRequest,
+  CreateUserAdminRoleRequest,
+  CurrentTenantAdminResponse,
   ListUsersParams,
+  ReplaceRolePermissionsRequest,
   ReplaceUserRolesRequest,
+  UpdateCurrentTenantRequest,
+  UpdateUserAdminRoleRequest,
   UpdateUserAdminUserRequest,
   UserAdminPage,
   UserAdminPermission,
@@ -13,6 +18,8 @@ import type { UserId } from '../types/platform'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface UserAdminApi {
+  getCurrentTenant(): Promise<CurrentTenantAdminResponse>
+  updateCurrentTenant(request: UpdateCurrentTenantRequest, csrfToken: string): Promise<CurrentTenantAdminResponse>
   listUsers(params?: ListUsersParams): Promise<UserAdminPage>
   createUser(request: CreateUserAdminUserRequest, csrfToken: string): Promise<UserAdminUser>
   getUser(userId: UserId | string): Promise<UserAdminUser>
@@ -21,11 +28,20 @@ export interface UserAdminApi {
   enableUser(userId: UserId | string, csrfToken: string): Promise<UserAdminUser>
   replaceUserRoles(userId: UserId | string, request: ReplaceUserRolesRequest, csrfToken: string): Promise<UserAdminUser>
   listRoles(): Promise<UserAdminRole[]>
+  createRole(request: CreateUserAdminRoleRequest, csrfToken: string): Promise<UserAdminRole>
+  updateRole(roleId: string, request: UpdateUserAdminRoleRequest, csrfToken: string): Promise<UserAdminRole>
+  deleteRole(roleId: string, csrfToken: string): Promise<void>
+  replaceRolePermissions(roleId: string, request: ReplaceRolePermissionsRequest, csrfToken: string): Promise<UserAdminRole>
   listPermissions(): Promise<UserAdminPermission[]>
 }
 
 export function createUserAdminApi(client: ApiClient = apiClient): UserAdminApi {
   return {
+    getCurrentTenant: () => client.get<CurrentTenantAdminResponse>('/tenants/current'),
+    updateCurrentTenant: (request, csrfToken) =>
+      client.patch<CurrentTenantAdminResponse>('/tenants/current', request, {
+        headers: csrfHeaders(csrfToken),
+      }),
     listUsers: (params = {}) => client.get<UserAdminPage>('/users', { query: listUsersQuery(params) }),
     createUser: (request, csrfToken) =>
       client.post<UserAdminUser>('/users', request, {
@@ -49,6 +65,24 @@ export function createUserAdminApi(client: ApiClient = apiClient): UserAdminApi 
         headers: csrfHeaders(csrfToken),
       }),
     listRoles: () => client.get<UserAdminRole[]>('/roles'),
+    createRole: (request, csrfToken) =>
+      client.post<UserAdminRole>('/roles', request, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    updateRole: (roleId, request, csrfToken) =>
+      client.patch<UserAdminRole>(`/roles/${encodeURIComponent(roleId)}`, request, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    deleteRole: (roleId, csrfToken) =>
+      client.delete<void>(`/roles/${encodeURIComponent(roleId)}`, {
+        headers: csrfHeaders(csrfToken),
+      }),
+    replaceRolePermissions: (roleId, request, csrfToken) =>
+      client.request<UserAdminRole>(`/roles/${encodeURIComponent(roleId)}/permissions`, {
+        body: request,
+        headers: csrfHeaders(csrfToken),
+        method: 'PUT',
+      }),
     listPermissions: () => client.get<UserAdminPermission[]>('/permissions'),
   }
 }
