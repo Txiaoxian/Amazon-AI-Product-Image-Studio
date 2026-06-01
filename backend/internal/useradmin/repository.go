@@ -11,6 +11,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/idgen"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -212,6 +213,7 @@ func (r Repository) ActiveRolesByIDs(ctx context.Context, scope tenant.Scope, ro
 	var records []database.Role
 	if err := db.Model(&database.Role{}).
 		Where("tenant_id = ? AND id IN ? AND status = ?", scope.ID(), roleIDs, auth.RoleStatusActive).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Order("code ASC, id ASC").
 		Find(&records).Error; err != nil {
 		return nil, err
@@ -237,6 +239,138 @@ func (r Repository) ListRoles(ctx context.Context, scope tenant.Scope) ([]databa
 	return records, nil
 }
 
+func (r Repository) FindTenant(ctx context.Context, scope tenant.Scope) (database.Tenant, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.Tenant{}, err
+	}
+	var record database.Tenant
+	err = db.Model(&database.Tenant{}).Where("id = ?", scope.ID()).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.Tenant{}, ErrNotFound
+	}
+	return record, err
+}
+
+func (r Repository) UpdateTenant(ctx context.Context, scope tenant.Scope, name string, updatedAt time.Time) (database.Tenant, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.Tenant{}, err
+	}
+	result := db.Model(&database.Tenant{}).
+		Where("id = ?", scope.ID()).
+		Updates(map[string]any{"name": name, "updated_at": updatedAt})
+	if result.Error != nil {
+		return database.Tenant{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return database.Tenant{}, ErrNotFound
+	}
+	return r.FindTenant(ctx, scope)
+}
+
+func (r Repository) FindRole(ctx context.Context, scope tenant.Scope, roleID string) (database.Role, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.Role{}, err
+	}
+	roleID = strings.TrimSpace(roleID)
+	if roleID == "" {
+		return database.Role{}, ErrValidation
+	}
+	var record database.Role
+	err = db.Model(&database.Role{}).
+		Where("tenant_id = ? AND id = ?", scope.ID(), roleID).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.Role{}, ErrNotFound
+	}
+	return record, err
+}
+
+func (r Repository) RoleCodeExists(ctx context.Context, scope tenant.Scope, code string) (bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	var count int64
+	if err := db.Model(&database.Role{}).
+		Where("tenant_id = ? AND code = ?", scope.ID(), strings.TrimSpace(code)).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r Repository) CreateRole(ctx context.Context, scope tenant.Scope, record *database.Role) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	record.TenantID = scope.ID()
+	if err := db.Create(record).Error; err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (r Repository) UpdateRole(ctx context.Context, scope tenant.Scope, roleID string, updates map[string]any) (database.Role, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return database.Role{}, err
+	}
+	result := db.Model(&database.Role{}).
+		Where("tenant_id = ? AND id = ?", scope.ID(), strings.TrimSpace(roleID)).
+		Updates(updates)
+	if result.Error != nil {
+		return database.Role{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return database.Role{}, ErrNotFound
+	}
+	return r.FindRole(ctx, scope, roleID)
+}
+
+func (r Repository) DeleteRole(ctx context.Context, scope tenant.Scope, roleID string) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	roleID = strings.TrimSpace(roleID)
+	if roleID == "" {
+		return ErrValidation
+	}
+	if err := db.Where("tenant_id = ? AND role_id = ?", scope.ID(), roleID).Delete(&database.RolePermission{}).Error; err != nil {
+		return err
+	}
+	result := db.Where("tenant_id = ? AND id = ?", scope.ID(), roleID).Delete(&database.Role{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r Repository) RoleAssignmentCount(ctx context.Context, scope tenant.Scope, roleID string) (int64, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := db.Model(&database.UserRole{}).
+		Where("tenant_id = ? AND role_id = ?", scope.ID(), strings.TrimSpace(roleID)).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r Repository) ListPermissions(ctx context.Context) ([]database.Permission, error) {
 	if r.db == nil {
 		return nil, database.ErrNilDB
@@ -249,6 +383,30 @@ func (r Repository) ListPermissions(ctx context.Context) ([]database.Permission,
 		Order("code ASC, id ASC").
 		Find(&records).Error; err != nil {
 		return nil, err
+	}
+	return records, nil
+}
+
+func (r Repository) PermissionsByIDs(ctx context.Context, permissionIDs []string) ([]database.Permission, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	permissionIDs = cleanStringSet(permissionIDs)
+	if len(permissionIDs) == 0 {
+		return []database.Permission{}, nil
+	}
+	var records []database.Permission
+	if err := r.db.WithContext(ctx).Model(&database.Permission{}).
+		Where("id IN ?", permissionIDs).
+		Order("code ASC, id ASC").
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	if len(records) != len(permissionIDs) {
+		return nil, ErrValidation
 	}
 	return records, nil
 }
@@ -307,6 +465,34 @@ func (r Repository) ReplaceUserRoles(ctx context.Context, scope tenant.Scope, us
 		return nil
 	}
 	return db.Create(userRoleRecords(scope.ID(), userID, roleIDs)).Error
+}
+
+func (r Repository) ReplaceRolePermissions(ctx context.Context, scope tenant.Scope, roleID string, permissionIDs []string) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	roleID = strings.TrimSpace(roleID)
+	if roleID == "" {
+		return ErrValidation
+	}
+	if err := db.Where("tenant_id = ? AND role_id = ?", scope.ID(), roleID).Delete(&database.RolePermission{}).Error; err != nil {
+		return err
+	}
+	if len(permissionIDs) == 0 {
+		return nil
+	}
+	records := make([]database.RolePermission, 0, len(permissionIDs))
+	for _, permissionID := range permissionIDs {
+		records = append(records, database.RolePermission{
+			ID:           newID(),
+			TenantID:     scope.ID(),
+			RoleID:       roleID,
+			PermissionID: permissionID,
+			CreatedAt:    nowUTC(),
+		})
+	}
+	return db.Create(records).Error
 }
 
 func (r Repository) ActiveAdminCount(ctx context.Context, scope tenant.Scope) (int64, error) {

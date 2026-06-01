@@ -454,6 +454,225 @@ func TestUserAdminCreateAndStatusChangeRequireSpecificPermissions(t *testing.T) 
 	}
 }
 
+func TestUserAdminCurrentTenantReadAndPatch(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+
+	getResponse := performJSON(router, http.MethodGet, "/api/v1/tenants/current", nil, adminSession.cookies, nil)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("get current tenant status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, getResponse), "name") != "Studio Tenant" {
+		t.Fatalf("unexpected current tenant response: %s", getResponse.Body.String())
+	}
+
+	patchResponse := performJSON(router, http.MethodPatch, "/api/v1/tenants/current", map[string]any{
+		"name": " Updated Studio Tenant ",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if patchResponse.Code != http.StatusOK {
+		t.Fatalf("patch current tenant status = %d, want %d: %s", patchResponse.Code, http.StatusOK, patchResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, patchResponse), "name") != "Updated Studio Tenant" {
+		t.Fatalf("unexpected updated tenant response: %s", patchResponse.Body.String())
+	}
+
+	var tenantRecord database.Tenant
+	if err := db.Where("id = ?", adminSession.tenantID).First(&tenantRecord).Error; err != nil {
+		t.Fatalf("load updated tenant: %v", err)
+	}
+	if tenantRecord.Name != "Updated Studio Tenant" {
+		t.Fatalf("tenant name = %q, want updated name", tenantRecord.Name)
+	}
+
+	unsafeResponse := performJSON(router, http.MethodPatch, "/api/v1/tenants/current", map[string]any{
+		"name":     "Unsafe",
+		"tenantId": "tenant-b",
+		"status":   "DISABLED",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if unsafeResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsafe tenant patch status = %d, want %d", unsafeResponse.Code, http.StatusUnprocessableEntity)
+	}
+
+	assertUserAdminOperationLogs(t, db, []string{"tenant.update"})
+}
+
+func TestUserAdminCustomRoleLifecycleBuiltInProtectionAndTenantIsolation(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	_, crossTenantRoleID := seedUserAdminOtherTenant(t, db)
+
+	createResponse := performJSON(router, http.MethodPost, "/api/v1/roles", map[string]any{
+		"code":        "catalog-editor",
+		"name":        "Catalog Editor",
+		"description": "Can curate product assets.",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create role status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	created := decodeData(t, createResponse)
+	roleID := stringField(t, created, "id")
+	if stringField(t, created, "code") != "catalog-editor" {
+		t.Fatalf("unexpected created role: %s", createResponse.Body.String())
+	}
+
+	permissionIDs := []string{
+		permissionIDByCode(t, db, "asset:read"),
+		permissionIDByCode(t, db, "asset:update"),
+	}
+	replaceResponse := performJSON(router, http.MethodPut, "/api/v1/roles/"+roleID+"/permissions", map[string]any{
+		"permissionIds": permissionIDs,
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if replaceResponse.Code != http.StatusOK {
+		t.Fatalf("replace role permissions status = %d, want %d: %s", replaceResponse.Code, http.StatusOK, replaceResponse.Body.String())
+	}
+	permissions, ok := decodeData(t, replaceResponse)["permissions"].([]any)
+	if !ok || len(permissions) != 2 {
+		t.Fatalf("updated role permissions = %#v, want 2 entries", decodeData(t, replaceResponse)["permissions"])
+	}
+
+	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/roles/"+roleID, map[string]any{
+		"name":        "Catalog Curator",
+		"description": "",
+		"status":      "DISABLED",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update role status = %d, want %d: %s", updateResponse.Code, http.StatusOK, updateResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, updateResponse), "name") != "Catalog Curator" {
+		t.Fatalf("unexpected updated role: %s", updateResponse.Body.String())
+	}
+
+	for name, request := range map[string]struct {
+		method string
+		path   string
+		body   map[string]any
+		want   int
+	}{
+		"patch built-in": {
+			method: http.MethodPatch,
+			path:   "/api/v1/roles/" + roleIDByCode(t, db, adminSession.tenantID, "admin"),
+			body:   map[string]any{"name": "Unsafe Admin"},
+			want:   http.StatusConflict,
+		},
+		"delete built-in": {
+			method: http.MethodDelete,
+			path:   "/api/v1/roles/" + roleIDByCode(t, db, adminSession.tenantID, "seller"),
+			want:   http.StatusConflict,
+		},
+		"replace built-in permissions": {
+			method: http.MethodPut,
+			path:   "/api/v1/roles/" + roleIDByCode(t, db, adminSession.tenantID, "viewer") + "/permissions",
+			body:   map[string]any{"permissionIds": []string{}},
+			want:   http.StatusConflict,
+		},
+		"patch cross-tenant": {
+			method: http.MethodPatch,
+			path:   "/api/v1/roles/" + crossTenantRoleID,
+			body:   map[string]any{"name": "Cross tenant"},
+			want:   http.StatusNotFound,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := performJSON(router, request.method, request.path, request.body, adminSession.cookies, adminSession.csrfHeader())
+			if response.Code != request.want {
+				t.Fatalf("%s status = %d, want %d: %s", request.path, response.Code, request.want, response.Body.String())
+			}
+		})
+	}
+
+	deleteResponse := performJSON(router, http.MethodDelete, "/api/v1/roles/"+roleID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete role status = %d, want %d: %s", deleteResponse.Code, http.StatusOK, deleteResponse.Body.String())
+	}
+
+	assertUserAdminOperationLogs(t, db, []string{
+		"role.create",
+		"role.permissions.replace",
+		"role.update",
+		"role.delete",
+	})
+}
+
+func TestUserAdminCustomRoleDeleteRejectsAssignedRole(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	roleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-assigned-custom", "assigned-custom", auth.RoleStatusActive, nil)
+	userID := createManagedUser(t, router, adminSession, "assigned-role@example.com", "Assigned Role", "assigned-role-password-123", []string{roleID})
+
+	response := performJSON(router, http.MethodDelete, "/api/v1/roles/"+roleID, nil, adminSession.cookies, adminSession.csrfHeader())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("delete assigned role status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	if !userHasRoleCode(t, db, adminSession.tenantID, userID, "assigned-custom") {
+		t.Fatal("assigned role was removed despite conflict")
+	}
+}
+
+func TestUserAdminTenantPatchRequiresAdminAndSettingsPermission(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	managerRoleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-settings-manager", "settings-manager", auth.RoleStatusActive, []string{
+		"system:settings:manage",
+	})
+	seedActiveUser(t, db, adminSession.tenantID, "settings-manager-user", "settings-manager@example.com", "Settings Manager", "settings-manager-password-123")
+	assignUserAdminRole(t, db, adminSession.tenantID, "settings-manager-user", managerRoleID, "settings-manager")
+	managerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "settings-manager@example.com", "settings-manager-password-123")
+
+	response := performJSON(router, http.MethodPatch, "/api/v1/tenants/current", map[string]any{
+		"name": "Forbidden update",
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin tenant patch status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestUserAdminCustomRoleValidationRollbackAndPermissions(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	managerRoleID := seedUserAdminRole(t, db, adminSession.tenantID, "role-role-manager", "role-manager", auth.RoleStatusActive, []string{
+		"role:read",
+		"role:manage",
+	})
+	seedActiveUser(t, db, adminSession.tenantID, "role-manager-user", "role-manager@example.com", "Role Manager", "role-manager-password-123")
+	assignUserAdminRole(t, db, adminSession.tenantID, "role-manager-user", managerRoleID, "role-manager")
+	managerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "role-manager@example.com", "role-manager-password-123")
+
+	createResponse := performJSON(router, http.MethodPost, "/api/v1/roles", map[string]any{
+		"code": "asset-reviewer",
+		"name": "Asset Reviewer",
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("role manager create status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	roleID := stringField(t, decodeData(t, createResponse), "id")
+	assetReadPermissionID := permissionIDByCode(t, db, "asset:read")
+	replaceResponse := performJSON(router, http.MethodPut, "/api/v1/roles/"+roleID+"/permissions", map[string]any{
+		"permissionIds": []string{assetReadPermissionID},
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if replaceResponse.Code != http.StatusOK {
+		t.Fatalf("initial permission replacement status = %d, want %d: %s", replaceResponse.Code, http.StatusOK, replaceResponse.Body.String())
+	}
+
+	invalidResponse := performJSON(router, http.MethodPut, "/api/v1/roles/"+roleID+"/permissions", map[string]any{
+		"permissionIds": []string{"missing-permission"},
+	}, managerSession.cookies, managerSession.csrfHeader())
+	if invalidResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing permission replacement status = %d, want %d", invalidResponse.Code, http.StatusUnprocessableEntity)
+	}
+	if countRolePermissions(t, db, adminSession.tenantID, roleID) != 1 {
+		t.Fatal("invalid permission replacement did not roll back")
+	}
+
+	for name, body := range map[string]map[string]any{
+		"reserved":      {"code": "admin", "name": "Unsafe"},
+		"invalid code":  {"code": "Unsafe Code", "name": "Unsafe"},
+		"unknown field": {"code": "unknown-field", "name": "Unsafe", "tenantId": "tenant-b"},
+		"duplicate":     {"code": "asset-reviewer", "name": "Duplicate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := performJSON(router, http.MethodPost, "/api/v1/roles", body, managerSession.cookies, managerSession.csrfHeader())
+			if response.Code != http.StatusUnprocessableEntity && response.Code != http.StatusConflict {
+				t.Fatalf("invalid create role status = %d, want validation or conflict: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func createManagedUser(t *testing.T, router http.Handler, session projectRouteSession, email string, displayName string, password string, roleIDs []string) string {
 	t.Helper()
 	response := performJSON(router, http.MethodPost, "/api/v1/users", map[string]any{
@@ -475,6 +694,15 @@ func roleIDByCode(t *testing.T, db *gorm.DB, tenantID string, code string) strin
 		t.Fatalf("find role %s: %v", code, err)
 	}
 	return role.ID
+}
+
+func permissionIDByCode(t *testing.T, db *gorm.DB, code string) string {
+	t.Helper()
+	var permission database.Permission
+	if err := db.Where("code = ?", code).First(&permission).Error; err != nil {
+		t.Fatalf("find permission %s: %v", code, err)
+	}
+	return permission.ID
 }
 
 func seedUserAdminRole(t *testing.T, db *gorm.DB, tenantID string, roleID string, code string, status string, permissionCodes []string) string {
@@ -588,6 +816,15 @@ func countUserRoles(t *testing.T, db *gorm.DB, tenantID string, userID string) i
 	var count int64
 	if err := db.Model(&database.UserRole{}).Where("tenant_id = ? AND user_id = ?", tenantID, userID).Count(&count).Error; err != nil {
 		t.Fatalf("count user roles: %v", err)
+	}
+	return count
+}
+
+func countRolePermissions(t *testing.T, db *gorm.DB, tenantID string, roleID string) int64 {
+	t.Helper()
+	var count int64
+	if err := db.Model(&database.RolePermission{}).Where("tenant_id = ? AND role_id = ?", tenantID, roleID).Count(&count).Error; err != nil {
+		t.Fatalf("count role permissions: %v", err)
 	}
 	return count
 }
