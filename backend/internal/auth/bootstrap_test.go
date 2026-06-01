@@ -209,4 +209,36 @@ var bootstrapTestSchema = []string{
 		created_at TIMESTAMP NOT NULL,
 		UNIQUE (tenant_id, role_id, permission_id)
 	)`,
+	`CREATE TABLE users (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		email TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		password_hash TEXT NOT NULL,
+		status TEXT NOT NULL,
+		last_login_at TIMESTAMP NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		UNIQUE (tenant_id, email)
+	)`,
+	`CREATE TABLE user_roles (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		role_id TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		UNIQUE (tenant_id, user_id, role_id)
+	)`,
+	`CREATE TABLE operation_logs (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		actor_user_id TEXT NULL,
+		action TEXT NOT NULL,
+		resource_type TEXT NOT NULL,
+		resource_id TEXT NOT NULL,
+		ip TEXT NOT NULL,
+		user_agent TEXT NOT NULL,
+		metadata_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	)`,
 }

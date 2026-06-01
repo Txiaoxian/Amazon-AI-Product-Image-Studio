@@ -46,3 +46,24 @@ func TestAPIKeyCipherRejectsWeakConfigAndEmptyKeys(t *testing.T) {
 		t.Fatal("Encrypt accepted empty API key")
 	}
 }
+
+func TestAPIKeyCipherDecryptRejectsPayloadForDifferentKeyID(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+
+	payloadCipher, err := NewAPIKeyCipher(secret, "payload-key-v2")
+	if err != nil {
+		t.Fatalf("NewAPIKeyCipher payload cipher returned error: %v", err)
+	}
+	encrypted, _, err := payloadCipher.Encrypt("sk-test-secret-value")
+	if err != nil {
+		t.Fatalf("Encrypt returned error: %v", err)
+	}
+
+	instanceCipher, err := NewAPIKeyCipher(secret, "instance-key-v1")
+	if err != nil {
+		t.Fatalf("NewAPIKeyCipher instance cipher returned error: %v", err)
+	}
+	if _, err := instanceCipher.Decrypt(encrypted); err == nil {
+		t.Fatal("Decrypt accepted payload for a different key id")
+	}
+}

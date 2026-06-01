@@ -9,6 +9,7 @@ require (
 	github.com/redis/go-redis/v9 v9.16.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.40.0
+	golang.org/x/term v0.40.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
