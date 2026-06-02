@@ -41,6 +41,7 @@ Current verified state:
 - `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
 - The `backend-api` image bundles both operator CLI binaries so Compose servers can run them through scoped `docker compose run --rm --no-deps` commands without a host Go toolchain.
 - `scripts/backup-restore-rehearsal.sh` passed an isolated live Compose matching MySQL/MinIO restore and rollback rehearsal with scoped cleanup.
+- The frontend tenant/custom-role administration UI is merged and the frontend test toolchain was upgraded to `vitest@^4.1.8`; frontend audit reports zero vulnerabilities.
 
 Known runtime notes:
 
@@ -50,6 +51,7 @@ Known runtime notes:
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
 - Provider master-key rotation and backup/restore rehearsal are implemented. Operators must still execute their default-safe checks and approved target-environment procedures before production changes.
+- R20 found deployment follow-ups that remain release blocking: production env-file propagation across every Compose subprocess, redacted health-failure logs, bounded container log rotation, and exact MinIO restore semantics. These are tracked under P21.
 
 ## Services
 
