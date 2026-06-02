@@ -33,6 +33,7 @@ type ReliableTaskQueue interface {
 	DeadLetter(ctx context.Context, claim TaskClaim, reason string) error
 	RecoverStale(ctx context.Context, now time.Time, limit int) ([]string, error)
 	PromoteDue(ctx context.Context, now time.Time, limit int) ([]string, error)
+	EnsureDelivery(ctx context.Context, taskID string) (bool, error)
 }
 
 type reliableQueueRedisClient interface {
@@ -255,6 +256,20 @@ func (q *RedisReliableTaskQueue) PromoteDue(ctx context.Context, now time.Time, 
 	return promoted, nil
 }
 
+func (q *RedisReliableTaskQueue) EnsureDelivery(ctx context.Context, taskID string) (bool, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false, ErrInvalidTask
+	}
+	if err := q.validate(); err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return q.evalMoved(ctx, redisEnsureDeliveryScript, []string{q.queue, q.processing, q.delayed}, taskID)
+}
+
 func (q *RedisReliableTaskQueue) validate() error {
 	if q == nil || q.client == nil || strings.TrimSpace(q.queue) == "" {
 		return ErrUnavailable
@@ -357,6 +372,7 @@ if not redis.call('LPOS', KEYS[1], ARGV[1]) then
   return 0
 end
 redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('LLEN', KEYS[3])
 redis.call('HGET', KEYS[4], ARGV[1])
 if ARGV[2] ~= '' then
   redis.call('HSET', KEYS[4], ARGV[1], ARGV[2])
@@ -387,5 +403,19 @@ if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
 end
 redis.call('RPUSH', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[1], ARGV[1])
+return 1
+`
+
+const redisEnsureDeliveryScript = `
+if redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+if redis.call('LPOS', KEYS[2], ARGV[1]) then
+  return 0
+end
+if redis.call('ZSCORE', KEYS[3], ARGV[1]) then
+  return 0
+end
+redis.call('RPUSH', KEYS[1], ARGV[1])
 return 1
 `

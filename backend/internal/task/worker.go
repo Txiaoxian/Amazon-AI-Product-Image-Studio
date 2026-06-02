@@ -116,6 +116,9 @@ type WorkerProcessor struct {
 	storage   config.StorageConfig
 	upload    config.UploadConfig
 	now       func() time.Time
+
+	reconciliationMu     sync.Mutex
+	reconciliationCursor string
 }
 
 func NewWorker(taskQueue queue.ReliableTaskQueue, processor *WorkerProcessor, log *slog.Logger, options WorkerOptions) *Worker {
@@ -476,8 +479,41 @@ func (p *WorkerProcessor) Recover(ctx context.Context, taskQueue queue.ReliableT
 		if _, err := taskQueue.RecoverStale(ctx, now, batch); err != nil {
 			return err
 		}
+		if err := p.ReconcileDelivery(ctx, taskQueue, batch); err != nil {
+			return err
+		}
 	}
 	return p.RecoverTimedOut(ctx, batch)
+}
+
+func (p *WorkerProcessor) ReconcileDelivery(ctx context.Context, taskQueue queue.ReliableTaskQueue, batch int) error {
+	if p == nil || p.db == nil {
+		return database.ErrNilDB
+	}
+	if taskQueue == nil {
+		return ErrQueueUnavailable
+	}
+	if batch <= 0 {
+		batch = defaultRecoveryBatchSize
+	}
+
+	p.reconciliationMu.Lock()
+	defer p.reconciliationMu.Unlock()
+
+	records, err := p.repo.ListDeliveryRepairCandidates(ctx, p.reconciliationCursor, batch)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if _, err := taskQueue.EnsureDelivery(ctx, record.ID); err != nil {
+			return err
+		}
+		p.reconciliationCursor = record.ID
+	}
+	if len(records) < batch {
+		p.reconciliationCursor = ""
+	}
+	return nil
 }
 
 func (p *WorkerProcessor) RecoverTimedOut(ctx context.Context, batch int) error {
