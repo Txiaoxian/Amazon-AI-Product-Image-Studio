@@ -1,7 +1,9 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { BackendControlPanel } from '../components/studio/BackendControlPanel'
+import type { Model } from '../types/platform'
 
 const authenticatedSession = {
   user: {
@@ -233,6 +235,7 @@ describe('task-backed workbench', () => {
     await user.selectOptions(screen.getByLabelText('质量'), 'hd')
     await user.selectOptions(screen.getByLabelText('输出格式'), 'jpeg')
     await user.selectOptions(screen.getByLabelText('生成张数'), '4')
+    expect(screen.getByLabelText('图片类型')).toHaveValue('MAIN')
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     const taskCreateCall = fetchImpl.mock.calls.find(
@@ -244,6 +247,7 @@ describe('task-backed workbench', () => {
       prompt: 'Clean Amazon product image',
       providerId: 'provider_1',
       modelId: 'model_1',
+      imageType: 'MAIN',
       referenceAssetIds: ['asset_1'],
       parameters: {
         size: '1536x1024',
@@ -292,6 +296,71 @@ describe('task-backed workbench', () => {
     }, 'evt_3')
 
     expect(await screen.findByText(/SUCCEEDED/)).toBeInTheDocument()
+  })
+
+  it('submits the selected ecommerce image type through the backend task API', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = createWorkbenchFetch()
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '项目资产库' })
+    await user.type(screen.getByLabelText('提示词'), 'Create a dimension diagram')
+    await user.selectOptions(screen.getByLabelText('图片类型'), 'DIMENSION')
+    await user.click(screen.getByRole('button', { name: '生成图片' }))
+
+    const taskCreateCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/projects/project_1/tasks' && init?.method === 'POST',
+    )
+    expect(taskCreateCall).toBeDefined()
+    expect(JSON.parse(taskCreateCall?.[1]?.body as string)).toMatchObject({
+      imageType: 'DIMENSION',
+    })
+  })
+
+  it('normalizes an invalid edit draft image type before it can be submitted', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn(async () => {})
+
+    render(
+      <BackendControlPanel
+        draft={{
+          prompt: 'Draft from history',
+          modelId: 'model_1',
+          imageType: 'NOT_ALLOWED',
+        }}
+        isGenerating={false}
+        modelStatus="success"
+        models={[model as unknown as Model]}
+        onError={vi.fn()}
+        onGenerate={onGenerate}
+        onRefreshModels={vi.fn()}
+      />,
+    )
+
+    const imageTypeSelect = screen.getByLabelText('图片类型')
+    expect(imageTypeSelect).toHaveValue('MAIN')
+    expect(within(imageTypeSelect).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual([
+      'MAIN',
+      'A_PLUS',
+      'SCENE',
+      'DETAIL',
+      'DIMENSION',
+      'SELLING_POINT',
+      'COMPARISON',
+    ])
+
+    await user.click(screen.getByRole('button', { name: '生成图片' }))
+
+    expect(onGenerate).toHaveBeenCalledWith(
+      {
+        prompt: 'Draft from history',
+      },
+      expect.objectContaining({
+        imageType: 'MAIN',
+      }),
+    )
   })
 
   it('prevents duplicate task creation while a submit is already in flight', async () => {

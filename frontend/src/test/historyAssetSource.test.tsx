@@ -146,7 +146,7 @@ const task = {
   prompt: 'Clean Amazon product image',
   providerId: 'provider_1',
   modelId: 'model_1',
-  imageType: 'MAIN',
+  imageType: 'COMPARISON',
   parameters: {
     size: '1024x1024',
     quality: 'standard',
@@ -552,6 +552,9 @@ describe('backend history asset source', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('图片类型')).toHaveValue('COMPARISON')
+    })
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     await waitFor(() => {
@@ -566,6 +569,7 @@ describe('backend history asset source', () => {
     expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
       type: 'IMAGE_EDIT',
       editSourceAssetId: 'asset_generated_1',
+      imageType: 'COMPARISON',
     })
   })
 

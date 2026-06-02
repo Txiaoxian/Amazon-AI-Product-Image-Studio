@@ -2,7 +2,15 @@ import { RefreshCw, Sparkles } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { IMAGE_COUNT_OPTIONS } from '../../lib/constants'
 import type { Model } from '../../types/platform'
-import type { WorkbenchReferenceInput, WorkbenchTaskInput, WorkbenchTaskSubmission } from '../../types/workbench'
+import {
+  DEFAULT_WORKBENCH_IMAGE_TYPE,
+  WORKBENCH_IMAGE_TYPE_OPTIONS,
+  normalizeWorkbenchImageType,
+  type WorkbenchImageType,
+  type WorkbenchReferenceInput,
+  type WorkbenchTaskInput,
+  type WorkbenchTaskSubmission,
+} from '../../types/workbench'
 import { Button } from '../ui/Button'
 import { ImageDropzone } from './ImageDropzone'
 import { PromptEditor } from './PromptEditor'
@@ -13,6 +21,7 @@ type ImageCount = (typeof IMAGE_COUNT_OPTIONS)[number]
 export interface BackendControlPanelDraft {
   prompt: string
   modelId: string
+  imageType?: string
   imageCount?: ImageCount
   references?: WorkbenchReferenceInput[]
 }
@@ -47,6 +56,7 @@ export function BackendControlPanel({
   const [size, setSize] = useState('')
   const [quality, setQuality] = useState('')
   const [outputFormat, setOutputFormat] = useState('')
+  const [imageType, setImageType] = useState<WorkbenchImageType>(DEFAULT_WORKBENCH_IMAGE_TYPE)
   const [imageCount, setImageCount] = useState<ImageCount>(1)
   const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
   const previousResetKey = useRef(resetKey)
@@ -68,6 +78,7 @@ export function BackendControlPanel({
 
     setPrompt(draft.prompt)
     setModelId(draft.modelId)
+    setImageType(normalizeWorkbenchImageType(draft.imageType))
     setImageCount(draft.imageCount ?? 1)
     setReferences((currentReferences) => {
       revokeReferencePreviewUrls(currentReferences)
@@ -151,6 +162,7 @@ export function BackendControlPanel({
         size,
         quality,
         outputFormat,
+        imageType,
         imageCount,
         references,
       })
@@ -233,6 +245,25 @@ export function BackendControlPanel({
 
         {selectedModel ? (
           <div className="grid gap-3">
+            <div className="space-y-2">
+              <label className="field-label" htmlFor="backend-image-type">
+                图片类型
+              </label>
+              <select
+                className="field-input"
+                disabled={isGenerating}
+                id="backend-image-type"
+                onChange={(event) => setImageType(normalizeWorkbenchImageType(event.target.value))}
+                value={imageType}
+              >
+                {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {selectedModel.supportedSizes.length > 0 ? (
               <SelectField disabled={isGenerating} id="image-size" label="尺寸" onChange={setSize} options={selectedModel.supportedSizes} value={size} />
             ) : null}
@@ -368,6 +399,7 @@ function buildWorkbenchTaskInput(
     size: string
     quality: string
     outputFormat: string
+    imageType: WorkbenchImageType
     imageCount: ImageCount
     references: WorkbenchReferenceInput[]
   },
@@ -375,6 +407,7 @@ function buildWorkbenchTaskInput(
   return {
     providerId: model.providerId,
     modelId: model.id,
+    imageType: state.imageType,
     referenceAssetIds: state.references.flatMap((reference) => (reference.kind === 'asset' ? [reference.assetId] : [])),
     parameters: {
       ...(state.size ? { size: state.size } : {}),

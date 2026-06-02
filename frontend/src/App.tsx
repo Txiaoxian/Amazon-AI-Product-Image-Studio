@@ -234,6 +234,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       setDraft({
         prompt: backendDetail.task.prompt,
         modelId: backendDetail.task.modelId,
+        imageType: backendDetail.task.imageType,
         imageCount: getTaskOutputCount(backendDetail.task),
       })
       setNotice('已准备基于后端资产再次编辑。')
