@@ -345,6 +345,9 @@ func validateProductionConfig(appEnv string, auth AuthConfig, provider ProviderC
 		return nil
 	}
 
+	if !auth.CSRF.Enabled {
+		return fmt.Errorf("invalid CSRF_ENABLED: must be true in production")
+	}
 	if auth.JWTSigningSecret == defaultJWTSigningSecret {
 		return fmt.Errorf("invalid JWT_SIGNING_SECRET: placeholder secret is not allowed in production")
 	}
