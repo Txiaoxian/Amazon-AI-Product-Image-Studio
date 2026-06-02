@@ -186,7 +186,7 @@ func TestLoadOverrides(t *testing.T) {
 		"COOKIE_DOMAIN":                            ".example.com",
 		"COOKIE_SECURE":                            "true",
 		"COOKIE_SAME_SITE":                         "Strict",
-		"CSRF_ENABLED":                             "false",
+		"CSRF_ENABLED":                             "true",
 		"CSRF_COOKIE_NAME":                         "csrf_test",
 		"CSRF_HEADER_NAME":                         "X-CSRF-Token",
 		"MINIO_ENDPOINT":                           "https://minio.example.com",
@@ -324,7 +324,7 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Auth.Cookie.SameSite != "Strict" {
 		t.Fatalf("Auth.Cookie.SameSite = %q, want Strict", cfg.Auth.Cookie.SameSite)
 	}
-	if cfg.Auth.CSRF.Enabled {
+	if !cfg.Auth.CSRF.Enabled {
 		t.Fatal("Auth.CSRF.Enabled override was not loaded")
 	}
 	if cfg.Auth.CSRF.CookieName != "csrf_test" {
@@ -457,6 +457,44 @@ func TestLoadAllowsExplicitProductionSecrets(t *testing.T) {
 		return value, ok
 	}); err != nil {
 		t.Fatalf("load returned error for explicit production secrets: %v", err)
+	}
+}
+
+func TestLoadEnforcesProductionCSRFEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		appEnv      string
+		csrfEnabled string
+		wantError   string
+	}{
+		{name: "production enabled", appEnv: "production", csrfEnabled: "true"},
+		{name: "production disabled", appEnv: "production", csrfEnabled: "false", wantError: "invalid CSRF_ENABLED: must be true in production"},
+		{name: "development disabled", appEnv: "development", csrfEnabled: "false"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := validProductionValues()
+			values["APP_ENV"] = tt.appEnv
+			values["CSRF_ENABLED"] = tt.csrfEnabled
+
+			cfg, err := loadFromValues(values)
+			if tt.wantError != "" {
+				if err == nil {
+					t.Fatal("load returned nil error for disabled production CSRF")
+				}
+				if got := err.Error(); got != tt.wantError {
+					t.Fatalf("load error = %q, want %q", got, tt.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load returned error: %v", err)
+			}
+			if got, want := cfg.Auth.CSRF.Enabled, tt.csrfEnabled == "true"; got != want {
+				t.Fatalf("Auth.CSRF.Enabled = %t, want %t", got, want)
+			}
+		})
 	}
 }
 
