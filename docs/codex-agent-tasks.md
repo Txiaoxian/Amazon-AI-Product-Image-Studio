@@ -86,7 +86,7 @@
 
 ## 当前状态
 
-P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依赖审计修复与持续门禁、主机 TLS Nginx 模板/静态检查、前端 `logRetention` 设置和既有租户内置角色授权 reconciliation。P20 后端与部署切片已完成：固定 `X-CSRF-Token` 合同、Provider 主密钥轮换 CLI、第二租户开通 CLI、当前租户资料 API、自定义角色 CRUD/权限替换、备份恢复回滚演练。当前仅剩前端租户/自定义角色管理和最终 Go/No-Go。
+P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密钥轮换 CLI、第二租户开通 CLI、当前租户资料 API、自定义角色 CRUD/权限替换、前端租户/自定义角色管理、operator CLI 镜像打包和备份恢复回滚演练。R20 完整审计未批准最终上线，当前进入 P21 生产可靠性收口。
 
 已完成的平台基础：
 
@@ -114,7 +114,8 @@ P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依
 - P18 已完成切片：`P18-BE-PROVIDER-MODEL-SERIALIZATION` 和 `P18-E2E-REAL-PROVIDER-SMOKE`。Provider/model/default settings 写路径已补强 MySQL 行锁、模型写路径目标行锁、`taskDefaults` 保存前锁定 Provider/model，并拒绝同租户同 Provider 非删除 `modelName` 重复；可选真实 Provider smoke 脚本已具备 help/dry-run/explicit run、费用控制、直接 Provider API base 拒绝、临时文件清理和 fake-curl 安全测试。
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
-- P20 当前优先级：前端租户/自定义角色管理和最终 Go/No-Go。
+- P20 已完成：前端租户名称更新、自定义角色 CRUD/权限替换与只读内置角色 UI 已合并；Vitest 升级到 `^4.1.8` 后前端门禁和 `npm audit` 通过。
+- P21 当前优先级：按 R20 审计结果，先完成生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型；再推进 Redis 队列原子迁移与 MySQL reconciliation、迁移串行锁、配额 reconciliation、Provider attempt ledger、SSE resilience、登录限流、可撤销 session、Provider 删除 crypto erase、MinIO exact restore、租约续期和 Worker readiness。
 
 ## P20：稳定生产运营收口
 
@@ -139,20 +140,38 @@ P0-P18 已完成。P19 已完成生产配置 fail-closed、CI 门禁、前端依
   - 已提供 `backend/cmd/provision-tenant`。默认 dry-run；`--apply` 需要强确认；单事务创建第二及后续 tenant、内置角色/grants、首任 admin 和脱敏审计记录。
 - `P20-BE-TENANT-ROLE-ADMIN`
   - 已实现 tenant-scoped `GET/PATCH /tenants/current` 与 custom role create/update/delete/permission replacement；写路径走 CSRF、RBAC、事务和 sanitized audit；内置角色不可变；被用户引用的 custom role 不可删除。
-
-### 待完成切片
-
-#### `P20-FE-TENANT-ROLE-ADMIN`
-
-- 目标：在现有身份管理 UI 中增加当前租户名称编辑和自定义角色管理。
-- 允许修改：frontend API/types/components/tests。
-- 禁止修改：后端、公共合同、Provider/task 工作台。
-- 安全要求：只调用同源后端；写操作带 CSRF；按权限隐藏入口；不持久化密码、token、角色草稿或敏感响应。
-- 验收：loading/empty/error、权限门禁、租户名更新、自定义角色 CRUD、权限替换、后端错误保留草稿、stale response 保护。
+- `P20-FE-TENANT-ROLE-ADMIN`
+  - 已实现并合并。现有身份管理 UI 支持当前租户名称编辑、自定义角色 CRUD、权限替换、内置角色只读、同源 CSRF 写请求、错误态保留草稿和 stale response 防护。
 
 #### `R20-STABLE-PRODUCTION-GO-NO-GO`
 
-- 主 agent 执行 requirement-by-requirement 审计、全量前后端回归、脚本测试、`npm audit`、Compose config/build/live cleanup、TLS 静态检查、备份恢复 rehearsal、git whitespace、远程 push 和 hosted CI 核验。
+- 主 agent 已执行第一轮 requirement-by-requirement 审计。审计发现仍有生产可靠性阻塞项，因此转入 P21；P21 完成后重新执行最终 Go/No-Go。
+
+## P21：生产可靠性收口
+
+### 第一批有限并行
+
+1. `P21-DEPLOY-PRODUCTION-ENV-AND-LOG-HARDENING`
+   - 生产 env 文件贯穿 Compose config/build/up/down/health/logs 与 delegated release validation；健康失败日志统一脱敏；长期容器 stdout/stderr 增加有限轮转。
+2. `P21-BE-CSRF-PRODUCTION-GUARD`
+   - 统一配置层在 `APP_ENV=production` 时拒绝 `CSRF_ENABLED=false`；非 production 保持兼容。
+3. `P21-FE-WORKBENCH-IMAGE-TYPE`
+   - 工作台补齐亚马逊电商图片类型选择，并把合法值通过 task API `imageType` 字段提交。
+
+### 后续串行与有限并行
+
+- `P21-BE-QUEUE-ATOMIC-RECONCILIATION`：Redis Lua 原子迁移与 MySQL queued/retrying 恢复。
+- `P21-BE-MIGRATION-LOCK`：API/Worker 启动 migration advisory lock、完整性门禁与中断恢复。
+- `P21-BE-QUOTA-RECONCILIATION-RUNTIME`：Worker bounded maintenance 消费已有 quota reconciliation。
+- `P21-BE-PROVIDER-ATTEMPT-LEDGER`：外部调用前写入 attempt，结束后 finalize，崩溃状态可审计。
+- `P21-BE-SSE-RESILIENCE`：heartbeat DB catch-up、subscriber 重启、bounded replay。
+- `P21-BE-AUTH-RATE-LIMIT-SESSION-REVOCATION`：登录限流、logout/改密/禁用后的 session 失效和 SSE 周期复验。
+- `P21-BE-PROVIDER-CRYPTO-ERASE`：Provider 删除时擦除密文，不让 deleted secret 留存或绕过轮换。
+- `P21-DEPLOY-EXACT-MINIO-RESTORE`：恢复时移除备份外对象，证明 exact restore。
+- `P21-BE-CONCURRENCY-LEASE-RENEWAL`：运行中 lease 续期或严格约束 TTL 覆盖 Provider timeout。
+- `P21-BE-WORKER-READINESS`：以 Worker 心跳和依赖可用性替代静态 readiness。
+- `P21-FE-LEGACY-BLOB-CLEANUP`：确认生产路径不依赖旧 IndexedDB Blob 后删除残留兼容实现。
+- `R21-STABLE-PRODUCTION-GO-NO-GO`：主 agent 全量回归、脚本、Compose live、备份恢复、远程 CI 与外部上线前置审计。
 
 ## 建议剩余阶段
 

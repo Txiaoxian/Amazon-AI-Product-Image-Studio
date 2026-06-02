@@ -84,7 +84,7 @@ P20 status:
 
 - Additional-tenant provisioning is implemented by the operator-only `backend/cmd/provision-tenant` CLI.
 - Current-tenant read/name update and custom-role CRUD/permission replacement are implemented in the backend.
-- The P20 frontend tenant/custom-role administration UI remains the final UI integration slice.
+- The frontend tenant/custom-role administration UI is implemented. Tenant-name writes and custom-role writes stay same-origin and CSRF protected; built-in roles are rendered as read-only.
 
 Project:
 

@@ -69,6 +69,7 @@ Resolved transition item:
 - P19 host TLS reverse-proxy hardening added an auditable Nginx template and static guardrails. Public traffic must terminate TLS and proxy only to loopback frontend `127.0.0.1:8080`; it must never route directly to backend-api, AI Providers, or relays.
 - P19 API startup now reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
 - P20 pins the CSRF request-header contract to `X-CSRF-Token` across frontend, backend, CORS, Compose, and production-env preflight. Custom header aliases are rejected fail closed.
+- P20 frontend tenant/custom-role administration uses only same-origin backend APIs with CSRF-protected writes. Built-in roles remain read-only in the UI, and role drafts, passwords, tokens, and sensitive responses are not persisted in browser storage.
 
 Storage and P5 review hardening backlog:
 
@@ -84,6 +85,14 @@ P20 operational controls:
 - Tenant HTTP APIs remain tenant-scoped; tenant admin sessions never imply platform-wide super-admin rights.
 - Custom-role HTTP writes are tenant-scoped, CSRF protected, audited, and blocked for built-in roles. Deletion fails while a user assignment exists.
 - Backup/restore/rollback rehearsal runs only against a disposable dynamically named Compose project and never against shared development or production services.
+
+R20 release-blocking security follow-ups:
+
+- `APP_ENV=production` must reject `CSRF_ENABLED=false`; a fixed header name without mandatory enforcement is insufficient.
+- Login endpoints need bounded Redis-backed rate limiting without credential or email leakage.
+- JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
+- Provider delete must crypto-erase stored encrypted credentials.
+- Redis queue migrations, SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, and deployment log handling must fail closed under partial failures.
 
 ## Authentication
 
