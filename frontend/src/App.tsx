@@ -145,10 +145,11 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const canDisableUsers = hasPermission(session, 'user:disable')
   const canReadRoles = hasPermission(session, 'role:read')
   const canManageRoles = hasPermission(session, 'role:manage')
+  const canManageTenant = isTenantAdmin(session) && canManageSystemSettings
   const canManageProjectMembers = hasPermission(session, 'project:member:manage')
   const canOpenAdmin = canManageProviders || canManageModels
   const canOpenObservabilityAdmin = canReadUsage || canReadAudit || canManageSystemSettings
-  const canOpenIdentityAdmin = canReadUsers || canCreateUsers || canUpdateUsers || canDisableUsers || canReadRoles || canManageRoles
+  const canOpenIdentityAdmin = canReadUsers || canCreateUsers || canUpdateUsers || canDisableUsers || canReadRoles || canManageRoles || canManageTenant
 
   const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
     if (pendingEditSourceAssetId) {
@@ -535,6 +536,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           canCreateUsers={canCreateUsers}
           canDisableUsers={canDisableUsers}
           canManageRoles={canManageRoles}
+          canManageTenant={canManageTenant}
           canReadRoles={canReadRoles}
           canReadUsers={canReadUsers}
           canUpdateUsers={canUpdateUsers}
@@ -575,6 +577,10 @@ function getTaskOutputCount(task: BackendHistoryItem['task']): 1 | 2 | 3 | 4 {
 
 function hasPermission(session: AuthSession, permission: string): boolean {
   return session.permissions.some((candidate) => candidate === permission)
+}
+
+function isTenantAdmin(session: AuthSession): boolean {
+  return session.roles.some((role) => role.code === 'admin')
 }
 
 export default App

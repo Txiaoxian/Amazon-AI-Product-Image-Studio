@@ -58,6 +58,21 @@ const viewerRole: UserAdminRole = {
   description: 'Viewer role',
 }
 
+const customRole: UserAdminRole = {
+  ...sellerRole,
+  id: 'role_catalog_manager' as UserAdminRole['id'],
+  code: 'catalog-manager',
+  name: 'Catalog Manager',
+  description: 'Manage catalog workflow',
+  permissions: [],
+}
+
+const currentTenant = {
+  id: 'tenant_1',
+  name: 'Studio Tenant',
+  status: 'ACTIVE' as const,
+}
+
 const currentUser: UserAdminUser = {
   id: 'user_admin' as UserAdminUser['id'],
   tenantId: 'tenant_1' as UserAdminUser['tenantId'],
@@ -116,6 +131,11 @@ function page(records: unknown[], pageSize = 10) {
 
 function createMockUserAdminApi(overrides: Partial<UserAdminApi> = {}): UserAdminApi {
   return {
+    getCurrentTenant: vi.fn().mockResolvedValue(currentTenant),
+    updateCurrentTenant: vi.fn().mockImplementation(async (request) => ({
+      ...currentTenant,
+      name: request.name,
+    })),
     listUsers: vi.fn().mockResolvedValue(page([currentUser, managedUser])),
     createUser: vi.fn().mockImplementation(async (request) => ({
       ...managedUser,
@@ -137,6 +157,19 @@ function createMockUserAdminApi(overrides: Partial<UserAdminApi> = {}): UserAdmi
     })),
     listRoles: vi.fn().mockResolvedValue([sellerRole, viewerRole]),
     listPermissions: vi.fn().mockResolvedValue(sellerRole.permissions ?? []),
+    createRole: vi.fn().mockImplementation(async (request) => ({
+      ...customRole,
+      ...request,
+    })),
+    updateRole: vi.fn().mockImplementation(async (_roleId, request) => ({
+      ...customRole,
+      ...request,
+    })),
+    deleteRole: vi.fn().mockResolvedValue(undefined),
+    replaceRolePermissions: vi.fn().mockImplementation(async (_roleId, request) => ({
+      ...customRole,
+      permissions: (sellerRole.permissions ?? []).filter((permission) => request.permissionIds.includes(permission.id)),
+    })),
     ...overrides,
   }
 }
@@ -148,6 +181,7 @@ function renderPanel(props: Partial<Parameters<typeof UserRoleAdminPanel>[0]> = 
       canCreateUsers={false}
       canDisableUsers={false}
       canManageRoles={false}
+      canManageTenant={false}
       canReadRoles={false}
       canReadUsers={false}
       canUpdateUsers={false}
@@ -239,6 +273,68 @@ describe('user and role admin UI', () => {
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/roles')
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/permissions')
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/users')
+  })
+
+  it('App exposes tenant editing only for tenant admin sessions with system settings permission', async () => {
+    const browserUser = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({
+          ...baseSession,
+          permissions: ['system:settings:manage'],
+        })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/tenants/current') {
+        return successResponse(currentTenant)
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await browserUser.click(await screen.findByRole('button', { name: '用户/角色管理' }))
+    expect(await screen.findByRole('button', { name: '编辑当前租户名称' })).toBeInTheDocument()
+    expect(screen.queryByText('当前账号没有 user:read 权限，面板不会调用用户列表接口。')).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/tenants/current')
+  })
+
+  it('App does not treat system settings permission alone as tenant-admin identity access', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse({
+          ...baseSession,
+          roles: [{ id: 'role_seller', code: 'seller', name: 'Seller' }],
+          permissions: ['system:settings:manage'],
+        })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([]))
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '用户/角色管理' })).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/tenants/current')
   })
 
   it('only user:read users can view the user list without create, disable, or role assignment controls', async () => {
@@ -412,6 +508,7 @@ describe('user and role admin UI', () => {
         canCreateUsers={false}
         canDisableUsers={false}
         canManageRoles={false}
+        canManageTenant={false}
         canReadRoles={false}
         canReadUsers
         canUpdateUsers={false}
@@ -428,6 +525,7 @@ describe('user and role admin UI', () => {
         canCreateUsers={false}
         canDisableUsers={false}
         canManageRoles={false}
+        canManageTenant={false}
         canReadRoles={false}
         canReadUsers
         canUpdateUsers={false}
@@ -442,5 +540,182 @@ describe('user and role admin UI', () => {
     await waitFor(() => expect(screen.queryByText('Seller User')).not.toBeInTheDocument())
     expect(screen.queryByText('hash_should_not_render')).not.toBeInTheDocument()
     expect(screen.queryByText('Bearer should-not-render')).not.toBeInTheDocument()
+  })
+
+  it('loads the current tenant for the identity view but hides tenant editing without tenant admin settings permission', async () => {
+    const api = renderPanel({ canReadUsers: true })
+
+    expect(await screen.findByText('Studio Tenant')).toBeInTheDocument()
+    expect(api.getCurrentTenant).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: '编辑当前租户名称' })).not.toBeInTheDocument()
+  })
+
+  it('updates the current tenant name only for allowed tenant admins and does not write browser storage', async () => {
+    const browserUser = userEvent.setup()
+    const storageWrite = vi.spyOn(Storage.prototype, 'setItem')
+    const indexedDbOpen = vi.spyOn(indexedDB, 'open')
+    const api = renderPanel({ canManageTenant: true, canReadUsers: true })
+
+    await screen.findByText('Studio Tenant')
+    await browserUser.click(screen.getByRole('button', { name: '编辑当前租户名称' }))
+    await browserUser.clear(screen.getByLabelText('当前租户名称'))
+    await browserUser.type(screen.getByLabelText('当前租户名称'), 'Studio Team')
+    await browserUser.click(screen.getByRole('button', { name: '保存租户名称' }))
+
+    await waitFor(() => expect(api.updateCurrentTenant).toHaveBeenCalledWith({ name: 'Studio Team' }, 'csrf_from_me'))
+    expect(await screen.findByText('Studio Team')).toBeInTheDocument()
+    expect(storageWrite).not.toHaveBeenCalled()
+    expect(indexedDbOpen).not.toHaveBeenCalled()
+  })
+
+  it('keeps built-in roles read-only and supports the custom role lifecycle with permission replacement', async () => {
+    const browserUser = userEvent.setup()
+    const api = createMockUserAdminApi({
+      listRoles: vi.fn().mockResolvedValue([sellerRole, viewerRole, customRole]),
+    })
+    renderPanel({ canManageRoles: true, canReadRoles: true, userAdminApi: api })
+
+    await browserUser.click(await screen.findByRole('button', { name: '角色与权限' }))
+    expect(await screen.findByText('Catalog Manager')).toBeInTheDocument()
+    expect(screen.getAllByText('系统内置，只读')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: '编辑角色 Seller' })).not.toBeInTheDocument()
+
+    await browserUser.click(screen.getByRole('button', { name: '编辑角色 Catalog Manager' }))
+    await browserUser.clear(screen.getByLabelText('编辑角色名称'))
+    await browserUser.type(screen.getByLabelText('编辑角色名称'), 'Catalog Lead')
+    await browserUser.selectOptions(screen.getByLabelText('编辑角色状态'), 'DISABLED')
+    await browserUser.click(screen.getByRole('button', { name: '保存角色' }))
+    await waitFor(() => expect(api.updateRole).toHaveBeenCalledWith(
+      'role_catalog_manager',
+      expect.objectContaining({ name: 'Catalog Lead', status: 'DISABLED' }),
+      'csrf_from_me',
+    ))
+
+    await browserUser.click(screen.getByRole('button', { name: '配置角色权限 Catalog Manager' }))
+    await browserUser.click(screen.getByLabelText('角色权限 user:read'))
+    await browserUser.click(screen.getByRole('button', { name: '保存权限' }))
+    await waitFor(() => expect(api.replaceRolePermissions).toHaveBeenCalledWith(
+      'role_catalog_manager',
+      { permissionIds: ['permission_user_read'] },
+      'csrf_from_me',
+    ))
+
+    await browserUser.click(screen.getByRole('button', { name: '删除角色 Catalog Manager' }))
+    expect(screen.getByText('确认删除此自定义角色？')).toBeInTheDocument()
+    await browserUser.click(screen.getByRole('button', { name: '确认删除角色 Catalog Manager' }))
+    await waitFor(() => expect(api.deleteRole).toHaveBeenCalledWith('role_catalog_manager', 'csrf_from_me'))
+  })
+
+  it('creates a custom role and rejects new mutations without an in-memory CSRF token', async () => {
+    const browserUser = userEvent.setup()
+    const api = createMockUserAdminApi({
+      listRoles: vi.fn().mockResolvedValue([sellerRole]),
+    })
+    renderPanel({ canManageRoles: true, canReadRoles: true, csrfToken: undefined, userAdminApi: api })
+
+    await browserUser.click(await screen.findByRole('button', { name: '角色与权限' }))
+    await browserUser.type(screen.getByLabelText('角色代码'), 'catalog-manager')
+    await browserUser.type(screen.getByLabelText('角色名称'), 'Catalog Manager')
+    await browserUser.type(screen.getByLabelText('角色说明'), 'Manage catalog workflow')
+    await browserUser.click(screen.getByRole('button', { name: '创建角色' }))
+
+    expect(await screen.findByText('登录状态缺少 CSRF 凭据，请重新登录。')).toBeInTheDocument()
+    expect(api.createRole).not.toHaveBeenCalled()
+  })
+
+  it('creates a custom role with transient form state and refreshes the role view', async () => {
+    const browserUser = userEvent.setup()
+    const api = createMockUserAdminApi({
+      listRoles: vi.fn().mockResolvedValue([sellerRole]),
+    })
+    renderPanel({ canManageRoles: true, canReadRoles: true, userAdminApi: api })
+
+    await browserUser.click(await screen.findByRole('button', { name: '角色与权限' }))
+    await browserUser.type(screen.getByLabelText('角色代码'), 'catalog-manager')
+    await browserUser.type(screen.getByLabelText('角色名称'), 'Catalog Manager')
+    await browserUser.type(screen.getByLabelText('角色说明'), 'Manage catalog workflow')
+    await browserUser.click(screen.getByRole('button', { name: '创建角色' }))
+
+    await waitFor(() => expect(api.createRole).toHaveBeenCalledWith(
+      {
+        code: 'catalog-manager',
+        name: 'Catalog Manager',
+        description: 'Manage catalog workflow',
+      },
+      'csrf_from_me',
+    ))
+    await waitFor(() => expect(api.listRoles).toHaveBeenCalledTimes(2))
+    expect(screen.getByLabelText('角色代码')).toHaveValue('')
+    expect(screen.getByLabelText('角色名称')).toHaveValue('')
+    expect(screen.getByLabelText('角色说明')).toHaveValue('')
+  })
+
+  it('disables custom role mutations while a role create request is pending', async () => {
+    const browserUser = userEvent.setup()
+    let resolveCreateRole: ((value: UserAdminRole) => void) | undefined
+    const api = createMockUserAdminApi({
+      listRoles: vi.fn().mockResolvedValue([sellerRole, viewerRole, customRole]),
+      createRole: vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveCreateRole = resolve
+      })),
+    })
+    renderPanel({ canManageRoles: true, canReadRoles: true, userAdminApi: api })
+
+    await browserUser.click(await screen.findByRole('button', { name: '角色与权限' }))
+    await browserUser.type(screen.getByLabelText('角色代码'), 'catalog-manager')
+    await browserUser.type(screen.getByLabelText('角色名称'), 'Catalog Manager')
+    await browserUser.click(screen.getByRole('button', { name: '创建角色' }))
+
+    expect(screen.getByRole('button', { name: '创建角色' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '编辑角色 Catalog Manager' })).toBeDisabled()
+    expect(api.createRole).toHaveBeenCalledTimes(1)
+
+    resolveCreateRole?.(customRole)
+    await waitFor(() => expect(screen.getByRole('button', { name: '创建角色' })).toBeEnabled())
+    expect(api.createRole).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a late current-tenant response after the panel closes', async () => {
+    let resolveTenant: ((value: typeof currentTenant) => void) | undefined
+    const api = createMockUserAdminApi({
+      getCurrentTenant: vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveTenant = resolve
+      })),
+    })
+    const { rerender } = render(
+      <UserRoleAdminPanel
+        canCreateUsers={false}
+        canDisableUsers={false}
+        canManageRoles={false}
+        canManageTenant={false}
+        canReadRoles={false}
+        canReadUsers
+        canUpdateUsers={false}
+        csrfToken="csrf_from_me"
+        currentUserId="user_admin"
+        isOpen
+        onClose={vi.fn()}
+        userAdminApi={api}
+      />,
+    )
+
+    rerender(
+      <UserRoleAdminPanel
+        canCreateUsers={false}
+        canDisableUsers={false}
+        canManageRoles={false}
+        canManageTenant={false}
+        canReadRoles={false}
+        canReadUsers
+        canUpdateUsers={false}
+        csrfToken="csrf_from_me"
+        currentUserId="user_admin"
+        isOpen={false}
+        onClose={vi.fn()}
+        userAdminApi={api}
+      />,
+    )
+    resolveTenant?.(currentTenant)
+    await waitFor(() => expect(screen.queryByText('Studio Tenant')).not.toBeInTheDocument())
   })
 })

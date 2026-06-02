@@ -4,6 +4,7 @@ import type {
   PermissionKey,
   RoleId,
   TenantId,
+  TenantStatus,
   UserId,
   UserStatus,
 } from './platform'
@@ -41,6 +42,12 @@ export interface UserAdminUser {
   roles: UserAdminRole[]
 }
 
+export interface CurrentTenantAdminResponse {
+  id: TenantId
+  name: string
+  status: TenantStatus
+}
+
 export interface ListUsersParams {
   pageNum?: number
   pageSize?: number
@@ -61,6 +68,27 @@ export interface UpdateUserAdminUserRequest {
 
 export interface ReplaceUserRolesRequest {
   roleIds: Array<RoleId | string>
+}
+
+export interface UpdateCurrentTenantRequest {
+  name: string
+}
+
+export interface CreateUserAdminRoleRequest {
+  code: string
+  name: string
+  description: string
+  status?: UserAdminRoleStatus
+}
+
+export interface UpdateUserAdminRoleRequest {
+  name?: string
+  description?: string
+  status?: UserAdminRoleStatus
+}
+
+export interface ReplaceRolePermissionsRequest {
+  permissionIds: Array<PermissionKey | string>
 }
 
 export type UserAdminPage = ApiPage<UserAdminUser>

@@ -110,4 +110,69 @@ describe('user admin API wrapper', () => {
       expect((fetchImpl.mock.calls[index][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
     }
   })
+
+  it('covers current tenant and custom role writes with the frozen URL, method, body, and CSRF contract', async () => {
+    const customRole = {
+      ...role,
+      id: 'role_catalog_manager',
+      code: 'catalog-manager',
+      name: 'Catalog Manager',
+      description: 'Manage catalog workflow',
+    }
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ id: 'tenant_1', name: 'Studio Tenant', status: 'ACTIVE' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'tenant_1', name: 'Studio Team', status: 'ACTIVE' }))
+      .mockResolvedValueOnce(jsonResponse(customRole, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...customRole, name: 'Catalog Lead', status: 'DISABLED' }))
+      .mockResolvedValueOnce(jsonResponse({ ...customRole, permissions: role.permissions }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    const api = createUserAdminApi(createApiClient({ fetchImpl }))
+
+    await api.getCurrentTenant()
+    await api.updateCurrentTenant({ name: 'Studio Team' }, 'csrf_memory_only')
+    await api.createRole(
+      {
+        code: 'catalog-manager',
+        name: 'Catalog Manager',
+        description: 'Manage catalog workflow',
+      },
+      'csrf_memory_only',
+    )
+    await api.updateRole(
+      'role_catalog_manager',
+      {
+        name: 'Catalog Lead',
+        description: 'Manage catalog workflow',
+        status: 'DISABLED',
+      },
+      'csrf_memory_only',
+    )
+    await api.replaceRolePermissions('role_catalog_manager', { permissionIds: ['permission_user_read'] }, 'csrf_memory_only')
+    await api.deleteRole('role_catalog_manager', 'csrf_memory_only')
+
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ['/api/v1/tenants/current', 'GET'],
+      ['/api/v1/tenants/current', 'PATCH'],
+      ['/api/v1/roles', 'POST'],
+      ['/api/v1/roles/role_catalog_manager', 'PATCH'],
+      ['/api/v1/roles/role_catalog_manager/permissions', 'PUT'],
+      ['/api/v1/roles/role_catalog_manager', 'DELETE'],
+    ])
+    expect(JSON.parse(fetchImpl.mock.calls[1][1]?.body as string)).toEqual({ name: 'Studio Team' })
+    expect(JSON.parse(fetchImpl.mock.calls[2][1]?.body as string)).toEqual({
+      code: 'catalog-manager',
+      name: 'Catalog Manager',
+      description: 'Manage catalog workflow',
+    })
+    expect(JSON.parse(fetchImpl.mock.calls[3][1]?.body as string)).toEqual({
+      name: 'Catalog Lead',
+      description: 'Manage catalog workflow',
+      status: 'DISABLED',
+    })
+    expect(JSON.parse(fetchImpl.mock.calls[4][1]?.body as string)).toEqual({ permissionIds: ['permission_user_read'] })
+    for (const index of [1, 2, 3, 4, 5]) {
+      expect((fetchImpl.mock.calls[index][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+    }
+  })
 })
