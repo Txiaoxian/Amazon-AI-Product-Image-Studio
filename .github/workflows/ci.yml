@@ -124,6 +124,15 @@ jobs:
       - name: Test deployment validation guardrails
         run: bash scripts/deploy-release-validation-test.sh
 
+      - name: Test production dry-run guardrails
+        run: bash scripts/prod-dry-run-test.sh
+
+      - name: Test backup restore rehearsal guardrails
+        run: bash scripts/backup-restore-rehearsal-test.sh
+
+      - name: Test TLS reverse proxy guardrails
+        run: bash scripts/tls-reverse-proxy-check-test.sh
+
       - name: Test real Provider smoke guardrails
         run: bash scripts/real-provider-smoke-test.sh
 
