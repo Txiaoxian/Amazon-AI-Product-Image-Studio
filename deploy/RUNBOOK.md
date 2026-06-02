@@ -447,9 +447,9 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -v "$PWD/backup/minio:/backup" \
   --entrypoint /bin/sh minio-bootstrap -c '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-    mc mirror local/"$MINIO_BUCKET_ORIGINALS" /backup/"$MINIO_BUCKET_ORIGINALS"
-    mc mirror local/"$MINIO_BUCKET_GENERATED" /backup/"$MINIO_BUCKET_GENERATED"
-    mc mirror local/"$MINIO_BUCKET_THUMBNAILS" /backup/"$MINIO_BUCKET_THUMBNAILS"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_ORIGINALS" /backup/"$MINIO_BUCKET_ORIGINALS"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_GENERATED" /backup/"$MINIO_BUCKET_GENERATED"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_THUMBNAILS" /backup/"$MINIO_BUCKET_THUMBNAILS"
   '
 ```
 
@@ -470,7 +470,10 @@ docker compose -f deploy/docker-compose.yml exec -T mysql \
   < backup/mysql.sql
 ```
 
-Restore MinIO objects with the same bucket names, then start the application:
+Restore MinIO objects with the same bucket names, then start the application.
+The `--remove` option makes the restore exact by deleting bucket objects that
+are absent from the matching backup. Run this only against the stopped or
+isolated restore target:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up minio-bootstrap
@@ -478,9 +481,9 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -v "$PWD/backup/minio:/backup:ro" \
   --entrypoint /bin/sh minio-bootstrap -c '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-    mc mirror /backup/"$MINIO_BUCKET_ORIGINALS" local/"$MINIO_BUCKET_ORIGINALS"
-    mc mirror /backup/"$MINIO_BUCKET_GENERATED" local/"$MINIO_BUCKET_GENERATED"
-    mc mirror /backup/"$MINIO_BUCKET_THUMBNAILS" local/"$MINIO_BUCKET_THUMBNAILS"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_ORIGINALS" local/"$MINIO_BUCKET_ORIGINALS"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_GENERATED" local/"$MINIO_BUCKET_GENERATED"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_THUMBNAILS" local/"$MINIO_BUCKET_THUMBNAILS"
   '
 docker compose -f deploy/docker-compose.yml up -d backend-api backend-worker frontend
 ```

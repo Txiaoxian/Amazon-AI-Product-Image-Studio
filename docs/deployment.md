@@ -51,7 +51,7 @@ Known runtime notes:
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
 - Provider master-key rotation and backup/restore rehearsal are implemented. Operators must still execute their default-safe checks and approved target-environment procedures before production changes.
-- R20 found deployment follow-ups that remain release blocking: production env-file propagation across every Compose subprocess, redacted health-failure logs, bounded container log rotation, and exact MinIO restore semantics. These are tracked under P21.
+- R20 found deployment follow-ups that remain release blocking: production env-file propagation across every Compose subprocess, redacted health-failure logs, and bounded container log rotation. P21 exact MinIO restore semantics are now implemented in the isolated rehearsal and runbook with `mc mirror --overwrite --remove`.
 
 ## Services
 
