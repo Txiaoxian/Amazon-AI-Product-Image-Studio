@@ -76,6 +76,7 @@ EOF
   cat >>"$bindir/bash" <<'EOF'
 set -euo pipefail
 printf 'bash %s\n' "$*" >>"$FAKE_LOG"
+printf 'compose-env-files %s\n' "${COMPOSE_ENV_FILES:-}" >>"$FAKE_LOG"
 if [[ "${FAKE_CHILD_PRINT_SECRET:-0}" == "1" ]]; then
   printf 'SMOKE_PROVIDER_API_KEY: %s\n' "${SMOKE_PROVIDER_API_KEY:-sk-fake-child-secret}" >&2
 fi
@@ -154,6 +155,7 @@ write_valid_production_env() {
   cat >"$target" <<'EOF'
 APP_ENV=production
 COOKIE_SECURE=true
+CSRF_ENABLED=true
 CORS_ALLOWED_ORIGINS=https://studio.example.com
 MYSQL_ROOT_PASSWORD=fake-mysql-root-secret
 MYSQL_PASSWORD=fake-mysql-secret
@@ -306,6 +308,41 @@ test_production_env_preflight_rejects_nonproduction_app_env() {
   assert_not_contains "$CASE_OUTPUT" "fake-minio-root-secret"
 }
 
+test_production_env_preflight_rejects_missing_csrf_enabled() {
+  local env_file filtered_env_file
+  env_file="$(mktemp)"
+  filtered_env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  grep -v '^CSRF_ENABLED=' "$env_file" >"$filtered_env_file"
+  run_case "production env preflight rejects missing CSRF_ENABLED" --production-env-file "$filtered_env_file"
+  rm -f "$env_file" "$filtered_env_file"
+  assert_nonzero_status "$CASE_STATUS" "missing production CSRF_ENABLED"
+  assert_contains "$CASE_OUTPUT" "missing required production env: CSRF_ENABLED"
+  assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
+}
+
+test_production_env_preflight_rejects_disabled_csrf() {
+  local env_file
+  env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  printf 'CSRF_ENABLED=false\n' >>"$env_file"
+  run_case "production env preflight rejects disabled CSRF" --production-env-file "$env_file"
+  rm -f "$env_file"
+  assert_nonzero_status "$CASE_STATUS" "disabled production CSRF"
+  assert_contains "$CASE_OUTPUT" "CSRF_ENABLED must be true"
+  assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
+}
+
+test_production_env_preflight_accepts_enabled_csrf() {
+  local env_file
+  env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  run_case "production env preflight accepts enabled CSRF" --production-env-file "$env_file"
+  rm -f "$env_file"
+  assert_status 0 "$CASE_STATUS" "enabled production CSRF"
+  assert_contains "$CASE_OUTPUT" "production env preflight passed"
+}
+
 test_production_env_preflight_rejects_localhost_cors() {
   local env_file
   env_file="$(mktemp)"
@@ -380,6 +417,26 @@ test_production_env_preflight_accepts_valid_template_without_leak() {
   assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
 }
 
+test_production_env_file_is_forwarded_to_compose_and_release_validation() {
+  local env_file
+  env_file="$(mktemp)"
+  write_valid_production_env "$env_file"
+  run_case "production env file is forwarded" \
+    --production-env-file "$env_file" \
+    --live-compose
+  assert_status 0 "$CASE_STATUS" "forwarded production env file"
+  assert_line_order "$CASE_LOG" \
+    "bash $ROOT_DIR/scripts/deploy-release-validation.sh --env-file $env_file" \
+    "docker compose -f $ROOT_DIR/deploy/docker-compose.yml --env-file $env_file config" \
+    "bash $ROOT_DIR/scripts/deploy-release-validation.sh --env-file $env_file --up --down"
+  assert_contains "$CASE_LOG" "compose-env-files $env_file"
+  assert_not_contains "$CASE_OUTPUT" "fake-mysql-root-secret"
+  assert_not_contains "$CASE_OUTPUT" "fake-minio-secret-key"
+  assert_not_contains "$CASE_OUTPUT" "fake-jwt-signing-secret"
+  assert_not_contains "$CASE_OUTPUT" "fake-api-key-encryption-secret"
+  rm -f "$env_file"
+}
+
 test_help_is_safe
 test_default_mode_runs_safe_checks_in_order
 test_real_provider_smoke_requires_confirmation_before_checks
@@ -392,11 +449,15 @@ test_production_env_preflight_missing_secret_fails_closed
 test_production_env_preflight_rejects_placeholder_without_leak
 test_production_env_preflight_rejects_invalid_cookie
 test_production_env_preflight_rejects_nonproduction_app_env
+test_production_env_preflight_rejects_missing_csrf_enabled
+test_production_env_preflight_rejects_disabled_csrf
+test_production_env_preflight_accepts_enabled_csrf
 test_production_env_preflight_rejects_localhost_cors
 test_production_env_preflight_rejects_private_and_link_local_cors
 test_production_env_preflight_rejects_non_default_csrf_header
 test_production_env_preflight_accepts_default_csrf_header
 test_production_env_preflight_accepts_valid_template_without_leak
+test_production_env_file_is_forwarded_to_compose_and_release_validation
 
 echo
 echo "[ok] production dry-run script tests passed"

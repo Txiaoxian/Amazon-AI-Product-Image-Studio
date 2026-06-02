@@ -4,15 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/deploy/docker-compose.yml}"
 HEALTH_TIMEOUT_SECONDS="${DEPLOY_HEALTH_TIMEOUT_SECONDS:-240}"
+ENV_FILE=""
 RUN_UP=0
 RUN_DOWN=0
 LIVE_STACK_MANAGED=0
 CLEANUP_ON_EXIT=0
 CLEANUP_RAN=0
+TMP_FILES=()
+COMPOSE_ARGS=(-f "$COMPOSE_FILE")
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/deploy-release-validation.sh [--up] [--down] [--help]
+Usage: bash scripts/deploy-release-validation.sh [--env-file PATH] [--up] [--down] [--help]
 
 Runs the P15 deployment release validation:
   - docker compose config validation
@@ -25,6 +28,8 @@ Runs the P15 deployment release validation:
   - optional Compose cleanup with --down
 
 Options:
+  --env-file PATH  Use PATH for every Compose command without sourcing or
+                   printing its contents.
   --up    Start the Compose stack and run live health/proxy checks.
           The stack is left running for operator inspection.
   --down  Run docker compose down -v --remove-orphans after validation.
@@ -48,6 +53,14 @@ while [[ "$#" -gt 0 ]]; do
     --down)
       RUN_DOWN=1
       ;;
+    --env-file)
+      shift
+      if [[ "$#" -eq 0 || -z "${1:-}" ]]; then
+        usage >&2
+        exit 2
+      fi
+      ENV_FILE="$1"
+      ;;
     --help|-h)
       usage
       exit 0
@@ -60,13 +73,28 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
+if [[ -n "$ENV_FILE" ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "[fail] Compose env file not found" >&2
+    exit 1
+  fi
+  export COMPOSE_ENV_FILES="$ENV_FILE"
+  COMPOSE_ARGS+=(--env-file "$ENV_FILE")
+fi
+
 redact_file() {
   sed -E \
-    -e 's/((PASSWORD|SECRET|API_KEY_ENCRYPTION_KEY|JWT_SIGNING_SECRET|AUTH_COOKIE_NAME|CSRF_COOKIE_NAME): )[[:graph:]]+/\1[redacted]/Ig' \
-    -e 's/(MINIO_(ROOT_USER|ACCESS_KEY|SECRET_KEY): )[[:graph:]]+/\1[redacted]/g' \
-    -e 's/(MYSQL_(USER|PASSWORD|ROOT_PASSWORD): )[[:graph:]]+/\1[redacted]/g' \
-    -e 's/(REDIS_PASSWORD: )[[:graph:]]+/\1[redacted]/g' \
+    -e 's/("?(Authorization|Proxy-Authorization|Cookie|Set-Cookie)"?[=:][[:space:]]*"?).*/\1[redacted]/Ig' \
+    -e 's/("?[A-Z0-9_-]*(PASSWORD|SECRET|API[_-]?KEY|TOKEN)[A-Z0-9_-]*"?[=:][[:space:]]*"?).*/\1[redacted]/Ig' \
+    -e 's/("?(MINIO_ROOT_USER|MYSQL_USER|AUTH_COOKIE_NAME|CSRF_COOKIE_NAME)"?[=:][[:space:]]*"?).*/\1[redacted]/Ig' \
     "$1"
+}
+
+cleanup_tmp_files() {
+  local file
+  for file in "${TMP_FILES[@]:-}"; do
+    rm -f "$file"
+  done
 }
 
 run() {
@@ -80,6 +108,7 @@ run_quiet() {
   echo "==> $*"
   local output
   output="$(mktemp)"
+  TMP_FILES+=("$output")
   set +e
   "$@" >"$output" 2>&1
   local status=$?
@@ -95,7 +124,7 @@ run_quiet() {
 }
 
 compose() {
-  docker compose -f "$COMPOSE_FILE" "$@"
+  docker compose "${COMPOSE_ARGS[@]}" "$@"
 }
 
 cleanup_compose_stack() {
@@ -108,6 +137,7 @@ cleanup_compose_stack() {
   echo "==> docker compose cleanup"
   local output
   output="$(mktemp)"
+  TMP_FILES+=("$output")
   set +e
   compose down -v --remove-orphans >"$output" 2>&1
   local status=$?
@@ -134,11 +164,14 @@ cleanup_on_exit() {
     if [[ "$cleanup_status" -ne 0 ]]; then
       if [[ "$status" -ne 0 ]]; then
         echo "[fail] cleanup failed after validation exit status $status" >&2
+        cleanup_tmp_files
         exit "$status"
       fi
+      cleanup_tmp_files
       exit "$cleanup_status"
     fi
   fi
+  cleanup_tmp_files
   exit "$status"
 }
 
@@ -210,6 +243,19 @@ check_backend_operator_cli_image() {
   echo "[ok]"
 }
 
+show_redacted_compose_output() {
+  local output
+  output="$(mktemp)"
+  TMP_FILES+=("$output")
+  set +e
+  compose "$@" >"$output" 2>&1
+  local status=$?
+  set -e
+  redact_file "$output" >&2
+  rm -f "$output"
+  return "$status"
+}
+
 wait_for_service_health() {
   local service="$1"
   local deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
@@ -234,12 +280,12 @@ wait_for_service_health() {
             return 0
           fi
           echo "[fail] $service exited before becoming healthy" >&2
-          compose logs --no-color --tail=80 "$service" >&2 || true
+          show_redacted_compose_output logs --no-color --tail=80 "$service" || true
           return 1
           ;;
         unhealthy)
           echo "[fail] $service is unhealthy" >&2
-          compose logs --no-color --tail=80 "$service" >&2 || true
+          show_redacted_compose_output logs --no-color --tail=80 "$service" || true
           return 1
           ;;
       esac
@@ -247,8 +293,8 @@ wait_for_service_health() {
     sleep 3
   done
   echo "[fail] timed out waiting for $service health" >&2
-  compose ps >&2 || true
-  compose logs --no-color --tail=80 "$service" >&2 || true
+  show_redacted_compose_output ps || true
+  show_redacted_compose_output logs --no-color --tail=80 "$service" || true
   return 1
 }
 

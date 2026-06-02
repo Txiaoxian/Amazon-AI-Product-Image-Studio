@@ -9,6 +9,8 @@ PRODUCTION_ENV_FILE=""
 TMP_FILES=()
 ENV_KEYS=()
 ENV_VALUES=()
+COMPOSE_ARGS=(-f "$COMPOSE_FILE")
+RELEASE_VALIDATION_COMMAND=(bash "$ROOT_DIR/scripts/deploy-release-validation.sh")
 
 usage() {
   cat <<'EOF'
@@ -146,6 +148,7 @@ validate_production_env_file() {
   local required=(
     APP_ENV
     COOKIE_SECURE
+    CSRF_ENABLED
     CORS_ALLOWED_ORIGINS
     MYSQL_ROOT_PASSWORD
     MYSQL_PASSWORD
@@ -169,6 +172,9 @@ validate_production_env_file() {
   fi
   if [[ "$(get_env_value COOKIE_SECURE)" != "true" ]]; then
     fail "COOKIE_SECURE must be true"
+  fi
+  if [[ "$(get_env_value CSRF_ENABLED)" != "true" ]]; then
+    fail "CSRF_ENABLED must be true"
   fi
   if value="$(get_env_value CSRF_HEADER_NAME)"; then
     if [[ "$value" != "X-CSRF-Token" ]]; then
@@ -269,18 +275,21 @@ fi
 if [[ -n "$PRODUCTION_ENV_FILE" ]]; then
   log "stage: production env preflight"
   validate_production_env_file "$PRODUCTION_ENV_FILE"
+  export COMPOSE_ENV_FILES="$PRODUCTION_ENV_FILE"
+  COMPOSE_ARGS+=(--env-file "$PRODUCTION_ENV_FILE")
+  RELEASE_VALIDATION_COMMAND+=(--env-file "$PRODUCTION_ENV_FILE")
 fi
 
 log "starting sanitized production dry-run"
-run_stage "deployment release validation" bash "$ROOT_DIR/scripts/deploy-release-validation.sh"
+run_stage "deployment release validation" "${RELEASE_VALIDATION_COMMAND[@]}"
 run_stage "security regression" bash "$ROOT_DIR/scripts/security-regression.sh"
 run_stage "real Provider smoke guardrail dry-run" bash "$ROOT_DIR/scripts/real-provider-smoke.sh" --dry-run
 run_stage "backup/restore rehearsal guardrail dry-run" bash "$ROOT_DIR/scripts/backup-restore-rehearsal.sh"
-run_stage "Compose config validation" docker compose -f "$COMPOSE_FILE" config
+run_stage "Compose config validation" docker compose "${COMPOSE_ARGS[@]}" config
 
 if [[ "$RUN_LIVE_COMPOSE" -eq 1 ]]; then
   run_stage "live Compose validation with scoped cleanup" \
-    bash "$ROOT_DIR/scripts/deploy-release-validation.sh" --up --down
+    "${RELEASE_VALIDATION_COMMAND[@]}" --up --down
 fi
 
 if [[ "$RUN_REAL_PROVIDER_SMOKE" -eq 1 ]]; then

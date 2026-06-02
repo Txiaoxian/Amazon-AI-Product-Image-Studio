@@ -1,5 +1,11 @@
 name: ${COMPOSE_PROJECT_NAME:-amazon-ai-product-image-studio}
 
+x-json-file-logging: &json-file-logging
+  driver: json-file
+  options:
+    max-size: "${COMPOSE_LOG_MAX_SIZE:-10m}"
+    max-file: "${COMPOSE_LOG_MAX_FILE:-3}"
+
 services:
   frontend:
     image: ${FRONTEND_IMAGE:-amazon-ai-product-image-studio/frontend:local}
@@ -22,6 +28,7 @@ services:
       start_period: 20s
     networks:
       - app
+    logging: *json-file-logging
     restart: unless-stopped
 
   backend-api:
@@ -114,6 +121,7 @@ services:
     networks:
       - app
       - data
+    logging: *json-file-logging
     restart: unless-stopped
 
   backend-worker:
@@ -202,6 +210,7 @@ services:
     networks:
       - app
       - data
+    logging: *json-file-logging
     restart: unless-stopped
 
   mysql:
@@ -227,6 +236,7 @@ services:
       start_period: 30s
     networks:
       - data
+    logging: *json-file-logging
     restart: unless-stopped
 
   redis:
@@ -248,6 +258,7 @@ services:
       start_period: 10s
     networks:
       - data
+    logging: *json-file-logging
     restart: unless-stopped
 
   minio:
@@ -267,6 +278,7 @@ services:
       start_period: 20s
     networks:
       - data
+    logging: *json-file-logging
     restart: unless-stopped
 
   minio-bootstrap:
