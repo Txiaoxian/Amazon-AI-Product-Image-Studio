@@ -65,6 +65,28 @@ func (r Repository) StorageUsedBytes(ctx context.Context, scope tenant.Scope) (i
 	return storageQuotaCounterUsedBytes(ctx, r, scope)
 }
 
+func (r Repository) ListActiveTenantIDs(ctx context.Context, limit int) ([]string, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if limit <= 0 {
+		return nil, ErrValidation
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var tenantIDs []string
+	err := r.db.WithContext(ctx).
+		Model(&database.Tenant{}).
+		Select("id").
+		Where("status = ?", "ACTIVE").
+		Order("id ASC").
+		Limit(limit).
+		Pluck("id", &tenantIDs).Error
+	return tenantIDs, err
+}
+
 func (r Repository) ListByKeyForActiveTenants(ctx context.Context, key string) ([]database.SystemSetting, error) {
 	if r.db == nil {
 		return nil, database.ErrNilDB

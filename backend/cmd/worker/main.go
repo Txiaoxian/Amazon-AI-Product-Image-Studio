@@ -111,9 +111,10 @@ func main() {
 
 	cleanupService := asset.NewCleanupService(db, log, cfg.Storage, objectStore)
 	retentionLoop := startRetentionMaintenanceLoop(ctx, newRetentionMaintenanceRunner(settings.NewRepository(db), cleanupService, log, retentionMaintenanceOptions{
-		Interval:   cfg.Worker.RetentionMaintenanceInterval,
-		BatchLimit: cfg.Worker.RetentionMaintenanceBatchLimit,
-		LogCleaner: newDatabaseLogRetentionCleaner(db, log),
+		Interval:        cfg.Worker.RetentionMaintenanceInterval,
+		BatchLimit:      cfg.Worker.RetentionMaintenanceBatchLimit,
+		LogCleaner:      newDatabaseLogRetentionCleaner(db, log),
+		QuotaReconciler: newDatabaseQuotaReconciler(db),
 	}))
 	runErr := worker.Run(ctx)
 

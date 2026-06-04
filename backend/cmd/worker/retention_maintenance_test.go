@@ -210,6 +210,177 @@ func TestRetentionMaintenanceRunOnceStopsBeforeLogTenantAfterCancel(t *testing.T
 	}
 }
 
+func TestQuotaReconciliationMaintenanceProcessesOnlyActiveTenantsWithinBatchLimit(t *testing.T) {
+	db := newRetentionMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "DISABLED", now)
+	seedRetentionTenant(t, db, "tenant-c", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-d", "ACTIVE", now)
+	reconciler := &fakeQuotaReconciler{}
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      2,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: reconciler,
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	if len(reconciler.calls) != 2 {
+		t.Fatalf("quota reconciliation calls = %#v, want first two active tenants", reconciler.calls)
+	}
+	if reconciler.calls[0].tenantID != "tenant-a" || reconciler.calls[1].tenantID != "tenant-c" {
+		t.Fatalf("quota reconciliation call order = %#v, want tenant-a then tenant-c", reconciler.calls)
+	}
+}
+
+func TestQuotaReconciliationMaintenanceStopsBeforeTenantAfterCancel(t *testing.T) {
+	db := newRetentionMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "ACTIVE", now)
+	ctx, cancel := context.WithCancel(context.Background())
+	reconciler := &fakeQuotaReconciler{afterCall: cancel}
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      10,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: reconciler,
+	})
+
+	if err := runner.runOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("runOnce returned error = %v, want nil or context.Canceled", err)
+	}
+	if len(reconciler.calls) != 1 {
+		t.Fatalf("quota reconciliation calls after cancellation = %#v, want only first tenant", reconciler.calls)
+	}
+}
+
+func TestQuotaReconciliationMaintenanceContinuesAfterFailureWithSanitizedWarning(t *testing.T) {
+	db := newRetentionMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "ACTIVE", now)
+	var logs bytes.Buffer
+	reconciler := &fakeQuotaReconciler{
+		errByTenant: map[string]error{
+			"tenant-a": fmt.Errorf("bucket product-originals object_key tenants/tenant-a/assets/raw.png reservation reservation-secret jwt cookie provider_key base64 data:image/png: %w", settings.ErrStorageQuotaCounterInvalid),
+		},
+	}
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(&logs, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      10,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: reconciler,
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	if len(reconciler.calls) != 2 {
+		t.Fatalf("quota reconciliation calls = %#v, want tenant-a failure then tenant-b success", reconciler.calls)
+	}
+	logOutput := strings.ToLower(logs.String())
+	for _, required := range []string{"storage quota reconciliation failed", "tenant-a", "invalid_counter"} {
+		if !strings.Contains(logOutput, required) {
+			t.Fatalf("warning log missing %q: %s", required, logs.String())
+		}
+	}
+	for _, forbidden := range []string{"product-originals", "object_key", "raw.png", "reservation-secret", "reservation ", "jwt", "cookie", "provider_key", "base64", "data:image", "bucket"} {
+		if strings.Contains(logOutput, forbidden) {
+			t.Fatalf("warning log leaked %q: %s", forbidden, logs.String())
+		}
+	}
+}
+
+func TestDatabaseQuotaReconcilerReconcilesTenantScopedMetadataAndWritesSanitizedAudit(t *testing.T) {
+	db := newQuotaReconciliationMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	purgedAt := now
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "ACTIVE", now)
+	seedStorageQuotaSetting(t, db, "tenant-a", `{"maxBytes":1000}`, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-a", "asset-active", "tenants/tenant-a/projects/project-a/assets/asset-active/original.png", 100, nil, nil, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-a", "asset-soft", "tenants/tenant-a/projects/project-a/assets/asset-soft/original.png", 50, &now, nil, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-a", "asset-purged", "tenants/tenant-a/projects/project-a/assets/asset-purged/original.png", 200, &now, &purgedAt, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-b", "asset-cross", "tenants/tenant-b/projects/project-b/assets/asset-cross/original.png", 900, nil, nil, now)
+	seedQuotaMaintenanceCounter(t, db, "tenant-a", 1, 90, now)
+	seedQuotaMaintenanceReservation(t, db, "reservation-secret-active", "tenant-a", 40, "RESERVED", time.Now().UTC().Add(time.Hour), now)
+	seedQuotaMaintenanceReservation(t, db, "reservation-secret-stale", "tenant-a", 30, "RESERVED", time.Now().UTC().Add(-time.Hour), now)
+
+	result, err := newDatabaseQuotaReconciler(db).ReconcileStorageQuota(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("ReconcileStorageQuota returned error: %v", err)
+	}
+	if result.UsedBytes != 150 || result.ReservedBytes != 40 || result.ReleasedStaleCount != 1 {
+		t.Fatalf("quota reconciliation result = %#v, want used=150 reserved=40 released stale=1", result)
+	}
+	assertQuotaMaintenanceCounter(t, db, "tenant-a", 150, 40)
+	assertQuotaMaintenanceCounterMissing(t, db, "tenant-b")
+
+	var metadataJSON string
+	if err := db.Model(&database.OperationLog{}).
+		Where("tenant_id = ? AND action = ? AND resource_id = ?", "tenant-a", actionStorageQuotaReconcile, settings.KeyStorageQuota).
+		Pluck("metadata_json", &metadataJSON).Error; err != nil {
+		t.Fatalf("load quota reconciliation audit log: %v", err)
+	}
+	metadata := strings.ToLower(metadataJSON)
+	for _, required := range []string{"storage_quota", "succeeded", "usedbytes", "reservedbytes", "releasedstalecount"} {
+		if !strings.Contains(metadata, required) {
+			t.Fatalf("audit metadata missing %q: %s", required, metadataJSON)
+		}
+	}
+	for _, forbidden := range []string{"tenants/", "object_key", "objectkey", "product-originals", "bucket", "minio", "http://", "reservation-secret", "reservation", "authorization", "cookie", "jwt", "provider", "api_key", "apikey", "base64", "data:image"} {
+		if strings.Contains(metadata, forbidden) {
+			t.Fatalf("audit metadata contains %q: %s", forbidden, metadataJSON)
+		}
+	}
+}
+
+func TestQuotaReconciliationMaintenanceSkipsMalformedStorageQuotaFailClosed(t *testing.T) {
+	db := newQuotaReconciliationMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedStorageQuotaSetting(t, db, "tenant-a", `{"maxBytes":1000,"usedBytes":1}`, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-a", "asset-active", "tenants/tenant-a/projects/project-a/assets/asset-active/original.png", 100, nil, nil, now)
+	seedQuotaMaintenanceCounter(t, db, "tenant-a", 1, 0, now)
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      10,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: newDatabaseQuotaReconciler(db),
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	assertQuotaMaintenanceCounter(t, db, "tenant-a", 1, 0)
+	assertQuotaMaintenanceAuditCount(t, db, "tenant-a", 0)
+}
+
+func TestQuotaReconciliationMaintenanceMalformedCounterFailsClosed(t *testing.T) {
+	db := newQuotaReconciliationMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedStorageQuotaSetting(t, db, "tenant-a", `{"maxBytes":1000}`, now)
+	seedQuotaMaintenanceAsset(t, db, "tenant-a", "asset-active", "tenants/tenant-a/projects/project-a/assets/asset-active/original.png", 100, nil, nil, now)
+	seedQuotaMaintenanceCounter(t, db, "tenant-a", -1, 0, now)
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      10,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: newDatabaseQuotaReconciler(db),
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	assertQuotaMaintenanceCounter(t, db, "tenant-a", -1, 0)
+	assertQuotaMaintenanceAuditCount(t, db, "tenant-a", 0)
+}
+
 func TestDatabaseLogRetentionCleanerDeletesTenantScopedBatchesAndWritesAudit(t *testing.T) {
 	db := newLogRetentionCleanerTestDB(t)
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -399,6 +570,13 @@ type fakeLogRetentionCleaner struct {
 	afterCall       func()
 }
 
+type fakeQuotaReconciler struct {
+	calls          []quotaReconciliationCall
+	errByTenant    map[string]error
+	resultByTenant map[string]quotaReconciliationResult
+	afterCall      func()
+}
+
 type logRetentionCleanupCall struct {
 	tenantID      string
 	now           time.Time
@@ -425,6 +603,22 @@ func (c *fakeLogRetentionCleaner) CleanupLogRetention(ctx context.Context, confi
 		return summary, err
 	}
 	return summary, ctx.Err()
+}
+
+type quotaReconciliationCall struct {
+	tenantID string
+}
+
+func (r *fakeQuotaReconciler) ReconcileStorageQuota(ctx context.Context, tenantID string) (quotaReconciliationResult, error) {
+	r.calls = append(r.calls, quotaReconciliationCall{tenantID: tenantID})
+	if r.afterCall != nil {
+		r.afterCall()
+	}
+	result := r.resultByTenant[tenantID]
+	if err := r.errByTenant[tenantID]; err != nil {
+		return result, err
+	}
+	return result, ctx.Err()
 }
 
 func assertRetentionCleanupCall(t *testing.T, got retentionCleanupCall, tenantID string, cutoff time.Time, batchLimit int) {
@@ -474,6 +668,24 @@ func newLogRetentionCleanerTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func newQuotaReconciliationMaintenanceTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("open quota reconciliation sqlite database: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("access quota reconciliation sqlite database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	if err := db.AutoMigrate(&database.Tenant{}, &database.SystemSetting{}, &database.StorageQuotaCounter{}, &database.StorageQuotaReservation{}, &database.ImageAsset{}, &database.OperationLog{}); err != nil {
+		t.Fatalf("migrate quota reconciliation test schema: %v", err)
+	}
+	return db
+}
+
 func seedRetentionTenant(t *testing.T, db *gorm.DB, tenantID string, status string, now time.Time) {
 	t.Helper()
 	if err := db.Create(&database.Tenant{
@@ -512,6 +724,77 @@ func seedLogRetentionSetting(t *testing.T, db *gorm.DB, tenantID string, valueJS
 		UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("seed log retention setting %s: %v", tenantID, err)
+	}
+}
+
+func seedStorageQuotaSetting(t *testing.T, db *gorm.DB, tenantID string, valueJSON string, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.SystemSetting{
+		ID:        "quota-setting-" + tenantID,
+		TenantID:  tenantID,
+		Key:       settings.KeyStorageQuota,
+		ValueJSON: valueJSON,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed storage quota setting %s: %v", tenantID, err)
+	}
+}
+
+func seedQuotaMaintenanceAsset(t *testing.T, db *gorm.DB, tenantID string, assetID string, objectKey string, sizeBytes int64, deletedAt *time.Time, purgedAt *time.Time, now time.Time) {
+	t.Helper()
+	record := database.ImageAsset{
+		ID:        assetID,
+		TenantID:  tenantID,
+		ProjectID: "project-" + tenantID,
+		Kind:      "REFERENCE",
+		Filename:  assetID + ".png",
+		ObjectKey: objectKey,
+		MimeType:  "image/png",
+		SizeBytes: sizeBytes,
+		Width:     1,
+		Height:    1,
+		SHA256:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		CreatedBy: "user-" + tenantID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PurgedAt:  purgedAt,
+	}
+	if deletedAt != nil {
+		record.DeletedAt.Valid = true
+		record.DeletedAt.Time = deletedAt.UTC()
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatalf("seed quota maintenance asset %s/%s: %v", tenantID, assetID, err)
+	}
+}
+
+func seedQuotaMaintenanceCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.StorageQuotaCounter{
+		ID:            "quota-counter-" + tenantID,
+		TenantID:      tenantID,
+		UsedBytes:     usedBytes,
+		ReservedBytes: reservedBytes,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error; err != nil {
+		t.Fatalf("seed quota maintenance counter %s: %v", tenantID, err)
+	}
+}
+
+func seedQuotaMaintenanceReservation(t *testing.T, db *gorm.DB, id string, tenantID string, bytes int64, status string, expiresAt time.Time, now time.Time) {
+	t.Helper()
+	if err := db.Create(&database.StorageQuotaReservation{
+		ID:        id,
+		TenantID:  tenantID,
+		Bytes:     bytes,
+		Status:    status,
+		ExpiresAt: expiresAt,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed quota maintenance reservation %s: %v", id, err)
 	}
 }
 
@@ -603,5 +886,41 @@ func assertRowMissing(t *testing.T, db *gorm.DB, model any, query string, args .
 	}
 	if count != 0 {
 		t.Fatalf("expected row matching %s %v to be missing, found %d", query, args, count)
+	}
+}
+
+func assertQuotaMaintenanceCounter(t *testing.T, db *gorm.DB, tenantID string, usedBytes int64, reservedBytes int64) {
+	t.Helper()
+	var counter database.StorageQuotaCounter
+	if err := db.Model(&database.StorageQuotaCounter{}).
+		Select("tenant_id, used_bytes, reserved_bytes").
+		Where("tenant_id = ?", tenantID).
+		First(&counter).Error; err != nil {
+		t.Fatalf("load quota maintenance counter %s: %v", tenantID, err)
+	}
+	if counter.UsedBytes != usedBytes || counter.ReservedBytes != reservedBytes {
+		t.Fatalf("quota maintenance counter %s used/reserved = %d/%d, want %d/%d", tenantID, counter.UsedBytes, counter.ReservedBytes, usedBytes, reservedBytes)
+	}
+}
+
+func assertQuotaMaintenanceCounterMissing(t *testing.T, db *gorm.DB, tenantID string) {
+	t.Helper()
+	var count int64
+	if err := db.Model(&database.StorageQuotaCounter{}).Where("tenant_id = ?", tenantID).Count(&count).Error; err != nil {
+		t.Fatalf("count quota maintenance counter %s: %v", tenantID, err)
+	}
+	if count != 0 {
+		t.Fatalf("quota maintenance counter %s exists, want missing", tenantID)
+	}
+}
+
+func assertQuotaMaintenanceAuditCount(t *testing.T, db *gorm.DB, tenantID string, want int64) {
+	t.Helper()
+	var count int64
+	if err := db.Model(&database.OperationLog{}).Where("tenant_id = ? AND action = ?", tenantID, actionStorageQuotaReconcile).Count(&count).Error; err != nil {
+		t.Fatalf("count quota maintenance audit logs: %v", err)
+	}
+	if count != want {
+		t.Fatalf("quota maintenance audit rows for %s = %d, want %d", tenantID, count, want)
 	}
 }
