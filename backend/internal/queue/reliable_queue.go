@@ -33,6 +33,7 @@ type ReliableTaskQueue interface {
 	DeadLetter(ctx context.Context, claim TaskClaim, reason string) error
 	RecoverStale(ctx context.Context, now time.Time, limit int) ([]string, error)
 	PromoteDue(ctx context.Context, now time.Time, limit int) ([]string, error)
+	EnsureDelivery(ctx context.Context, taskID string) (bool, error)
 }
 
 type reliableQueueRedisClient interface {
@@ -151,13 +152,8 @@ func (q *RedisReliableTaskQueue) Ack(ctx context.Context, claim TaskClaim) error
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := q.client.LRem(ctx, q.processing, 1, taskID).Err(); err != nil {
-		return err
-	}
-	if err := q.client.HDel(ctx, q.processingClaims, taskID).Err(); err != nil {
-		return err
-	}
-	return q.client.HDel(ctx, q.deliveries, taskID).Err()
+	_, err = q.evalMoved(ctx, redisAckScript, []string{q.processing, q.processingClaims, q.deliveries}, taskID)
+	return err
 }
 
 func (q *RedisReliableTaskQueue) Retry(ctx context.Context, claim TaskClaim, delay time.Duration) error {
@@ -171,19 +167,12 @@ func (q *RedisReliableTaskQueue) Retry(ctx context.Context, claim TaskClaim, del
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := q.client.LRem(ctx, q.processing, 1, taskID).Err(); err != nil {
-		return err
-	}
-	if err := q.client.HDel(ctx, q.processingClaims, taskID).Err(); err != nil {
-		return err
-	}
 	if delay <= 0 {
-		return q.client.RPush(ctx, q.queue, taskID).Err()
+		_, err = q.evalMoved(ctx, redisRetryImmediateScript, []string{q.processing, q.processingClaims, q.queue}, taskID)
+		return err
 	}
-	return q.client.ZAdd(ctx, q.delayed, redis.Z{
-		Score:  float64(time.Now().UTC().Add(delay).UnixMilli()),
-		Member: taskID,
-	}).Err()
+	_, err = q.evalMoved(ctx, redisRetryDelayedScript, []string{q.processing, q.processingClaims, q.delayed}, taskID, strconv.FormatInt(time.Now().UTC().Add(delay).UnixMilli(), 10))
+	return err
 }
 
 func (q *RedisReliableTaskQueue) DeadLetter(ctx context.Context, claim TaskClaim, reason string) error {
@@ -197,19 +186,8 @@ func (q *RedisReliableTaskQueue) DeadLetter(ctx context.Context, claim TaskClaim
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := q.client.LRem(ctx, q.processing, 1, taskID).Err(); err != nil {
-		return err
-	}
-	if err := q.client.HDel(ctx, q.processingClaims, taskID).Err(); err != nil {
-		return err
-	}
-	if err := q.client.RPush(ctx, q.dead, taskID).Err(); err != nil {
-		return err
-	}
-	if strings.TrimSpace(reason) != "" {
-		return q.client.HSet(ctx, q.dead+":reasons", taskID, strings.TrimSpace(reason)).Err()
-	}
-	return nil
+	_, err = q.evalMoved(ctx, redisDeadLetterScript, []string{q.processing, q.processingClaims, q.dead, q.dead + ":reasons"}, taskID, strings.TrimSpace(reason))
+	return err
 }
 
 func (q *RedisReliableTaskQueue) RecoverStale(ctx context.Context, now time.Time, limit int) ([]string, error) {
@@ -236,21 +214,12 @@ func (q *RedisReliableTaskQueue) RecoverStale(ctx context.Context, now time.Time
 		if taskID == "" {
 			continue
 		}
-		shouldRecover, err := q.shouldRecoverProcessingTask(ctx, taskID, before)
+		moved, err := q.evalMoved(ctx, redisRecoverStaleScript, []string{q.processing, q.processingClaims, q.queue}, taskID, strconv.FormatInt(before, 10))
 		if err != nil {
 			return recovered, err
 		}
-		if !shouldRecover {
+		if !moved {
 			continue
-		}
-		if err := q.client.LRem(ctx, q.processing, 1, taskID).Err(); err != nil {
-			return recovered, err
-		}
-		if err := q.client.HDel(ctx, q.processingClaims, taskID).Err(); err != nil {
-			return recovered, err
-		}
-		if err := q.client.RPush(ctx, q.queue, taskID).Err(); err != nil {
-			return recovered, err
 		}
 		recovered = append(recovered, taskID)
 	}
@@ -276,19 +245,32 @@ func (q *RedisReliableTaskQueue) PromoteDue(ctx context.Context, now time.Time, 
 	if err != nil {
 		return nil, err
 	}
+	promoted := make([]string, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
-		removed, err := q.client.ZRem(ctx, q.delayed, taskID).Result()
+		moved, err := q.evalMoved(ctx, redisPromoteDueScript, []string{q.delayed, q.queue}, taskID)
 		if err != nil {
 			return nil, err
 		}
-		if removed == 0 {
+		if !moved {
 			continue
 		}
-		if err := q.client.RPush(ctx, q.queue, taskID).Err(); err != nil {
-			return nil, err
-		}
+		promoted = append(promoted, taskID)
 	}
-	return taskIDs, nil
+	return promoted, nil
+}
+
+func (q *RedisReliableTaskQueue) EnsureDelivery(ctx context.Context, taskID string) (bool, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false, ErrInvalidTask
+	}
+	if err := q.validate(); err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return q.evalMoved(ctx, redisEnsureDeliveryScript, []string{q.queue, q.processing, q.delayed}, taskID)
 }
 
 func (q *RedisReliableTaskQueue) validate() error {
@@ -309,19 +291,16 @@ func (q *RedisReliableTaskQueue) recordClaim(ctx context.Context, taskID string,
 	return redisIntegerResult(result)
 }
 
-func (q *RedisReliableTaskQueue) shouldRecoverProcessingTask(ctx context.Context, taskID string, staleBeforeUnixMillis int64) (bool, error) {
-	rawClaimedAt, err := q.client.HGet(ctx, q.processingClaims, taskID).Result()
-	if errors.Is(err, redis.Nil) {
-		return true, nil
-	}
+func (q *RedisReliableTaskQueue) evalMoved(ctx context.Context, script string, keys []string, args ...interface{}) (bool, error) {
+	result, err := q.client.Eval(ctx, script, keys, args...).Result()
 	if err != nil {
 		return false, err
 	}
-	claimedAt, err := strconv.ParseInt(strings.TrimSpace(rawClaimedAt), 10, 64)
+	moved, err := redisIntegerResult(result)
 	if err != nil {
-		return true, nil
+		return false, err
 	}
-	return claimedAt <= staleBeforeUnixMillis, nil
+	return moved != 0, nil
 }
 
 func redisIntegerResult(result interface{}) (int64, error) {
@@ -350,7 +329,96 @@ func taskIDFromClaim(claim TaskClaim) (string, error) {
 }
 
 const redisRecordClaimScript = `
+redis.call('HGET', KEYS[1], ARGV[1])
+redis.call('HGET', KEYS[2], ARGV[1])
 local delivery = redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
 return delivery
+`
+
+const redisAckScript = `
+if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('HGET', KEYS[3], ARGV[1])
+redis.call('LREM', KEYS[1], 1, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+redis.call('HDEL', KEYS[3], ARGV[1])
+return 1
+`
+
+const redisRetryImmediateScript = `
+if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('RPUSH', KEYS[3], ARGV[1])
+redis.call('LREM', KEYS[1], 1, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 1
+`
+
+const redisRetryDelayedScript = `
+if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
+redis.call('LREM', KEYS[1], 1, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 1
+`
+
+const redisDeadLetterScript = `
+if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('LLEN', KEYS[3])
+redis.call('HGET', KEYS[4], ARGV[1])
+if ARGV[2] ~= '' then
+  redis.call('HSET', KEYS[4], ARGV[1], ARGV[2])
+end
+redis.call('RPUSH', KEYS[3], ARGV[1])
+redis.call('LREM', KEYS[1], 1, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 1
+`
+
+const redisRecoverStaleScript = `
+if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+local claimed_at = redis.call('HGET', KEYS[2], ARGV[1])
+if claimed_at and tonumber(claimed_at) and tonumber(claimed_at) > tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('RPUSH', KEYS[3], ARGV[1])
+redis.call('LREM', KEYS[1], 1, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 1
+`
+
+const redisPromoteDueScript = `
+if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+  return 0
+end
+redis.call('RPUSH', KEYS[2], ARGV[1])
+redis.call('ZREM', KEYS[1], ARGV[1])
+return 1
+`
+
+const redisEnsureDeliveryScript = `
+if redis.call('LPOS', KEYS[1], ARGV[1]) then
+  return 0
+end
+if redis.call('LPOS', KEYS[2], ARGV[1]) then
+  return 0
+end
+if redis.call('ZSCORE', KEYS[3], ARGV[1]) then
+  return 0
+end
+redis.call('RPUSH', KEYS[1], ARGV[1])
+return 1
 `

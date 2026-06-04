@@ -363,6 +363,37 @@ func (r Repository) ListRunningTimedOutTasks(ctx context.Context, now time.Time,
 	return records, nil
 }
 
+func (r Repository) ListDeliveryRepairCandidates(ctx context.Context, afterID string, limit int) ([]database.GenerationTask, error) {
+	if r.db == nil {
+		return nil, database.ErrNilDB
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// This is an explicit global worker recovery boundary. The worker only uses
+	// candidate IDs to repair temporary Redis delivery state; MySQL remains the
+	// authoritative source for every tenant-scoped task execution transition.
+	query := r.db.WithContext(ctx).
+		Model(&database.GenerationTask{}).
+		Where("status IN ?", []string{StatusQueued, StatusRetrying})
+	if afterID = strings.TrimSpace(afterID); afterID != "" {
+		query = query.Where("id > ?", afterID)
+	}
+
+	var records []database.GenerationTask
+	if err := query.
+		Order("id ASC").
+		Limit(limit).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cursor uint64, filter EventFilter) ([]database.TaskEvent, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {

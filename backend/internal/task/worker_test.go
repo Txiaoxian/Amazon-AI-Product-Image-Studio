@@ -1267,6 +1267,35 @@ func TestWorkerRecoveryTimesOutRunningTaskAndReapsStaleLocks(t *testing.T) {
 	assertWorkerEvents(t, db, taskID, []string{EventTaskTimedOut})
 }
 
+func TestWorkerProcessorReconcileDeliveryRepairsOnlyEligibleTasksBoundedly(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-01", Status: StatusQueued})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-02", Status: StatusRetrying})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-03", Status: StatusQueued})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-04", Status: StatusRunning})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-05", Status: StatusSucceeded})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-06", Status: StatusFailed})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-07", Status: StatusCancelled})
+	seedWorkerTask(t, db, workerTaskSeed{ID: "task-reconcile-08", Status: StatusTimedOut})
+	taskQueue := &recordingReliableQueue{}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{})
+
+	if err := processor.ReconcileDelivery(context.Background(), taskQueue, 2); err != nil {
+		t.Fatalf("first ReconcileDelivery returned error: %v", err)
+	}
+	if !reflect.DeepEqual(taskQueue.ensured, []string{"task-reconcile-01", "task-reconcile-02"}) {
+		t.Fatalf("first ensured tasks = %#v, want bounded first page", taskQueue.ensured)
+	}
+
+	if err := processor.ReconcileDelivery(context.Background(), taskQueue, 2); err != nil {
+		t.Fatalf("second ReconcileDelivery returned error: %v", err)
+	}
+	if !reflect.DeepEqual(taskQueue.ensured, []string{"task-reconcile-01", "task-reconcile-02", "task-reconcile-03"}) {
+		t.Fatalf("second ensured tasks = %#v, want next eligible page only", taskQueue.ensured)
+	}
+}
+
 func TestWorkerDeadLetterMarksTaskFailed(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
@@ -1713,6 +1742,7 @@ func (l *activeLimitLimiter) maxActive() int {
 type recordingReliableQueue struct {
 	promoted  bool
 	recovered bool
+	ensured   []string
 }
 
 func (q *recordingReliableQueue) EnqueueTask(context.Context, string) error {
@@ -1743,6 +1773,11 @@ func (q *recordingReliableQueue) RecoverStale(context.Context, time.Time, int) (
 func (q *recordingReliableQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	q.promoted = true
 	return nil, nil
+}
+
+func (q *recordingReliableQueue) EnsureDelivery(_ context.Context, taskID string) (bool, error) {
+	q.ensured = append(q.ensured, taskID)
+	return true, nil
 }
 
 type claimListQueue struct {
@@ -1822,6 +1857,10 @@ func (q *claimListQueue) PromoteDue(context.Context, time.Time, int) ([]string, 
 	return nil, nil
 }
 
+func (q *claimListQueue) EnsureDelivery(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 type retryFinalizationFailureQueue struct {
 	mu           sync.Mutex
 	claims       []queue.TaskClaim
@@ -1889,6 +1928,10 @@ func (q *retryFinalizationFailureQueue) PromoteDue(context.Context, time.Time, i
 	return nil, nil
 }
 
+func (q *retryFinalizationFailureQueue) EnsureDelivery(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 type singleRecoveryQueue struct {
 	recoveryEntered chan struct{}
 	recoveryOnce    sync.Once
@@ -1933,6 +1976,10 @@ func (q *singleRecoveryQueue) RecoverStale(ctx context.Context, _ time.Time, _ i
 func (q *singleRecoveryQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	atomic.AddInt32(&q.promoteCalls, 1)
 	return nil, nil
+}
+
+func (q *singleRecoveryQueue) EnsureDelivery(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 type blockingClaimQueue struct {
@@ -1980,6 +2027,10 @@ func (q *blockingClaimQueue) RecoverStale(context.Context, time.Time, int) ([]st
 
 func (q *blockingClaimQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	return nil, nil
+}
+
+func (q *blockingClaimQueue) EnsureDelivery(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 type duplicateDeliveryQueue struct {
@@ -2049,6 +2100,10 @@ func (q *duplicateDeliveryQueue) RecoverStale(context.Context, time.Time, int) (
 
 func (q *duplicateDeliveryQueue) PromoteDue(context.Context, time.Time, int) ([]string, error) {
 	return nil, nil
+}
+
+func (q *duplicateDeliveryQueue) EnsureDelivery(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 func runWorkerForTest(worker *Worker, ctx context.Context) <-chan error {

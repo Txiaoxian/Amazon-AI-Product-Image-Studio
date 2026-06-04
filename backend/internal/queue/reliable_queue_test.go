@@ -184,6 +184,287 @@ func TestRedisReliableTaskQueueRecoverOrphanProcessingEntry(t *testing.T) {
 	}
 }
 
+func TestRedisReliableTaskQueueRetryImmediateFailureKeepsProcessingSource(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	claim := claimQueuedTask(t, ctx, q, "task-retry-immediate-failure")
+	store.wrongTypes[q.queue] = true
+	if err := q.Retry(ctx, claim, 0); err == nil {
+		t.Fatal("Retry returned nil error for ready queue write failure")
+	}
+	assertFakeList(t, store, q.processing, []string{"task-retry-immediate-failure"})
+}
+
+func TestRedisReliableTaskQueueRetryDelayedFailureKeepsProcessingSource(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	claim := claimQueuedTask(t, ctx, q, "task-retry-delayed-failure")
+	store.wrongTypes[q.delayed] = true
+	if err := q.Retry(ctx, claim, time.Minute); err == nil {
+		t.Fatal("Retry returned nil error for delayed queue write failure")
+	}
+	assertFakeList(t, store, q.processing, []string{"task-retry-delayed-failure"})
+}
+
+func TestRedisReliableTaskQueueRetryIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	claim := claimQueuedTask(t, ctx, q, "task-retry-idempotent")
+	if err := q.Retry(ctx, claim, 0); err != nil {
+		t.Fatalf("first Retry returned error: %v", err)
+	}
+	if err := q.Retry(ctx, claim, 0); err != nil {
+		t.Fatalf("second Retry returned error: %v", err)
+	}
+	assertFakeList(t, store, q.processing, nil)
+	assertFakeList(t, store, q.queue, []string{"task-retry-idempotent"})
+}
+
+func TestRedisReliableTaskQueuePromoteDueFailureKeepsDelayedSource(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	now := time.Now().UTC()
+	store.zsets[q.delayed] = map[string]float64{"task-promote-failure": float64(now.Add(-time.Second).UnixMilli())}
+	store.wrongTypes[q.queue] = true
+
+	if _, err := q.PromoteDue(ctx, now, 10); err == nil {
+		t.Fatal("PromoteDue returned nil error for ready queue write failure")
+	}
+	if _, ok := store.zsets[q.delayed]["task-promote-failure"]; !ok {
+		t.Fatal("PromoteDue removed delayed source after ready queue write failure")
+	}
+}
+
+func TestRedisReliableTaskQueuePromoteDueIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	now := time.Now().UTC()
+	store.zsets[q.delayed] = map[string]float64{"task-promote-idempotent": float64(now.Add(-time.Second).UnixMilli())}
+
+	first, err := q.PromoteDue(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("first PromoteDue returned error: %v", err)
+	}
+	second, err := q.PromoteDue(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("second PromoteDue returned error: %v", err)
+	}
+	if !reflect.DeepEqual(first, []string{"task-promote-idempotent"}) || len(second) != 0 {
+		t.Fatalf("promoted first/second = %#v/%#v, want one promotion only", first, second)
+	}
+	assertFakeList(t, store, q.queue, []string{"task-promote-idempotent"})
+}
+
+func TestRedisReliableTaskQueueRecoverStaleFailureKeepsProcessingSource(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	store.lists[q.processing] = []string{"task-recover-failure"}
+	store.wrongTypes[q.queue] = true
+
+	if _, err := q.RecoverStale(ctx, time.Now().UTC(), 10); err == nil {
+		t.Fatal("RecoverStale returned nil error for ready queue write failure")
+	}
+	assertFakeList(t, store, q.processing, []string{"task-recover-failure"})
+}
+
+func TestRedisReliableTaskQueueRecoverStaleIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	store.lists[q.processing] = []string{"task-recover-idempotent"}
+
+	first, err := q.RecoverStale(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("first RecoverStale returned error: %v", err)
+	}
+	second, err := q.RecoverStale(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("second RecoverStale returned error: %v", err)
+	}
+	if !reflect.DeepEqual(first, []string{"task-recover-idempotent"}) || len(second) != 0 {
+		t.Fatalf("recovered first/second = %#v/%#v, want one recovery only", first, second)
+	}
+	assertFakeList(t, store, q.queue, []string{"task-recover-idempotent"})
+}
+
+func TestRedisReliableTaskQueueRecoverStaleScansPastFreshPrefix(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	now := time.Now().UTC()
+	store.lists[q.processing] = []string{"task-fresh-1", "task-fresh-2", "task-stale"}
+	store.hashes[q.processingClaims] = map[string]string{
+		"task-fresh-1": strconv.FormatInt(now.UnixMilli(), 10),
+		"task-fresh-2": strconv.FormatInt(now.UnixMilli(), 10),
+		"task-stale":   strconv.FormatInt(now.Add(-q.visibilityTimeout-time.Minute).UnixMilli(), 10),
+	}
+
+	recovered, err := q.RecoverStale(ctx, now, 1)
+	if err != nil {
+		t.Fatalf("RecoverStale returned error: %v", err)
+	}
+	if !reflect.DeepEqual(recovered, []string{"task-stale"}) {
+		t.Fatalf("recovered = %#v, want stale task behind fresh prefix", recovered)
+	}
+	assertFakeList(t, store, q.processing, []string{"task-fresh-1", "task-fresh-2"})
+	assertFakeList(t, store, q.queue, []string{"task-stale"})
+}
+
+func TestRedisReliableTaskQueueAckAndDeadLetterAreIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	ackedClaim := claimQueuedTask(t, ctx, q, "task-ack-idempotent")
+	if err := q.Ack(ctx, ackedClaim); err != nil {
+		t.Fatalf("first Ack returned error: %v", err)
+	}
+	if err := q.Ack(ctx, ackedClaim); err != nil {
+		t.Fatalf("second Ack returned error: %v", err)
+	}
+
+	deadClaim := claimQueuedTask(t, ctx, q, "task-dead-idempotent")
+	if err := q.DeadLetter(ctx, deadClaim, "test_reason"); err != nil {
+		t.Fatalf("first DeadLetter returned error: %v", err)
+	}
+	if err := q.DeadLetter(ctx, deadClaim, "different_reason"); err != nil {
+		t.Fatalf("second DeadLetter returned error: %v", err)
+	}
+	assertFakeList(t, store, q.processing, nil)
+	assertFakeList(t, store, q.dead, []string{"task-dead-idempotent"})
+	if got := store.hashes[q.dead+":reasons"]["task-dead-idempotent"]; got != "test_reason" {
+		t.Fatalf("dead letter reason = %q, want first atomic reason", got)
+	}
+}
+
+func TestRedisReliableTaskQueueDeadLetterFailureKeepsProcessingSourceAndReasonAtomic(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	claim := claimQueuedTask(t, ctx, q, "task-dead-failure")
+	store.wrongTypes[q.dead] = true
+	if err := q.DeadLetter(ctx, claim, "test_reason"); err == nil {
+		t.Fatal("DeadLetter returned nil error for dead queue write failure")
+	}
+	assertFakeList(t, store, q.processing, []string{"task-dead-failure"})
+	if got := store.hashes[q.dead+":reasons"]["task-dead-failure"]; got != "" {
+		t.Fatalf("dead letter reason = %q after failed migration, want empty", got)
+	}
+}
+
+func TestRedisReliableTaskQueueClaimMetadataFailureLeavesRecoverableProcessingEntry(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	if err := q.EnqueueTask(ctx, "task-claim-metadata-failure"); err != nil {
+		t.Fatalf("EnqueueTask returned error: %v", err)
+	}
+	store.failRecordClaim = true
+	if _, err := q.Claim(ctx); err == nil {
+		t.Fatal("Claim returned nil error for metadata failure")
+	}
+	assertFakeList(t, store, q.processing, []string{"task-claim-metadata-failure"})
+	store.failRecordClaim = false
+
+	recovered, err := q.RecoverStale(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("RecoverStale returned error: %v", err)
+	}
+	if !reflect.DeepEqual(recovered, []string{"task-claim-metadata-failure"}) {
+		t.Fatalf("recovered = %#v, want metadata failure orphan", recovered)
+	}
+	assertFakeList(t, store, q.queue, []string{"task-claim-metadata-failure"})
+}
+
+func TestRedisReliableTaskQueueEnsureDeliveryRepairsMissingEntryIdempotently(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+
+	repaired, err := q.EnsureDelivery(ctx, "task-repair")
+	if err != nil {
+		t.Fatalf("first EnsureDelivery returned error: %v", err)
+	}
+	if !repaired {
+		t.Fatal("first EnsureDelivery repaired = false, want true")
+	}
+	repaired, err = q.EnsureDelivery(ctx, "task-repair")
+	if err != nil {
+		t.Fatalf("second EnsureDelivery returned error: %v", err)
+	}
+	if repaired {
+		t.Fatal("second EnsureDelivery repaired = true, want false")
+	}
+	assertFakeList(t, store, q.queue, []string{"task-repair"})
+}
+
+func TestRedisReliableTaskQueueEnsureDeliveryPreservesExistingRecoverableEntries(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		setup func(*reliableQueueFakeRedis, *RedisReliableTaskQueue)
+	}{
+		{
+			name: "ready",
+			setup: func(store *reliableQueueFakeRedis, q *RedisReliableTaskQueue) {
+				store.lists[q.queue] = []string{"task-existing"}
+			},
+		},
+		{
+			name: "processing",
+			setup: func(store *reliableQueueFakeRedis, q *RedisReliableTaskQueue) {
+				store.lists[q.processing] = []string{"task-existing"}
+			},
+		},
+		{
+			name: "delayed",
+			setup: func(store *reliableQueueFakeRedis, q *RedisReliableTaskQueue) {
+				store.zsets[q.delayed] = map[string]float64{"task-existing": float64(time.Now().Add(time.Minute).UnixMilli())}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newReliableQueueFakeRedis()
+			q := newTestReliableQueue(store)
+			tc.setup(store, q)
+
+			repaired, err := q.EnsureDelivery(ctx, "task-existing")
+			if err != nil {
+				t.Fatalf("EnsureDelivery returned error: %v", err)
+			}
+			if repaired {
+				t.Fatal("EnsureDelivery repaired = true, want false")
+			}
+			assertFakeList(t, store, q.queue, store.lists[q.queue])
+		})
+	}
+}
+
+func claimQueuedTask(t *testing.T, ctx context.Context, q *RedisReliableTaskQueue, taskID string) TaskClaim {
+	t.Helper()
+	if err := q.EnqueueTask(ctx, taskID); err != nil {
+		t.Fatalf("EnqueueTask returned error: %v", err)
+	}
+	claim, err := q.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim returned error: %v", err)
+	}
+	return claim
+}
+
 func newTestReliableQueue(store *reliableQueueFakeRedis) *RedisReliableTaskQueue {
 	return newRedisReliableTaskQueueWithClient(store, config.QueueConfig{
 		TaskQueueName:     "test-tasks",
@@ -208,22 +489,29 @@ func assertFakeList(t *testing.T, store *reliableQueueFakeRedis, key string, exp
 }
 
 type reliableQueueFakeRedis struct {
-	lists     map[string][]string
-	hashes    map[string]map[string]string
-	zsets     map[string]map[string]float64
-	evalCalls int
+	lists           map[string][]string
+	hashes          map[string]map[string]string
+	zsets           map[string]map[string]float64
+	evalCalls       int
+	wrongTypes      map[string]bool
+	failRecordClaim bool
 }
 
 func newReliableQueueFakeRedis() *reliableQueueFakeRedis {
 	return &reliableQueueFakeRedis{
-		lists:  map[string][]string{},
-		hashes: map[string]map[string]string{},
-		zsets:  map[string]map[string]float64{},
+		lists:      map[string][]string{},
+		hashes:     map[string]map[string]string{},
+		zsets:      map[string]map[string]float64{},
+		wrongTypes: map[string]bool{},
 	}
 }
 
 func (r *reliableQueueFakeRedis) RPush(ctx context.Context, key string, values ...interface{}) *redis.IntCmd {
 	cmd := redis.NewIntCmd(ctx)
+	if r.wrongTypes[key] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return cmd
+	}
 	for _, value := range values {
 		r.lists[key] = append(r.lists[key], strings.TrimSpace(value.(string)))
 	}
@@ -246,9 +534,33 @@ func (r *reliableQueueFakeRedis) BLMove(ctx context.Context, source, destination
 
 func (r *reliableQueueFakeRedis) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
 	cmd := redis.NewCmd(ctx)
-	if strings.TrimSpace(script) != strings.TrimSpace(redisRecordClaimScript) {
+	switch strings.TrimSpace(script) {
+	case strings.TrimSpace(redisRecordClaimScript):
+		r.evalRecordClaim(cmd, keys, args...)
+	case strings.TrimSpace(redisAckScript):
+		r.evalAck(cmd, keys, args...)
+	case strings.TrimSpace(redisRetryImmediateScript):
+		r.evalRetryImmediate(cmd, keys, args...)
+	case strings.TrimSpace(redisRetryDelayedScript):
+		r.evalRetryDelayed(cmd, keys, args...)
+	case strings.TrimSpace(redisDeadLetterScript):
+		r.evalDeadLetter(cmd, keys, args...)
+	case strings.TrimSpace(redisRecoverStaleScript):
+		r.evalRecoverStale(cmd, keys, args...)
+	case strings.TrimSpace(redisPromoteDueScript):
+		r.evalPromoteDue(cmd, keys, args...)
+	case strings.TrimSpace(redisEnsureDeliveryScript):
+		r.evalEnsureDelivery(cmd, keys, args...)
+	default:
 		cmd.SetErr(errors.New("unexpected script"))
-		return cmd
+	}
+	return cmd
+}
+
+func (r *reliableQueueFakeRedis) evalRecordClaim(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	if r.failRecordClaim {
+		cmd.SetErr(errors.New("test record claim failure"))
+		return
 	}
 	r.evalCalls++
 	taskID := strings.TrimSpace(args[0].(string))
@@ -264,7 +576,154 @@ func (r *reliableQueueFakeRedis) Eval(ctx context.Context, script string, keys [
 	}
 	r.hashes[keys[1]][taskID] = claimedAt
 	cmd.SetVal(current)
-	return cmd
+}
+
+func (r *reliableQueueFakeRedis) evalAck(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if !r.fakeListContains(keys[0], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	r.fakeLRem(keys[0], taskID)
+	r.fakeHDel(keys[1], taskID)
+	r.fakeHDel(keys[2], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalRetryImmediate(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if !r.fakeListContains(keys[0], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[2]] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return
+	}
+	r.lists[keys[2]] = append(r.lists[keys[2]], taskID)
+	r.fakeLRem(keys[0], taskID)
+	r.fakeHDel(keys[1], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalRetryDelayed(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if !r.fakeListContains(keys[0], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[2]] {
+		cmd.SetErr(errors.New("WRONGTYPE test sorted set write failure"))
+		return
+	}
+	if r.zsets[keys[2]] == nil {
+		r.zsets[keys[2]] = map[string]float64{}
+	}
+	score, _ := strconv.ParseFloat(strings.TrimSpace(args[1].(string)), 64)
+	r.zsets[keys[2]][taskID] = score
+	r.fakeLRem(keys[0], taskID)
+	r.fakeHDel(keys[1], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalDeadLetter(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if !r.fakeListContains(keys[0], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[2]] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return
+	}
+	reason := strings.TrimSpace(args[1].(string))
+	if reason != "" {
+		if r.hashes[keys[3]] == nil {
+			r.hashes[keys[3]] = map[string]string{}
+		}
+		r.hashes[keys[3]][taskID] = reason
+	}
+	r.lists[keys[2]] = append(r.lists[keys[2]], taskID)
+	r.fakeLRem(keys[0], taskID)
+	r.fakeHDel(keys[1], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalRecoverStale(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if !r.fakeListContains(keys[0], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	staleBefore, _ := strconv.ParseInt(strings.TrimSpace(args[1].(string)), 10, 64)
+	claimedAt, err := strconv.ParseInt(strings.TrimSpace(r.hashes[keys[1]][taskID]), 10, 64)
+	if err == nil && claimedAt > staleBefore {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[2]] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return
+	}
+	r.lists[keys[2]] = append(r.lists[keys[2]], taskID)
+	r.fakeLRem(keys[0], taskID)
+	r.fakeHDel(keys[1], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalPromoteDue(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if _, ok := r.zsets[keys[0]][taskID]; !ok {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[1]] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return
+	}
+	r.lists[keys[1]] = append(r.lists[keys[1]], taskID)
+	delete(r.zsets[keys[0]], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) evalEnsureDelivery(cmd *redis.Cmd, keys []string, args ...interface{}) {
+	taskID := strings.TrimSpace(args[0].(string))
+	if r.fakeListContains(keys[0], taskID) || r.fakeListContains(keys[1], taskID) {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if _, ok := r.zsets[keys[2]][taskID]; ok {
+		cmd.SetVal(int64(0))
+		return
+	}
+	if r.wrongTypes[keys[0]] {
+		cmd.SetErr(errors.New("WRONGTYPE test list write failure"))
+		return
+	}
+	r.lists[keys[0]] = append(r.lists[keys[0]], taskID)
+	cmd.SetVal(int64(1))
+}
+
+func (r *reliableQueueFakeRedis) fakeListContains(key, taskID string) bool {
+	for _, item := range r.lists[key] {
+		if item == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *reliableQueueFakeRedis) fakeLRem(key, taskID string) {
+	for index, item := range r.lists[key] {
+		if item == taskID {
+			r.lists[key] = append(r.lists[key][:index], r.lists[key][index+1:]...)
+			return
+		}
+	}
+}
+
+func (r *reliableQueueFakeRedis) fakeHDel(key, taskID string) {
+	delete(r.hashes[key], taskID)
 }
 
 func (r *reliableQueueFakeRedis) LRem(ctx context.Context, key string, count int64, value interface{}) *redis.IntCmd {
@@ -354,6 +813,10 @@ func (r *reliableQueueFakeRedis) LRange(ctx context.Context, key string, start, 
 
 func (r *reliableQueueFakeRedis) ZAdd(ctx context.Context, key string, members ...redis.Z) *redis.IntCmd {
 	cmd := redis.NewIntCmd(ctx)
+	if r.wrongTypes[key] {
+		cmd.SetErr(errors.New("WRONGTYPE test sorted set write failure"))
+		return cmd
+	}
 	if r.zsets[key] == nil {
 		r.zsets[key] = map[string]float64{}
 	}
