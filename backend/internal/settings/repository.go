@@ -66,6 +66,10 @@ func (r Repository) StorageUsedBytes(ctx context.Context, scope tenant.Scope) (i
 }
 
 func (r Repository) ListActiveTenantIDs(ctx context.Context, limit int) ([]string, error) {
+	return r.ListActiveTenantIDsAfter(ctx, "", limit)
+}
+
+func (r Repository) ListActiveTenantIDsAfter(ctx context.Context, afterTenantID string, limit int) ([]string, error) {
 	if r.db == nil {
 		return nil, database.ErrNilDB
 	}
@@ -77,13 +81,15 @@ func (r Repository) ListActiveTenantIDs(ctx context.Context, limit int) ([]strin
 	}
 
 	var tenantIDs []string
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Model(&database.Tenant{}).
 		Select("id").
-		Where("status = ?", "ACTIVE").
-		Order("id ASC").
-		Limit(limit).
-		Pluck("id", &tenantIDs).Error
+		Where("status = ?", "ACTIVE")
+	afterTenantID = strings.TrimSpace(afterTenantID)
+	if afterTenantID != "" {
+		query = query.Where("id > ?", afterTenantID)
+	}
+	err := query.Order("id ASC").Limit(limit).Pluck("id", &tenantIDs).Error
 	return tenantIDs, err
 }
 

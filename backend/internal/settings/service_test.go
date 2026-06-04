@@ -148,6 +148,14 @@ func TestListActiveTenantIDsIsBoundedAndSkipsInactiveTenants(t *testing.T) {
 	if len(tenantIDs) != 2 || tenantIDs[0] != "tenant-a" || tenantIDs[1] != "tenant-c" {
 		t.Fatalf("active tenant ids = %#v, want tenant-a and tenant-c", tenantIDs)
 	}
+
+	tenantIDs, err = repo.ListActiveTenantIDsAfter(context.Background(), "tenant-c", 2)
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDsAfter returned error: %v", err)
+	}
+	if len(tenantIDs) != 1 || tenantIDs[0] != "tenant-d" {
+		t.Fatalf("active tenant ids after tenant-c = %#v, want tenant-d", tenantIDs)
+	}
 }
 
 func TestStorageQuotaRejectsMalformedStoredValuesAndFailClosed(t *testing.T) {

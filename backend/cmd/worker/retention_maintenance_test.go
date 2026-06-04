@@ -236,6 +236,34 @@ func TestQuotaReconciliationMaintenanceProcessesOnlyActiveTenantsWithinBatchLimi
 	}
 }
 
+func TestQuotaReconciliationMaintenanceRotatesPastBatchLimitAcrossRuns(t *testing.T) {
+	db := newRetentionMaintenanceTestDB(t)
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	seedRetentionTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-b", "ACTIVE", now)
+	seedRetentionTenant(t, db, "tenant-c", "ACTIVE", now)
+	reconciler := &fakeQuotaReconciler{}
+	runner := newRetentionMaintenanceRunner(settings.NewRepository(db), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), retentionMaintenanceOptions{
+		Interval:        time.Hour,
+		BatchLimit:      2,
+		Now:             func() time.Time { return now },
+		QuotaReconciler: reconciler,
+	})
+
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("first runOnce returned error: %v", err)
+	}
+	if err := runner.runOnce(context.Background()); err != nil {
+		t.Fatalf("second runOnce returned error: %v", err)
+	}
+	if len(reconciler.calls) != 3 {
+		t.Fatalf("quota reconciliation calls = %#v, want tenant-a tenant-b tenant-c across two runs", reconciler.calls)
+	}
+	if reconciler.calls[0].tenantID != "tenant-a" || reconciler.calls[1].tenantID != "tenant-b" || reconciler.calls[2].tenantID != "tenant-c" {
+		t.Fatalf("quota reconciliation call order = %#v, want tenant-a tenant-b tenant-c", reconciler.calls)
+	}
+}
+
 func TestQuotaReconciliationMaintenanceStopsBeforeTenantAfterCancel(t *testing.T) {
 	db := newRetentionMaintenanceTestDB(t)
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)

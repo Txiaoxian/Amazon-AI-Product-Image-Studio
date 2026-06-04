@@ -32,6 +32,7 @@ type retentionMaintenanceRunner struct {
 	interval        time.Duration
 	batchLimit      int
 	now             func() time.Time
+	quotaCursor     string
 }
 
 type retentionMaintenanceLoop struct {
@@ -207,7 +208,11 @@ func (r *retentionMaintenanceRunner) runOnce(ctx context.Context) error {
 	}
 
 	if r.quotaReconciler != nil {
-		tenantIDs, err := r.repo.ListActiveTenantIDs(ctx, r.batchLimit)
+		tenantIDs, err := r.repo.ListActiveTenantIDsAfter(ctx, r.quotaCursor, r.batchLimit)
+		if err == nil && len(tenantIDs) == 0 && r.quotaCursor != "" {
+			r.quotaCursor = ""
+			tenantIDs, err = r.repo.ListActiveTenantIDs(ctx, r.batchLimit)
+		}
 		if err != nil {
 			return err
 		}
@@ -220,6 +225,7 @@ func (r *retentionMaintenanceRunner) runOnce(ctx context.Context) error {
 				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 					return ctx.Err()
 				}
+				r.quotaCursor = tenantID
 				if errors.Is(err, settings.ErrStoredStorageQuotaInvalid) {
 					r.log.Warn("storage quota setting invalid",
 						slog.String("tenant_id", tenantID),
@@ -236,6 +242,7 @@ func (r *retentionMaintenanceRunner) runOnce(ctx context.Context) error {
 				)
 				continue
 			}
+			r.quotaCursor = tenantID
 		}
 	}
 	return ctx.Err()
