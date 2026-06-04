@@ -63,24 +63,36 @@ log() {
 
 if [[ "${1:-}" == "compose" ]]; then
   shift
+  compose_log_args=(compose)
   if [[ "${1:-}" == "-f" ]]; then
+    shift 2
+  fi
+  if [[ "${1:-}" == "--env-file" ]]; then
+    compose_log_args+=(--env-file "$2")
     shift 2
   fi
   case "${1:-}" in
     config|build|logs)
-      log "compose $*"
+      log "${compose_log_args[*]} $*"
+      if [[ "${1:-}" == "logs" && "${FAKE_LOGS_PRINT_SECRETS:-0}" == "1" ]]; then
+        echo "API_KEY: fixture-api-key-secret"
+        echo "Authorization: Bearer fixture-authorization-secret"
+        echo "Cookie: session=fixture-cookie-secret"
+        echo "password=fixture-password-secret"
+        echo '{"api_key":"fixture-json-api-key-secret","Authorization":"Bearer fixture-json-authorization-secret","Cookie":"session=fixture-json-cookie-secret","password":"fixture-json-password-secret"}'
+      fi
       exit 0
       ;;
     ps)
-      log "compose $*"
+      log "${compose_log_args[*]} $*"
       last_arg="${*: -1}"
-      if [[ " $* " == *" -q "* && "$last_arg" != "ps" && "$last_arg" != "-q" && "$last_arg" != "-a" ]]; then
+      if [[ " $* " == *" -q "* && "$last_arg" != "${FAKE_MISSING_SERVICE:-}" && "$last_arg" != "ps" && "$last_arg" != "-q" && "$last_arg" != "-a" ]]; then
         printf '%s_id\n' "$last_arg"
       fi
       exit 0
       ;;
     up)
-      log "compose $*"
+      log "${compose_log_args[*]} $*"
       if [[ "${FAKE_COMPOSE_UP_FAIL:-0}" == "1" ]]; then
         echo "compose up failed" >&2
         exit 17
@@ -88,7 +100,7 @@ if [[ "${1:-}" == "compose" ]]; then
       exit 0
       ;;
     down)
-      log "compose $*"
+      log "${compose_log_args[*]} $*"
       if [[ "${FAKE_COMPOSE_DOWN_FAIL:-0}" == "1" ]]; then
         echo "MYSQL_PASSWORD: fixture-redaction-value" >&2
         echo "compose down failed" >&2
@@ -97,7 +109,7 @@ if [[ "${1:-}" == "compose" ]]; then
       exit 0
       ;;
     *)
-      log "compose $*"
+      log "${compose_log_args[*]} $*"
       exit 0
       ;;
   esac
@@ -119,6 +131,10 @@ if [[ "${1:-}" == "inspect" ]]; then
   fi
   if [[ -n "${FAKE_UNHEALTHY_SERVICE:-}" && "$local_id" == "${FAKE_UNHEALTHY_SERVICE}_id" ]]; then
     echo "unhealthy"
+    exit 0
+  fi
+  if [[ -n "${FAKE_EXITED_SERVICE:-}" && "$local_id" == "${FAKE_EXITED_SERVICE}_id" ]]; then
+    echo "exited"
     exit 0
   fi
   if [[ "$local_id" == "minio-bootstrap_id" ]]; then
@@ -187,7 +203,7 @@ EOF
 #!$REAL_BASH
 set -euo pipefail
 if [[ "\${1:-}" == "$ROOT_DIR/scripts/security-regression.sh" ]]; then
-  printf 'security-regression\\n' >>"\$FAKE_LOG"
+  printf 'security-regression COMPOSE_ENV_FILES=%s\\n' "\${COMPOSE_ENV_FILES:-}" >>"\$FAKE_LOG"
   exit 0
 fi
 if [[ "\${1:-}" == "$ROOT_DIR/scripts/tls-reverse-proxy-check.sh" ]]; then
@@ -226,6 +242,8 @@ run_case() {
   setup_fake_bin "$tmpdir"
   local log="$tmpdir/calls.log"
   local output="$tmpdir/output.log"
+  local script_tmpdir="$tmpdir/tmp"
+  mkdir -p "$script_tmpdir"
   touch "$log"
 
   set +e +u
@@ -233,6 +251,7 @@ run_case() {
     env \
       PATH="$tmpdir/bin:$PATH" \
       FAKE_LOG="$log" \
+      TMPDIR="$script_tmpdir" \
       DEPLOY_HEALTH_TIMEOUT_SECONDS=1 \
       "${env_args[@]}" \
       "$REAL_BASH" "$SCRIPT" "${script_args[@]}" >"$output" 2>&1
@@ -240,6 +259,7 @@ run_case() {
     env \
       PATH="$tmpdir/bin:$PATH" \
       FAKE_LOG="$log" \
+      TMPDIR="$script_tmpdir" \
       DEPLOY_HEALTH_TIMEOUT_SECONDS=1 \
       "$REAL_BASH" "$SCRIPT" "${script_args[@]}" >"$output" 2>&1
   fi
@@ -249,7 +269,17 @@ run_case() {
   CASE_LOG="$log"
   CASE_OUTPUT="$output"
   CASE_STATUS="$status"
+  CASE_TMPDIR="$script_tmpdir"
   echo "[ok] ran $name"
+}
+
+assert_tmpdir_empty() {
+  local tmpdir="$1"
+  if find "$tmpdir" -type f | grep -q .; then
+    echo "[fail] expected temporary files to be removed from: $tmpdir" >&2
+    find "$tmpdir" -type f -print >&2
+    exit 1
+  fi
 }
 
 test_default_mode_does_not_start_or_cleanup() {
@@ -306,6 +336,97 @@ test_cleanup_failure_is_redacted_and_nonzero() {
   assert_not_contains "$CASE_OUTPUT" "fixture-redaction-value"
 }
 
+test_explicit_env_file_is_used_by_all_compose_commands() {
+  local env_file
+  env_file="$(mktemp)"
+  run_case "explicit env file is used by Compose commands" --env-file "$env_file" --up --down
+  assert_status 0 "$CASE_STATUS" "explicit --env-file"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file config"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file build backend-api backend-worker frontend"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file up -d"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file ps -q mysql"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file down -v --remove-orphans"
+  assert_contains "$CASE_LOG" "security-regression COMPOSE_ENV_FILES=$env_file"
+  rm -f "$env_file"
+}
+
+test_missing_explicit_env_file_fails_before_compose() {
+  local env_file="/tmp/deploy-release-validation-missing-env-file-$$"
+  rm -f "$env_file"
+  run_case "missing explicit env file fails closed" --env-file "$env_file"
+  assert_nonzero_status "$CASE_STATUS" "missing explicit --env-file"
+  assert_contains "$CASE_OUTPUT" "[fail] Compose env file not found"
+  if [[ -s "$CASE_LOG" ]]; then
+    echo "[fail] missing explicit env file must fail before Compose commands" >&2
+    exit 1
+  fi
+}
+
+assert_health_failure_logs_are_redacted() {
+  local name="$1"
+  assert_status 1 "$CASE_STATUS" "$name"
+  assert_contains "$CASE_LOG" "logs --no-color --tail=80"
+  assert_contains "$CASE_OUTPUT" "API_KEY: [redacted]"
+  assert_contains "$CASE_OUTPUT" "Authorization: [redacted]"
+  assert_contains "$CASE_OUTPUT" "Cookie: [redacted]"
+  assert_contains "$CASE_OUTPUT" "password=[redacted]"
+  assert_not_contains "$CASE_OUTPUT" "fixture-api-key-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-authorization-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-cookie-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-password-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-json-api-key-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-json-authorization-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-json-cookie-secret"
+  assert_not_contains "$CASE_OUTPUT" "fixture-json-password-secret"
+  assert_tmpdir_empty "$CASE_TMPDIR"
+}
+
+test_exited_service_logs_are_redacted() {
+  local env_file
+  env_file="$(mktemp)"
+  run_case "exited service logs are redacted" \
+    FAKE_EXITED_SERVICE=backend-api \
+    FAKE_LOGS_PRINT_SECRETS=1 \
+    --env-file "$env_file" \
+    --up
+  assert_health_failure_logs_are_redacted "exited service"
+  assert_contains "$CASE_LOG" "docker compose --env-file $env_file logs --no-color --tail=80 backend-api"
+  rm -f "$env_file"
+}
+
+test_unhealthy_service_logs_are_redacted() {
+  run_case "unhealthy service logs are redacted" \
+    FAKE_UNHEALTHY_SERVICE=mysql \
+    FAKE_LOGS_PRINT_SECRETS=1 \
+    --up
+  assert_health_failure_logs_are_redacted "unhealthy service"
+}
+
+test_timeout_service_logs_are_redacted() {
+  run_case "timeout service logs are redacted" \
+    FAKE_MISSING_SERVICE=mysql \
+    FAKE_LOGS_PRINT_SECRETS=1 \
+    --up
+  assert_health_failure_logs_are_redacted "timeout service"
+}
+
+test_compose_logging_rotation_is_configured_for_long_running_services() {
+  local compose_file="$ROOT_DIR/deploy/docker-compose.yml"
+  local env_example="$ROOT_DIR/deploy/.env.example"
+  local logging_count
+  assert_contains "$compose_file" "x-json-file-logging: &json-file-logging"
+  assert_contains "$compose_file" 'max-size: "${COMPOSE_LOG_MAX_SIZE:-10m}"'
+  assert_contains "$compose_file" 'max-file: "${COMPOSE_LOG_MAX_FILE:-3}"'
+  logging_count="$(grep -Fc 'logging: *json-file-logging' "$compose_file")"
+  assert_status 6 "$logging_count" "long-running service logging config count"
+  if sed -n '/^  minio-bootstrap:/,/^volumes:/p' "$compose_file" | grep -Fq 'logging:'; then
+    echo "[fail] minio-bootstrap must remain a one-shot service without logging rotation" >&2
+    exit 1
+  fi
+  assert_contains "$env_example" "COMPOSE_LOG_MAX_SIZE=10m"
+  assert_contains "$env_example" "COMPOSE_LOG_MAX_FILE=3"
+}
+
 test_missing_required_command_fails_before_cleanup() {
   local command_name="$1"
   local tmpdir
@@ -351,6 +472,12 @@ test_up_failure_without_down_keeps_stack
 test_up_down_failure_cleans_stack
 test_up_down_success_cleans_stack
 test_cleanup_failure_is_redacted_and_nonzero
+test_explicit_env_file_is_used_by_all_compose_commands
+test_missing_explicit_env_file_fails_before_compose
+test_exited_service_logs_are_redacted
+test_unhealthy_service_logs_are_redacted
+test_timeout_service_logs_are_redacted
+test_compose_logging_rotation_is_configured_for_long_running_services
 test_missing_required_command_fails_before_cleanup docker
 test_missing_required_command_fails_before_cleanup rg
 test_missing_required_command_fails_before_cleanup curl
