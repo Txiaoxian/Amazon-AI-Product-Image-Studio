@@ -125,6 +125,7 @@ func TestProviderRoutesCRUDEnableDisableDeleteTestAndAudit(t *testing.T) {
 	if deletedDetail.Code != http.StatusNotFound {
 		t.Fatalf("deleted detail status = %d, want %d", deletedDetail.Code, http.StatusNotFound)
 	}
+	assertProviderCredentialCryptoErased(t, db, adminSession.tenantID, providerID)
 
 	assertProviderOperationLogs(t, db, []string{
 		"provider.create",
@@ -254,6 +255,7 @@ func TestProviderDeleteSucceedsAfterLinkedModelIsSoftDeleted(t *testing.T) {
 		t.Fatalf("deleted provider detail status = %d, want %d", deletedDetail.Code, http.StatusNotFound)
 	}
 	assertProviderDeleteOperationLogExcludes(t, db, providerID, "model-before-provider-delete", "Model Before Provider Delete")
+	assertProviderCredentialCryptoErased(t, db, adminSession.tenantID, providerID)
 }
 
 func TestProviderDeleteIgnoresCrossTenantLinkedModels(t *testing.T) {
@@ -729,6 +731,21 @@ func assertProviderDeleteOperationLogExcludes(t *testing.T, db *gorm.DB, provide
 		t.Fatalf("load provider delete operation log: %v", err)
 	}
 	assertResponseExcludes(t, log.MetadataJSON, forbidden...)
+}
+
+func assertProviderCredentialCryptoErased(t *testing.T, db *gorm.DB, tenantID string, providerID string) {
+	t.Helper()
+
+	var record database.AIProvider
+	if err := db.Unscoped().Where("tenant_id = ? AND id = ?", tenantID, providerID).First(&record).Error; err != nil {
+		t.Fatalf("load soft-deleted provider: %v", err)
+	}
+	if !record.DeletedAt.Valid {
+		t.Fatalf("provider %q was not soft-deleted", providerID)
+	}
+	if record.EncryptedAPIKey != "" || record.APIKeyHint != "" || record.APIKeyUpdatedAt != nil {
+		t.Fatalf("provider %q credential metadata was not erased", providerID)
+	}
 }
 
 func errorCode(t *testing.T, response *httptest.ResponseRecorder) string {

@@ -56,7 +56,7 @@ P18/P19/P20 operational hardening results:
 - Frontend system settings now exposes backend-consumed nullable `logRetention`.
 - API startup reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
 - Platform CSRF header is fixed to `X-CSRF-Token` across frontend, backend, Compose, CORS, and production-env preflight.
-- `backend/cmd/provider-key-rotation` provides default dry-run and explicitly confirmed transactional apply for Provider credential master-key rotation. Payload key IDs now fail closed when they do not match the decrypting cipher.
+- `backend/cmd/provider-key-rotation` provides default dry-run and explicitly confirmed transactional apply for Provider credential master-key rotation. Payload key IDs now fail closed when they do not match the decrypting cipher. Active Provider rows are re-encrypted; historical soft-deleted Provider rows with remaining credential material are count-reported in dry-run and crypto-erased in apply.
 - `backend/cmd/provision-tenant` provides default dry-run and explicitly confirmed transactional creation of second and later tenants with built-in roles/grants and one initial tenant admin.
 - Tenant-scoped `GET/PATCH /api/v1/tenants/current` and custom-role CRUD/permission replacement APIs are merged. Built-in roles remain immutable through HTTP APIs.
 - Frontend identity administration now supports tenant-name update plus custom-role create/update/delete and permission replacement through same-origin CSRF-protected backend APIs. Built-in roles remain visibly read-only.
@@ -70,7 +70,7 @@ R20 did not approve final production launch yet. The audit identified P21 follow
 - Redis queue state migrations must be atomic and MySQL-backed queued/retrying reconciliation must repair lost Redis delivery state.
 - API/Worker migration startup must be serialized with a database lock and must fail closed on incomplete migration state.
 - Worker maintenance must invoke bounded storage-quota reservation reconciliation.
-- Provider attempt persistence, SSE catch-up/resubscribe bounds, login rate limiting, revocable sessions, Provider crypto erase on delete, exact MinIO restore, concurrency lease renewal, Worker readiness, and the remaining workbench image-type control remain required hardening slices.
+- Provider attempt persistence, SSE catch-up/resubscribe bounds, login rate limiting, revocable sessions, concurrency lease renewal, Worker readiness, and the remaining workbench image-type control remain required hardening slices. Provider delete crypto erase and exact MinIO restore semantics are now implemented.
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 

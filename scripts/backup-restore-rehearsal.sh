@@ -170,10 +170,19 @@ backup_minio() {
     --entrypoint /bin/sh minio-bootstrap -c '
       set -eu
       mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-      mc mirror --overwrite local/"$MINIO_BUCKET_ORIGINALS" /backup/originals >/dev/null
-      mc mirror --overwrite local/"$MINIO_BUCKET_GENERATED" /backup/generated >/dev/null
-      mc mirror --overwrite local/"$MINIO_BUCKET_THUMBNAILS" /backup/thumbnails >/dev/null
+      mc mirror --overwrite --remove local/"$MINIO_BUCKET_ORIGINALS" /backup/originals >/dev/null
+      mc mirror --overwrite --remove local/"$MINIO_BUCKET_GENERATED" /backup/generated >/dev/null
+      mc mirror --overwrite --remove local/"$MINIO_BUCKET_THUMBNAILS" /backup/thumbnails >/dev/null
     '
+}
+
+create_restore_extra_object() {
+  compose run --rm --no-deps --entrypoint /bin/sh minio-bootstrap -c '
+    set -eu
+    mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    printf "%s" "must-be-removed-by-exact-restore" |
+      mc pipe local/"$MINIO_BUCKET_ORIGINALS"/rehearsal/restore-extra-object.txt >/dev/null
+  '
 }
 
 destroy_fixture_metadata() {
@@ -205,9 +214,9 @@ restore_minio() {
     --entrypoint /bin/sh minio-bootstrap -c '
       set -eu
       mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-      mc mirror --overwrite /backup/originals local/"$MINIO_BUCKET_ORIGINALS" >/dev/null
-      mc mirror --overwrite /backup/generated local/"$MINIO_BUCKET_GENERATED" >/dev/null
-      mc mirror --overwrite /backup/thumbnails local/"$MINIO_BUCKET_THUMBNAILS" >/dev/null
+      mc mirror --overwrite --remove /backup/originals local/"$MINIO_BUCKET_ORIGINALS" >/dev/null
+      mc mirror --overwrite --remove /backup/generated local/"$MINIO_BUCKET_GENERATED" >/dev/null
+      mc mirror --overwrite --remove /backup/thumbnails local/"$MINIO_BUCKET_THUMBNAILS" >/dev/null
     '
 }
 
@@ -232,6 +241,14 @@ verify_fixture_object() {
     test "$(
       mc cat local/"$MINIO_BUCKET_ORIGINALS"/rehearsal/fixture-object.txt
     )" = "p20-backup-restore-rehearsal-fixture"
+  '
+}
+
+verify_restore_extra_object_removed() {
+  compose run --rm --no-deps --entrypoint /bin/sh minio-bootstrap -c '
+    set -eu
+    mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    ! mc stat local/"$MINIO_BUCKET_ORIGINALS"/rehearsal/restore-extra-object.txt >/dev/null 2>&1
   '
 }
 
@@ -279,21 +296,25 @@ run_stage "create isolated fixture metadata" create_fixture_metadata
 run_stage "create isolated fixture object" create_fixture_object
 run_stage "backup isolated MySQL" backup_mysql
 run_stage "backup isolated MinIO" backup_minio
+run_stage "create backup-external object before restore" create_restore_extra_object
 run_stage "destroy fixture metadata" destroy_fixture_metadata
 run_stage "destroy fixture object" destroy_fixture_object
 run_stage "restore matching backup pair" restore_mysql
 run_stage "restore matching backup pair object data" restore_minio
 run_stage "verify restored fixture metadata" verify_fixture_metadata
 run_stage "verify restored fixture object" verify_fixture_object
+run_stage "verify exact restore removed backup-external object" verify_restore_extra_object_removed
+run_stage "create backup-external object before rollback" create_restore_extra_object
 run_stage "destroy fixture metadata for rollback" destroy_fixture_metadata
 run_stage "destroy fixture object for rollback" destroy_fixture_object
 run_stage "rollback restore matching backup pair" restore_mysql
 run_stage "rollback restore matching backup pair object data" restore_minio
 run_stage "verify rollback fixture metadata" verify_fixture_metadata
 run_stage "verify rollback fixture object" verify_fixture_object
+run_stage "verify exact rollback removed backup-external object" verify_restore_extra_object_removed
 cleanup_compose_stack || fail "scoped cleanup failed"
 STACK_MANAGED=0
 
 log "sanitized evidence summary: isolated rehearsal passed"
-log "sanitized evidence summary: matching MySQL and MinIO pair restored and rollback-rehearsed"
+log "sanitized evidence summary: matching MySQL and exact MinIO pair restored and rollback-rehearsed"
 log "sanitized evidence summary: scoped project cleanup passed"

@@ -20,8 +20,9 @@ type APIKeyRotationService struct {
 }
 
 type APIKeyRotationSummary struct {
-	ProviderCount int
-	Applied       bool
+	ProviderCount             int
+	DeletedProviderEraseCount int
+	Applied                   bool
 }
 
 func NewAPIKeyRotationService(db *gorm.DB) *APIKeyRotationService {
@@ -45,8 +46,7 @@ func (s *APIKeyRotationService) Rotate(ctx context.Context, oldCipher APIKeyCiph
 	summary := APIKeyRotationSummary{Applied: apply}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var records []database.AIProvider
-		query := tx.Model(&database.AIProvider{}).
-			Where("deleted_at IS NULL").
+		query := tx.Unscoped().Model(&database.AIProvider{}).
 			Order("tenant_id ASC, id ASC")
 		if tx.Dialector.Name() != "sqlite" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -55,8 +55,29 @@ func (s *APIKeyRotationService) Rotate(ctx context.Context, oldCipher APIKeyCiph
 			return ErrAPIKeyRotationFailed
 		}
 
-		summary.ProviderCount = len(records)
 		for _, record := range records {
+			if record.DeletedAt.Valid {
+				if record.EncryptedAPIKey == "" && record.APIKeyHint == "" && record.APIKeyUpdatedAt == nil {
+					continue
+				}
+				summary.DeletedProviderEraseCount++
+				if !apply {
+					continue
+				}
+				result := tx.Unscoped().Model(&database.AIProvider{}).
+					Where("tenant_id = ? AND id = ? AND deleted_at IS NOT NULL", record.TenantID, record.ID).
+					Updates(map[string]any{
+						"encrypted_api_key":  "",
+						"api_key_hint":       "",
+						"api_key_updated_at": nil,
+					})
+				if result.Error != nil || result.RowsAffected != 1 {
+					return ErrAPIKeyRotationFailed
+				}
+				continue
+			}
+
+			summary.ProviderCount++
 			plain, err := oldCipher.Decrypt(record.EncryptedAPIKey)
 			if err != nil {
 				return ErrAPIKeyRotationFailed
