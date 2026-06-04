@@ -296,6 +296,29 @@ func TestRedisReliableTaskQueueRecoverStaleIsIdempotent(t *testing.T) {
 	assertFakeList(t, store, q.queue, []string{"task-recover-idempotent"})
 }
 
+func TestRedisReliableTaskQueueRecoverStaleScansPastFreshPrefix(t *testing.T) {
+	ctx := context.Background()
+	store := newReliableQueueFakeRedis()
+	q := newTestReliableQueue(store)
+	now := time.Now().UTC()
+	store.lists[q.processing] = []string{"task-fresh-1", "task-fresh-2", "task-stale"}
+	store.hashes[q.processingClaims] = map[string]string{
+		"task-fresh-1": strconv.FormatInt(now.UnixMilli(), 10),
+		"task-fresh-2": strconv.FormatInt(now.UnixMilli(), 10),
+		"task-stale":   strconv.FormatInt(now.Add(-q.visibilityTimeout-time.Minute).UnixMilli(), 10),
+	}
+
+	recovered, err := q.RecoverStale(ctx, now, 1)
+	if err != nil {
+		t.Fatalf("RecoverStale returned error: %v", err)
+	}
+	if !reflect.DeepEqual(recovered, []string{"task-stale"}) {
+		t.Fatalf("recovered = %#v, want stale task behind fresh prefix", recovered)
+	}
+	assertFakeList(t, store, q.processing, []string{"task-fresh-1", "task-fresh-2"})
+	assertFakeList(t, store, q.queue, []string{"task-stale"})
+}
+
 func TestRedisReliableTaskQueueAckAndDeadLetterAreIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := newReliableQueueFakeRedis()

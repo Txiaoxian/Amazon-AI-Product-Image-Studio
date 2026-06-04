@@ -201,12 +201,15 @@ func (q *RedisReliableTaskQueue) RecoverStale(ctx context.Context, now time.Time
 		limit = 100
 	}
 	before := now.UTC().Add(-q.visibilityTimeout).UnixMilli()
-	processingTasks, err := q.client.LRange(ctx, q.processing, 0, int64(limit-1)).Result()
+	processingTasks, err := q.client.LRange(ctx, q.processing, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
 	recovered := make([]string, 0)
 	for _, taskID := range processingTasks {
+		if len(recovered) >= limit {
+			break
+		}
 		taskID = strings.TrimSpace(taskID)
 		if taskID == "" {
 			continue
