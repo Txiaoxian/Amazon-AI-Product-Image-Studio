@@ -45,7 +45,7 @@ Phase status:
 | P18 | Complete | Provider/model/default-setting serialization, opt-in real Provider smoke tooling, sanitized production dry-run, live Compose rehearsal, and cleanup checks are complete. |
 | P19 | Complete | Production config guards, CI quality gates, frontend dependency audit remediation and gate, host TLS reverse-proxy template/checks, frontend log-retention controls, and existing-tenant built-in-role reconciliation are complete. |
 | P20 | Complete | Stable-operations foundation is merged: fixed CSRF header contract, transactional Provider master-key rotation CLI, transactional tenant provisioning CLI, current-tenant APIs, custom-role CRUD/permission replacement, frontend tenant/custom-role administration, operator CLI image bundling, and isolated backup/restore/rollback rehearsal. |
-| P21 | In Progress | R20 production audit follow-up: CSRF fail-closed, deployment env/log hardening, queue durability, Provider credential crypto erase, exact MinIO restore, and workbench image type are merged; migration serialization, runtime maintenance, SSE resilience, auth hardening, concurrency lease renewal, Worker readiness, and final Go/No-Go remain. |
+| P21 | In Progress | R20 production audit follow-up: CSRF fail-closed, deployment env/log hardening, queue durability, Provider credential crypto erase, exact MinIO restore, workbench image type, and Redis-backed login rate limiting are merged; migration serialization, runtime maintenance, SSE resilience, session revocation, concurrency lease renewal, Worker readiness, and final Go/No-Go remain. |
 
 P18/P19/P20 operational hardening results:
 
@@ -70,7 +70,7 @@ R20 did not approve final production launch yet. The audit identified P21 follow
 - Redis queue state migrations now use Lua atomic moves for retry/ack/dead-letter/stale recovery/delayed promotion, and MySQL-backed queued/retrying reconciliation repairs missing Redis delivery state without treating Redis as final state.
 - API/Worker migration startup must be serialized with a database lock and must fail closed on incomplete migration state.
 - Worker maintenance must invoke bounded storage-quota reservation reconciliation.
-- Provider attempt persistence, SSE catch-up/resubscribe bounds, login rate limiting, revocable sessions, concurrency lease renewal, Worker readiness, and final frontend legacy-blob cleanup remain required hardening slices. Provider delete crypto erase, exact MinIO restore semantics, and workbench image-type submission are now implemented.
+- Provider attempt persistence, SSE catch-up/resubscribe bounds, revocable sessions, concurrency lease renewal, Worker readiness, and final frontend legacy-blob cleanup remain required hardening slices. Provider delete crypto erase, exact MinIO restore semantics, workbench image-type submission, and Redis-backed login rate limiting are now implemented.
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 

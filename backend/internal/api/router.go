@@ -39,6 +39,7 @@ type RouterOptions struct {
 	SSEHeartbeat        time.Duration
 	LifecycleContext    context.Context
 	TaskEventSubscriber queue.TaskEventSubscriber
+	AuthLoginLimiter    auth.LoginRateLimiter
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -77,7 +78,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 
 	RegisterRoutes(
 		router,
-		auth.NewService(options.Database, options.Config, options.Logger),
+		authService(options),
 		project.NewService(options.Database, options.Logger),
 		asset.NewService(options.Database, options.Logger, options.Config.Storage, options.Config.Upload, objectStore, settingsService),
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
@@ -92,6 +93,14 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	)
 
 	return router
+}
+
+func authService(options RouterOptions) *auth.Service {
+	loginLimiter := options.AuthLoginLimiter
+	if loginLimiter == nil && !strings.EqualFold(strings.TrimSpace(options.Config.AppEnv), "test") {
+		loginLimiter = auth.NewRedisLoginRateLimiter(options.Config.Queue, options.Config.Auth)
+	}
+	return auth.NewService(options.Database, options.Config, options.Logger, auth.WithLoginRateLimiter(loginLimiter))
 }
 
 func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, adminDiagnosticsService *adminDiagnosticsService, settingsService *settings.Service, userAdminService *useradmin.Service, healthChecks ...health.DependencyChecker) {

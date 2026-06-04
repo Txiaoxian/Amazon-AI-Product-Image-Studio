@@ -38,6 +38,7 @@ Current verified state:
 - `deploy/nginx/amazon-ai-product-image-studio.conf.template` and `scripts/tls-reverse-proxy-check.sh` define and validate the host TLS edge. External traffic routes only to loopback frontend `127.0.0.1:8080`.
 - Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
 - Production backend startup and production dry-run preflight now fail closed unless `CSRF_ENABLED=true`.
+- Login rate limiting uses Redis with `AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES` and `AUTH_LOGIN_RATE_LIMIT_WINDOW`; defaults are conservative and do not expose email/IP in Redis keys.
 - `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation. Active Provider credentials are re-encrypted; historical soft-deleted Provider credential remnants are count-reported in dry-run and crypto-erased in apply.
 - `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
 - The `backend-api` image bundles both operator CLI binaries so Compose servers can run them through scoped `docker compose run --rm --no-deps` commands without a host Go toolchain.

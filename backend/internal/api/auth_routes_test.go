@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	authpkg "github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/auth"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
 	"github.com/gin-gonic/gin"
@@ -193,6 +195,73 @@ func TestProductionAuthCookieIsSecure(t *testing.T) {
 	}
 	if !findCookie(t, response, "studio_csrf").Secure {
 		t.Fatal("production CSRF cookie must be Secure")
+	}
+}
+
+func TestAuthLoginRateLimiterRecordsResetsAndBlocksWithoutLeakingCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newAuthRouteTestDB(t)
+	limiter := &authRouteLoginLimiter{}
+	router := NewRouter(RouterOptions{
+		Config:           authRouteTestConfig("test"),
+		Logger:           slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Database:         db,
+		AuthLoginLimiter: limiter,
+	})
+
+	initResponse := performJSON(router, http.MethodPost, "/api/v1/auth/init-admin", map[string]string{
+		"tenantName":  "Studio Tenant",
+		"email":       "Admin@Example.com",
+		"displayName": "Admin User",
+		"password":    "initial-password-123",
+	}, nil, nil)
+	if initResponse.Code != http.StatusCreated {
+		t.Fatalf("init-admin status = %d, want %d: %s", initResponse.Code, http.StatusCreated, initResponse.Body.String())
+	}
+	tenantID := nestedString(t, decodeData(t, initResponse), "tenant", "id")
+
+	failedLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"tenantId": tenantID,
+		"email":    "ADMIN@example.com",
+		"password": "wrong-password",
+	}, nil, nil)
+	if failedLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("failed login status = %d, want %d: %s", failedLogin.Code, http.StatusUnauthorized, failedLogin.Body.String())
+	}
+	if len(limiter.failures) != 1 {
+		t.Fatalf("failure records = %d, want 1", len(limiter.failures))
+	}
+	if limiter.failures[0].TenantID != tenantID || limiter.failures[0].Email != "admin@example.com" {
+		t.Fatalf("failure identity = %#v, want normalized tenant/email", limiter.failures[0])
+	}
+
+	successLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"tenantId": tenantID,
+		"email":    "admin@example.com",
+		"password": "initial-password-123",
+	}, nil, nil)
+	if successLogin.Code != http.StatusOK {
+		t.Fatalf("success login status = %d, want %d: %s", successLogin.Code, http.StatusOK, successLogin.Body.String())
+	}
+	if len(limiter.resets) != 1 {
+		t.Fatalf("reset records = %d, want 1", len(limiter.resets))
+	}
+
+	limiter.blocked = true
+	limitedLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"tenantId": tenantID,
+		"email":    "admin@example.com",
+		"password": "initial-password-123",
+	}, nil, nil)
+	if limitedLogin.Code != http.StatusTooManyRequests {
+		t.Fatalf("limited login status = %d, want %d: %s", limitedLogin.Code, http.StatusTooManyRequests, limitedLogin.Body.String())
+	}
+	assertResponseExcludes(t, limitedLogin.Body.String(), "admin@example.com", "initial-password-123", "wrong-password")
+	if len(limiter.failures) != 1 {
+		t.Fatalf("rate-limited login recorded failure count = %d, want unchanged 1", len(limiter.failures))
+	}
+	if len(limiter.resets) != 1 {
+		t.Fatalf("rate-limited login reset count = %d, want unchanged 1", len(limiter.resets))
 	}
 }
 
@@ -485,9 +554,11 @@ func authRouteTestConfig(appEnv string) config.Config {
 	return config.Config{
 		AppEnv: appEnv,
 		Auth: config.AuthConfig{
-			JWTSigningSecret: "0123456789abcdef0123456789abcdef",
-			JWTIssuer:        "auth-route-test",
-			AccessTokenTTL:   time.Hour,
+			JWTSigningSecret:          "0123456789abcdef0123456789abcdef",
+			JWTIssuer:                 "auth-route-test",
+			AccessTokenTTL:            time.Hour,
+			LoginRateLimitMaxFailures: 5,
+			LoginRateLimitWindow:      10 * time.Minute,
 			Cookie: config.CookieConfig{
 				Name:     "studio_auth",
 				SameSite: "Lax",
@@ -505,6 +576,29 @@ func authRouteTestConfig(appEnv string) config.Config {
 			MaxRetries:            2,
 		},
 	}
+}
+
+type authRouteLoginLimiter struct {
+	blocked  bool
+	failures []authpkg.LoginRateLimitIdentity
+	resets   []authpkg.LoginRateLimitIdentity
+}
+
+func (l *authRouteLoginLimiter) Check(context.Context, authpkg.LoginRateLimitIdentity) error {
+	if l.blocked {
+		return authpkg.ErrLoginRateLimited
+	}
+	return nil
+}
+
+func (l *authRouteLoginLimiter) RecordFailure(_ context.Context, identity authpkg.LoginRateLimitIdentity) error {
+	l.failures = append(l.failures, identity)
+	return nil
+}
+
+func (l *authRouteLoginLimiter) Reset(_ context.Context, identity authpkg.LoginRateLimitIdentity) error {
+	l.resets = append(l.resets, identity)
+	return nil
 }
 
 func performJSON(router http.Handler, method string, path string, body any, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {

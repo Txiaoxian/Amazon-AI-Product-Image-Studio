@@ -68,6 +68,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.AccessTokenTTL != time.Hour {
 		t.Fatalf("Auth.AccessTokenTTL = %s, want 1h", cfg.Auth.AccessTokenTTL)
 	}
+	if cfg.Auth.LoginRateLimitMaxFailures != 5 {
+		t.Fatalf("Auth.LoginRateLimitMaxFailures = %d, want 5", cfg.Auth.LoginRateLimitMaxFailures)
+	}
+	if cfg.Auth.LoginRateLimitWindow != 10*time.Minute {
+		t.Fatalf("Auth.LoginRateLimitWindow = %s, want 10m", cfg.Auth.LoginRateLimitWindow)
+	}
 	if cfg.Auth.Cookie.Name != "studio_auth" {
 		t.Fatalf("Auth.Cookie.Name = %q, want studio_auth", cfg.Auth.Cookie.Name)
 	}
@@ -182,6 +188,8 @@ func TestLoadOverrides(t *testing.T) {
 		"JWT_SIGNING_SECRET":                       "0123456789abcdef0123456789abcdef",
 		"JWT_ISSUER":                               "studio-test",
 		"JWT_ACCESS_TOKEN_TTL_MINUTES":             "30",
+		"AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES":       "4",
+		"AUTH_LOGIN_RATE_LIMIT_WINDOW":             "3m",
 		"AUTH_COOKIE_NAME":                         "auth_test",
 		"COOKIE_DOMAIN":                            ".example.com",
 		"COOKIE_SECURE":                            "true",
@@ -311,6 +319,12 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Auth.AccessTokenTTL != 30*time.Minute {
 		t.Fatalf("Auth.AccessTokenTTL = %s, want 30m", cfg.Auth.AccessTokenTTL)
+	}
+	if cfg.Auth.LoginRateLimitMaxFailures != 4 {
+		t.Fatalf("Auth.LoginRateLimitMaxFailures = %d, want 4", cfg.Auth.LoginRateLimitMaxFailures)
+	}
+	if cfg.Auth.LoginRateLimitWindow != 3*time.Minute {
+		t.Fatalf("Auth.LoginRateLimitWindow = %s, want 3m", cfg.Auth.LoginRateLimitWindow)
 	}
 	if cfg.Auth.Cookie.Name != "auth_test" {
 		t.Fatalf("Auth.Cookie.Name = %q, want auth_test", cfg.Auth.Cookie.Name)

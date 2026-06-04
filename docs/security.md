@@ -75,6 +75,7 @@ Resolved transition item:
 - P21 reliable queue hardening now uses Redis Lua atomic migration for retry, ack, dead-letter, stale recovery, and delayed promotion. MySQL-backed queued/retrying delivery reconciliation repairs missing Redis delivery state while preserving MySQL as the task source of truth.
 - P21 deployment hardening now propagates a single production env file through Compose/release-validation commands, redacts health-failure logs, configures bounded `json-file` logging for long-running services, and keeps exact MinIO restore semantics in backup/restore rehearsal.
 - P21 frontend workbench hardening now submits the selected Amazon image type through backend task `imageType`, preserves backend history image types on re-edit, and normalizes invalid drafts before submission.
+- P21 login hardening now uses Redis-backed failed-login rate limiting keyed by an opaque hash of tenant, normalized email, and IP. Limit checks happen before user lookup, failures are counted after invalid credentials, successful login resets the counter before success audit/session response, and Redis limiter failures fail closed without echoing credentials.
 
 Storage and P5 review hardening backlog:
 
@@ -93,7 +94,6 @@ P20 operational controls:
 
 R20 release-blocking security follow-ups:
 
-- Login endpoints need bounded Redis-backed rate limiting without credential or email leakage.
 - JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
 - SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, Provider attempt ledgers, and Worker readiness still must fail closed under partial failures.
 

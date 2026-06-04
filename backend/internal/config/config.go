@@ -118,11 +118,13 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSigningSecret string
-	JWTIssuer        string
-	AccessTokenTTL   time.Duration
-	Cookie           CookieConfig
-	CSRF             CSRFConfig
+	JWTSigningSecret          string
+	JWTIssuer                 string
+	AccessTokenTTL            time.Duration
+	Cookie                    CookieConfig
+	CSRF                      CSRFConfig
+	LoginRateLimitMaxFailures int
+	LoginRateLimitWindow      time.Duration
 }
 
 type StorageConfig struct {
@@ -684,10 +686,21 @@ func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
 		}
 	}
 
+	loginRateLimitMaxFailures, err := positiveIntFromEnv(lookup, "AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES", 5)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	loginRateLimitWindow, err := durationFromEnv(lookup, "AUTH_LOGIN_RATE_LIMIT_WINDOW", 10*time.Minute)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+
 	return AuthConfig{
-		JWTSigningSecret: signingSecret,
-		JWTIssuer:        issuer,
-		AccessTokenTTL:   time.Duration(ttlMinutes) * time.Minute,
+		JWTSigningSecret:          signingSecret,
+		JWTIssuer:                 issuer,
+		AccessTokenTTL:            time.Duration(ttlMinutes) * time.Minute,
+		LoginRateLimitMaxFailures: loginRateLimitMaxFailures,
+		LoginRateLimitWindow:      loginRateLimitWindow,
 		Cookie: CookieConfig{
 			Name:     cookieName,
 			Domain:   cookieDomain,

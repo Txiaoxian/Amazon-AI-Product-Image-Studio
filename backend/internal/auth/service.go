@@ -25,11 +25,14 @@ var (
 	errTenantRequired     = errors.New("tenant_id is required")
 )
 
+type Option func(*Service)
+
 type Service struct {
-	db  *gorm.DB
-	cfg config.Config
-	log *slog.Logger
-	now func() time.Time
+	db               *gorm.DB
+	cfg              config.Config
+	log              *slog.Logger
+	now              func() time.Time
+	loginRateLimiter LoginRateLimiter
 }
 
 type initAdminRequest struct {
@@ -55,12 +58,18 @@ type accessSnapshot struct {
 	Permissions []string
 }
 
-func NewService(db *gorm.DB, cfg config.Config, log *slog.Logger) *Service {
+func WithLoginRateLimiter(limiter LoginRateLimiter) Option {
+	return func(service *Service) {
+		service.loginRateLimiter = limiter
+	}
+}
+
+func NewService(db *gorm.DB, cfg config.Config, log *slog.Logger, options ...Option) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Service{
+	service := &Service{
 		db:  db,
 		cfg: cfg,
 		log: log,
@@ -68,6 +77,12 @@ func NewService(db *gorm.DB, cfg config.Config, log *slog.Logger) *Service {
 			return time.Now().UTC()
 		},
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 func (s *Service) InitAdmin(c *gin.Context) {
@@ -127,6 +142,10 @@ func (s *Service) Login(c *gin.Context) {
 		}
 		if errors.Is(err, errInvalidCredentials) {
 			httpx.AbortWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password.", nil)
+			return
+		}
+		if errors.Is(err, errLoginRateLimited) {
+			httpx.AbortWithError(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many login attempts. Try again later.", nil)
 			return
 		}
 		s.log.Error("login failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
@@ -335,6 +354,11 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 		return SessionResponse{}, err
 	}
 
+	identity := LoginRateLimitIdentity{TenantID: tenantRecord.ID, Email: email, IP: ip}
+	if err := s.checkLoginRateLimit(ctx, identity); err != nil {
+		return SessionResponse{}, err
+	}
+
 	var userRecord database.User
 	err = s.db.WithContext(ctx).
 		Where("tenant_id = ? AND email = ? AND status = ?", tenantRecord.ID, email, UserStatusActive).
@@ -342,6 +366,9 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		CheckPassword("", password)
 		_ = s.recordLoginFailure(ctx, tenantRecord.ID, ip, userAgent)
+		if err := s.recordLoginRateLimitFailure(ctx, identity); err != nil {
+			return SessionResponse{}, err
+		}
 		return SessionResponse{}, errInvalidCredentials
 	}
 	if err != nil {
@@ -350,7 +377,14 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 
 	if !CheckPassword(userRecord.PasswordHash, password) {
 		_ = s.recordLoginFailure(ctx, tenantRecord.ID, ip, userAgent)
+		if err := s.recordLoginRateLimitFailure(ctx, identity); err != nil {
+			return SessionResponse{}, err
+		}
 		return SessionResponse{}, errInvalidCredentials
+	}
+
+	if err := s.resetLoginRateLimit(ctx, identity); err != nil {
+		return SessionResponse{}, err
 	}
 
 	now := s.now()
@@ -391,6 +425,27 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 	}
 
 	return session, nil
+}
+
+func (s *Service) checkLoginRateLimit(ctx context.Context, identity LoginRateLimitIdentity) error {
+	if s.loginRateLimiter == nil {
+		return nil
+	}
+	return s.loginRateLimiter.Check(ctx, identity)
+}
+
+func (s *Service) recordLoginRateLimitFailure(ctx context.Context, identity LoginRateLimitIdentity) error {
+	if s.loginRateLimiter == nil {
+		return nil
+	}
+	return s.loginRateLimiter.RecordFailure(ctx, identity)
+}
+
+func (s *Service) resetLoginRateLimit(ctx context.Context, identity LoginRateLimitIdentity) error {
+	if s.loginRateLimiter == nil {
+		return nil
+	}
+	return s.loginRateLimiter.Reset(ctx, identity)
 }
 
 func (s *Service) resolveLoginTenant(ctx context.Context, tenantID string) (database.Tenant, error) {
