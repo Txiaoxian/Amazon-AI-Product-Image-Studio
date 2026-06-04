@@ -17,34 +17,6 @@ import type { WorkbenchTaskInput, WorkbenchTaskSubmission } from '../types/workb
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 type PendingTaskAction = 'cancel' | 'retry' | null
 
-export interface LegacyCurrentGeneration {
-  kind: 'legacy'
-  history: {
-    item: {
-      id: string
-      prompt: string
-      model: string
-      provider: string
-      quality: string
-      aspectRatio: string
-      imageCount?: number
-      fileSize: number
-      width: number
-      height: number
-      createdAt: string
-      durationMs: number
-    }
-  }
-  result: {
-    blob: Blob
-    mimeType: string
-    width: number
-    height: number
-    fileSize: number
-    durationMs: number
-  }
-}
-
 export interface BackendImageResult {
   assetId: AssetId
   previewUrl?: string
@@ -62,7 +34,7 @@ export interface BackendCurrentGeneration {
   result: BackendImageResult
 }
 
-export type WorkbenchGeneration = LegacyCurrentGeneration | BackendCurrentGeneration
+export type WorkbenchGeneration = BackendCurrentGeneration
 
 export interface UseGenerationOptions {
   assetApi?: AssetApi
@@ -114,7 +86,7 @@ export function useGeneration({
     setTaskState(null)
     setPendingTaskAction(null)
     setCurrentItems((items) => {
-      if (items.some((item) => item.kind === 'backend')) {
+      if (items.length > 0) {
         setSelectedIndex(0)
         setStatus('idle')
         setError('')
@@ -284,7 +256,7 @@ export function useGeneration({
   }, [])
 
   const downloadCurrentBackendAsset = useCallback(async () => {
-    if (current?.kind !== 'backend') {
+    if (!current) {
       return null
     }
 

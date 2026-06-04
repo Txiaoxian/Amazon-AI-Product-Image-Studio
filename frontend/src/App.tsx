@@ -352,7 +352,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleOpenCurrentDetail = () => {
-    if (!generation.current || generation.current.kind !== 'backend') {
+    if (!generation.current) {
       return
     }
 
@@ -360,18 +360,17 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleDownloadDetail = async () => {
-    if (detail?.kind === 'backend') {
-      const download = await history.downloadBackendAsset(detail.asset)
-      if (!download) {
-        setNotice('结果下载失败，请稍后重试。')
-        return
-      }
-
-      downloadBlob(download.blob, download.filename ?? detail.asset.filename)
+    if (!detail) {
       return
     }
 
-    await handleDownloadCurrent()
+    const download = await history.downloadBackendAsset(detail.asset)
+    if (!download) {
+      setNotice('结果下载失败，请稍后重试。')
+      return
+    }
+
+    downloadBlob(download.blob, download.filename ?? detail.asset.filename)
   }
 
   return (

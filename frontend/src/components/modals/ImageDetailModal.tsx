@@ -1,6 +1,4 @@
 import { Download } from 'lucide-react'
-import type { LegacyCurrentGeneration } from '../../hooks/useGeneration'
-import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { formatBytes } from '../../lib/storageLimit'
 import type { Asset, Task } from '../../types/platform'
 import { Button } from '../ui/Button'
@@ -15,22 +13,15 @@ interface ImageDetailModalProps {
   onDownload: () => void
 }
 
-export type ImageDetail =
-  | {
-      kind: 'legacy'
-      current: LegacyCurrentGeneration
-    }
-  | {
-      kind: 'backend'
-      asset: Asset
-      task: Task
-    }
+export interface ImageDetail {
+  kind: 'backend'
+  asset: Asset
+  task: Task
+}
 
 export function ImageDetailModal({ isOpen, detail, error, isLoading = false, onClose, onDownload }: ImageDetailModalProps) {
-  const imageUrl = useObjectUrl(detail?.kind === 'legacy' ? detail.current.result.blob : undefined)
-  const backendImageUrl = detail?.kind === 'backend' ? detail.asset.previewUrl ?? detail.asset.thumbnailUrl : undefined
-
-  const rows = detail?.kind === 'legacy' ? buildLegacyRows(detail.current) : detail?.kind === 'backend' ? buildBackendRows(detail.asset, detail.task) : []
+  const backendImageUrl = detail?.asset.previewUrl ?? detail?.asset.thumbnailUrl
+  const rows = detail ? buildBackendRows(detail.asset, detail.task) : []
 
   return (
     <Modal
@@ -57,10 +48,7 @@ export function ImageDetailModal({ isOpen, detail, error, isLoading = false, onC
       {!isLoading && detail ? (
         <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className="overflow-hidden rounded-lg border border-ink-200 bg-ink-50">
-            {detail.kind === 'legacy' && imageUrl ? (
-              <img alt="生成结果预览" className="h-full max-h-[440px] w-full object-contain" src={imageUrl} />
-            ) : null}
-            {detail.kind === 'backend' && backendImageUrl ? (
+            {backendImageUrl ? (
               <img alt={`${detail.asset.filename} 预览`} className="h-full max-h-[440px] w-full object-contain" src={backendImageUrl} />
             ) : null}
           </div>
@@ -76,23 +64,6 @@ export function ImageDetailModal({ isOpen, detail, error, isLoading = false, onC
       ) : null}
     </Modal>
   )
-}
-
-function buildLegacyRows(current: LegacyCurrentGeneration) {
-  const isNanoBanana = current.history.item.provider === 'gemini'
-  return [
-    ['Prompt', current.history.item.prompt],
-    ['Model', current.history.item.model],
-    ['Provider', current.history.item.provider],
-    [isNanoBanana ? 'Quality' : 'Resolution', current.history.item.quality],
-    [isNanoBanana ? 'Size' : 'Aspect Ratio', current.history.item.aspectRatio],
-    ['Image Count', `${current.history.item.imageCount ?? 1} 张`],
-    ['File Size', formatBytes(current.history.item.fileSize)],
-    ['Width', `${current.history.item.width}px`],
-    ['Height', `${current.history.item.height}px`],
-    ['Created At', formatDateTime(current.history.item.createdAt)],
-    ['Duration', `${current.history.item.durationMs}ms`],
-  ]
 }
 
 function buildBackendRows(asset: Asset, task: Task) {

@@ -1,6 +1,5 @@
 import { AlertCircle, Download, ImageIcon, Info, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import type { WorkbenchGeneration } from '../../hooks/useGeneration'
-import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { formatBytes } from '../../lib/storageLimit'
 import type { TaskStatus } from '../../types/platform'
 import { Button } from '../ui/Button'
@@ -82,13 +81,6 @@ export function ResultCanvas({
               </button>
             </>
           ) : null}
-          {current?.kind === 'legacy' ? (
-            <>
-              <button aria-label="下载原图" className="icon-button" onClick={onDownload} title="下载原图" type="button">
-                <Download className="h-4 w-4" />
-              </button>
-            </>
-          ) : null}
         </div>
       </div>
 
@@ -157,19 +149,8 @@ export function ResultCanvas({
                   <span>{formatBytes(current.result.fileSize)}</span>
                 </>
               ) : null}
-              {current.kind === 'legacy' ? (
-                <>
-                  <span>·</span>
-                  <span>{current.result.durationMs}ms</span>
-                </>
-              ) : null}
             </div>
             <div className="flex flex-wrap justify-center gap-2">
-              {current.kind === 'legacy' ? (
-                <Button icon={<Info className="h-4 w-4" />} onClick={onOpenDetail}>
-                  查看参数
-                </Button>
-              ) : null}
               <Button icon={<Download className="h-4 w-4" />} onClick={onDownload} variant="primary">
                 下载原图
               </Button>
@@ -206,15 +187,9 @@ function ResultThumbnail({ item, index, isSelected, onSelect }: ResultThumbnailP
 }
 
 function useResultImageUrl(item: WorkbenchGeneration | null) {
-  const legacyImageUrl = useObjectUrl(item?.kind === 'legacy' ? item.result.blob : undefined)
-
-  if (!item) {
-    return undefined
-  }
-
-  return item.kind === 'legacy' ? legacyImageUrl : item.result.previewUrl ?? item.result.thumbnailUrl
+  return item?.result.previewUrl ?? item?.result.thumbnailUrl
 }
 
 function resultKey(item: WorkbenchGeneration) {
-  return item.kind === 'legacy' ? item.history.item.id : item.result.assetId
+  return item.result.assetId
 }

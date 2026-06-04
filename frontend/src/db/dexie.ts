@@ -1,36 +1,5 @@
 import Dexie, { type Table } from 'dexie'
 
-export type ImagePurpose = 'generated' | 'reference'
-
-export interface HistoryItem {
-  id: string
-  prompt: string
-  model: string
-  modelLabel: string
-  provider: 'openai' | 'gemini' | 'relay2'
-  quality: string
-  aspectRatio: string
-  imageCount: number
-  fileSize: number
-  width: number
-  height: number
-  createdAt: string
-  durationMs: number
-  imageId: string
-  referenceImageIds: string[]
-}
-
-export interface StoredImage {
-  id: string
-  blob: Blob
-  mimeType: string
-  size: number
-  width?: number
-  height?: number
-  purpose: ImagePurpose
-  createdAt: string
-}
-
 export interface PromptTemplate {
   id: string
   title: string
@@ -40,8 +9,6 @@ export interface PromptTemplate {
 }
 
 export class StudioDatabase extends Dexie {
-  images!: Table<StoredImage, string>
-  historyItems!: Table<HistoryItem, string>
   promptTemplates!: Table<PromptTemplate, string>
 
   constructor() {
@@ -50,6 +17,11 @@ export class StudioDatabase extends Dexie {
     this.version(1).stores({
       images: '&id, purpose, createdAt',
       historyItems: '&id, createdAt, model, provider',
+      promptTemplates: '&id, updatedAt',
+    })
+    this.version(2).stores({
+      images: null,
+      historyItems: null,
       promptTemplates: '&id, updatedAt',
     })
   }

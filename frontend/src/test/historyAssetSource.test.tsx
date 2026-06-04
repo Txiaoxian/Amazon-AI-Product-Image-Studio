@@ -2,9 +2,6 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { db } from '../db/dexie'
-import { createHistoryItem } from '../db/historyRepository'
-import { saveImage } from '../db/imageRepository'
 
 const authenticatedSession = {
   user: {
@@ -216,65 +213,24 @@ function page(records: unknown[], pageSize = 50) {
 }
 
 describe('backend history asset source', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     FakeEventSource.instances.length = 0
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: vi.fn(() => 'blob:legacy-history'),
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: vi.fn(),
-    })
-    await db.delete()
-    await db.open()
   })
 
-  afterEach(async () => {
+  afterEach(() => {
     cleanup()
     localStorage.clear()
-    await db.delete()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
-  it('uses unified backend history as the only visible history source while ignoring residual legacy blobs', async () => {
-    const generatedImage = await saveImage({
-      blob: new Blob(['legacy-image'], { type: 'image/png' }),
-      mimeType: 'image/png',
-      purpose: 'generated',
-      size: 12,
-      width: 1,
-      height: 1,
-    })
-    await createHistoryItem({
-      generatedImageId: generatedImage.id,
-      referenceImageIds: [],
-      request: {
-        prompt: 'Legacy local prompt',
-        model: {
-          label: 'OpenAI Image 2',
-          model: 'gpt-image-2',
-          provider: 'openai',
-        },
-        quality: '1K',
-        aspectRatio: '1:1',
-        imageCount: 1,
-      },
-      result: {
-        width: 1,
-        height: 1,
-        fileSize: generatedImage.size,
-        durationMs: 42,
-      },
-    })
+  it('uses unified backend history as the only visible history source after legacy blob storage retirement', async () => {
     const fetchImpl = createHistoryFetch()
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
 
     expect(await screen.findByRole('button', { name: '查看结果 hero.png' })).toBeInTheDocument()
-    expect(screen.queryByText('Legacy local prompt')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看旧本地历史' })).not.toBeInTheDocument()
     expect(screen.queryByText('旧本地历史（兼容）')).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10')

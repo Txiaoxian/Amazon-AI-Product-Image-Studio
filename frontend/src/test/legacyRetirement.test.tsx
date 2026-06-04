@@ -88,10 +88,22 @@ describe('legacy frontend retirement', () => {
     for (const relativePath of [
       'src/components/history/LegacyHistoryPanel.tsx',
       'src/components/history/LegacyHistoryItem.tsx',
+      'src/db/historyRepository.ts',
+      'src/db/imageRepository.ts',
+      'src/hooks/useObjectUrl.ts',
       'src/hooks/useStorageUsage.ts',
     ]) {
       expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false)
     }
+  })
+
+  it('keeps Dexie limited to prompt templates while deleting retired image and history stores on upgrade', () => {
+    const dexieSource = readFileSync(resolve(process.cwd(), 'src/db/dexie.ts'), 'utf8')
+
+    expect(dexieSource).not.toMatch(/StoredImage|HistoryItem|ImagePurpose|blob:\s*Blob|images!|historyItems!/)
+    expect(dexieSource).toContain('promptTemplates!: Table<PromptTemplate, string>')
+    expect(dexieSource).toContain('images: null')
+    expect(dexieSource).toContain('historyItems: null')
   })
 
   it('keeps sensitive storage, Provider authorization, and polling out of the production graph', () => {
