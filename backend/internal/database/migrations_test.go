@@ -1,9 +1,17 @@
 package database
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestMigrationsUseIdempotentTableCreation(t *testing.T) {
@@ -286,6 +294,258 @@ func TestSystemSettingsMigrationIsTenantScopedGenericJSON(t *testing.T) {
 	}
 }
 
+func TestRunMigrationsSerializesConcurrentExecutors(t *testing.T) {
+	db := openMigrationTestDB(t)
+	migration := Migration{
+		ID:   "test_concurrent_executor",
+		Name: "test concurrent executor",
+		Statements: []string{
+			"CREATE TABLE IF NOT EXISTS ddl_runs (id INTEGER PRIMARY KEY AUTOINCREMENT)",
+			"INSERT INTO ddl_runs DEFAULT VALUES",
+		},
+		Checks: []SchemaCheck{
+			schemaCheck("ddl_runs", []string{"id"}, nil),
+		},
+	}
+
+	var lock sync.Mutex
+	var lockEntries int64
+	lockRunner := func(_ context.Context, db *gorm.DB, fn func(*gorm.DB) error) error {
+		lock.Lock()
+		defer lock.Unlock()
+		atomic.AddInt64(&lockEntries, 1)
+		return fn(db)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			errs <- runMigrations(context.Background(), db, []Migration{migration}, lockRunner)
+		}()
+	}
+	close(start)
+
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("runMigrations returned error: %v", err)
+		}
+	}
+
+	var ddlRuns int64
+	if err := db.Table("ddl_runs").Count(&ddlRuns).Error; err != nil {
+		t.Fatalf("count ddl runs: %v", err)
+	}
+	if ddlRuns != 1 {
+		t.Fatalf("ddl run count = %d, want 1", ddlRuns)
+	}
+	var appliedRows int64
+	if err := db.Table("schema_migrations").Where("id = ?", migration.ID).Count(&appliedRows).Error; err != nil {
+		t.Fatalf("count schema migration rows: %v", err)
+	}
+	if appliedRows != 1 {
+		t.Fatalf("schema migration rows = %d, want 1", appliedRows)
+	}
+	if got := atomic.LoadInt64(&lockEntries); got != 2 {
+		t.Fatalf("lock entries = %d, want 2", got)
+	}
+}
+
+func TestRunMigrationsRecoversInterruptedIncrementalDDL(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := db.Exec("CREATE TABLE image_assets (id TEXT PRIMARY KEY, tenant_id TEXT, deleted_at DATETIME)").Error; err != nil {
+		t.Fatalf("create image_assets fixture: %v", err)
+	}
+
+	failedMigration := Migration{
+		ID:   "test_interrupted_incremental_ddl",
+		Name: "test interrupted incremental ddl",
+		Statements: []string{
+			"ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL",
+			"CREATE INDEX idx_image_assets_tenant_deleted_purged ON missing_image_assets (tenant_id, deleted_at, purged_at)",
+		},
+		Checks: []SchemaCheck{
+			schemaCheck("image_assets", []string{"purged_at"}, []string{"idx_image_assets_tenant_deleted_purged"}),
+		},
+	}
+
+	err := runMigrations(context.Background(), db, []Migration{failedMigration}, noMigrationLock)
+	if err == nil {
+		t.Fatal("runMigrations returned nil error for interrupted migration")
+	}
+	if !strings.Contains(err.Error(), "apply migration test_interrupted_incremental_ddl") {
+		t.Fatalf("runMigrations error = %q, want migration execution context", err.Error())
+	}
+	if hasColumn, err := columnExists(db, "image_assets", "purged_at"); err != nil || !hasColumn {
+		t.Fatalf("purged_at column exists = %v, err = %v, want true nil", hasColumn, err)
+	}
+	if hasIndex, err := indexExists(db, "image_assets", "idx_image_assets_tenant_deleted_purged"); err != nil || hasIndex {
+		t.Fatalf("partial index exists = %v, err = %v, want false nil", hasIndex, err)
+	}
+	if applied, err := migrationApplied(db, failedMigration.ID); err != nil || applied {
+		t.Fatalf("failed migration applied = %v, err = %v, want false nil", applied, err)
+	}
+
+	recoveryMigration := failedMigration
+	recoveryMigration.Statements = []string{
+		"ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL",
+		"CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (tenant_id, deleted_at, purged_at)",
+	}
+	if err := runMigrations(context.Background(), db, []Migration{recoveryMigration}, noMigrationLock); err != nil {
+		t.Fatalf("recovery runMigrations returned error: %v", err)
+	}
+	if hasIndex, err := indexExists(db, "image_assets", "idx_image_assets_tenant_deleted_purged"); err != nil || !hasIndex {
+		t.Fatalf("recovered index exists = %v, err = %v, want true nil", hasIndex, err)
+	}
+	if applied, err := migrationApplied(db, recoveryMigration.ID); err != nil || !applied {
+		t.Fatalf("recovered migration applied = %v, err = %v, want true nil", applied, err)
+	}
+}
+
+func TestRunMigrationsSkipsExistingColumnIndexAndTable(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := db.Exec("CREATE TABLE image_assets (id TEXT PRIMARY KEY, purged_at DATETIME(3) NULL)").Error; err != nil {
+		t.Fatalf("create image_assets fixture: %v", err)
+	}
+	if err := db.Exec("CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (purged_at)").Error; err != nil {
+		t.Fatalf("create existing index fixture: %v", err)
+	}
+
+	migration := Migration{
+		ID:   "test_existing_objects",
+		Name: "test existing objects",
+		Statements: []string{
+			"CREATE TABLE IF NOT EXISTS image_assets (id TEXT PRIMARY KEY)",
+			"ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL",
+			"CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (purged_at)",
+		},
+		Checks: []SchemaCheck{
+			schemaCheck("image_assets", []string{"id", "purged_at"}, []string{"idx_image_assets_tenant_deleted_purged"}),
+		},
+	}
+
+	if err := runMigrations(context.Background(), db, []Migration{migration}, noMigrationLock); err != nil {
+		t.Fatalf("runMigrations returned error: %v", err)
+	}
+	if err := runMigrations(context.Background(), db, []Migration{migration}, noMigrationLock); err != nil {
+		t.Fatalf("second runMigrations returned error: %v", err)
+	}
+}
+
+func TestRunMigrationsFailsClosedForAppliedButIncompleteSchema(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := ensureSchemaMigrations(db); err != nil {
+		t.Fatalf("ensure schema migrations: %v", err)
+	}
+	if err := db.Exec("CREATE TABLE image_assets (id TEXT PRIMARY KEY, purged_at DATETIME(3) NULL)").Error; err != nil {
+		t.Fatalf("create partial image_assets fixture: %v", err)
+	}
+	migration := Migration{
+		ID:   "test_applied_incomplete_schema",
+		Name: "test applied incomplete schema",
+		Statements: []string{
+			"ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL",
+			"CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (purged_at)",
+		},
+		Checks: []SchemaCheck{
+			schemaCheck("image_assets", []string{"purged_at"}, []string{"idx_image_assets_tenant_deleted_purged"}),
+		},
+	}
+	if err := db.Table("schema_migrations").Create(map[string]any{"id": migration.ID, "name": migration.Name}).Error; err != nil {
+		t.Fatalf("insert applied migration fixture: %v", err)
+	}
+
+	err := runMigrations(context.Background(), db, []Migration{migration}, noMigrationLock)
+	if err == nil {
+		t.Fatal("runMigrations returned nil error for applied incomplete schema")
+	}
+	if !strings.Contains(err.Error(), "missing index idx_image_assets_tenant_deleted_purged on image_assets") {
+		t.Fatalf("runMigrations error = %q, want missing index failure", err.Error())
+	}
+}
+
+func TestSQLiteMigrationPathDoesNotUseMySQLAdvisoryLock(t *testing.T) {
+	db := openMigrationTestDB(t)
+	called := false
+	if err := withMigrationLock(context.Background(), db, func(*gorm.DB) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatalf("withMigrationLock returned error on sqlite path: %v", err)
+	}
+	if !called {
+		t.Fatal("withMigrationLock did not execute callback on sqlite path")
+	}
+}
+
+func TestMySQLMigrationLockFailureIsFailClosedAndSanitized(t *testing.T) {
+	db := openNamedMigrationTestDB(t, "mysql")
+
+	err := acquireMySQLMigrationLock(context.Background(), db)
+	if err == nil {
+		t.Fatal("acquireMySQLMigrationLock returned nil error on sqlite-backed mysql path")
+	}
+	if got := err.Error(); got != "acquire migration lock: database operation failed" {
+		t.Fatalf("acquireMySQLMigrationLock error = %q", got)
+	}
+	assertNoSensitiveMigrationErrorText(t, err.Error())
+}
+
+func TestMySQLMigrationLockWrapperDoesNotRunMigrationsWhenLockFails(t *testing.T) {
+	db := openNamedMigrationTestDB(t, "mysql")
+	called := false
+
+	err := withMigrationLock(context.Background(), db, func(*gorm.DB) error {
+		called = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("withMigrationLock returned nil error when lock acquisition failed")
+	}
+	if called {
+		t.Fatal("withMigrationLock executed callback after lock acquisition failed")
+	}
+	if got := err.Error(); got != "acquire migration lock: database operation failed" {
+		t.Fatalf("withMigrationLock error = %q", got)
+	}
+}
+
+func TestMySQLMigrationLockReleaseFailureIsFailClosedAndSanitized(t *testing.T) {
+	db := openNamedMigrationTestDB(t, "mysql")
+
+	err := releaseMySQLMigrationLock(context.Background(), db)
+	if err == nil {
+		t.Fatal("releaseMySQLMigrationLock returned nil error on sqlite-backed mysql path")
+	}
+	if got := err.Error(); got != "release migration lock: database operation failed" {
+		t.Fatalf("releaseMySQLMigrationLock error = %q", got)
+	}
+	assertNoSensitiveMigrationErrorText(t, err.Error())
+}
+
+func TestMySQLMigrationLockContextCancelIsExplicit(t *testing.T) {
+	db := openNamedMigrationTestDB(t, "mysql")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := acquireMySQLMigrationLock(ctx, db)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquireMySQLMigrationLock error = %v, want context.Canceled", err)
+	}
+}
+
+func TestMigrationDatabaseErrorsDoNotExposeSensitiveText(t *testing.T) {
+	err := migrationDatabaseError(
+		"apply migration test_secret_redaction",
+		errors.New("mysql://user:db-password@tcp(localhost:3306)/studio Authorization=Bearer jwt Cookie=session Provider-Key=sk-secret"),
+	)
+	assertNoSensitiveMigrationErrorText(t, err.Error())
+	if got := err.Error(); got != "apply migration test_secret_redaction: database operation failed" {
+		t.Fatalf("migrationDatabaseError = %q", got)
+	}
+}
+
 func findCreateTableStatement(t *testing.T, table string) string {
 	t.Helper()
 
@@ -313,4 +573,60 @@ func findMigrationStatements(t *testing.T, id string) []string {
 
 	t.Fatalf("missing migration %s", id)
 	return nil
+}
+
+func noMigrationLock(_ context.Context, db *gorm.DB, fn func(*gorm.DB) error) error {
+	return fn(db)
+}
+
+func openMigrationTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return openNamedMigrationTestDB(t, "sqlite")
+}
+
+func openNamedMigrationTestDB(t *testing.T, name string) *gorm.DB {
+	t.Helper()
+
+	dialector := gorm.Dialector(sqlite.Open(":memory:"))
+	if name != "sqlite" {
+		dialector = namedDialector{Dialector: dialector, name: name}
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("open migration test db: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("access migration test db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	return db
+}
+
+type namedDialector struct {
+	gorm.Dialector
+	name string
+}
+
+func (d namedDialector) Name() string {
+	return d.name
+}
+
+func assertNoSensitiveMigrationErrorText(t *testing.T, message string) {
+	t.Helper()
+
+	for _, forbidden := range []string{
+		"db-password",
+		"mysql://",
+		"Authorization",
+		"Bearer",
+		"jwt",
+		"Cookie",
+		"Provider-Key",
+		"sk-secret",
+	} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("migration error leaked sensitive text %q in %q", forbidden, message)
+		}
+	}
 }

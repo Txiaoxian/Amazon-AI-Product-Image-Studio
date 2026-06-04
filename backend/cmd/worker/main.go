@@ -156,17 +156,31 @@ func openWorkerDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if cfg.Database.MigrationsMode == "startup-gate" {
-		if err := database.RunMigrations(ctx, db); err != nil {
-			_ = database.Close(db)
-			return nil, err
-		}
-		log.Info("worker database migrations complete")
-	} else {
-		log.Info("worker database migrations skipped", slog.String("mode", cfg.Database.MigrationsMode))
+	if err := runWorkerDatabaseStartupTasks(ctx, db, cfg.Database, log, database.RunMigrations); err != nil {
+		_ = database.Close(db)
+		return nil, err
 	}
 
 	return db, nil
+}
+
+func runWorkerDatabaseStartupTasks(
+	ctx context.Context,
+	db *gorm.DB,
+	cfg config.DatabaseConfig,
+	log *slog.Logger,
+	runMigrations func(context.Context, *gorm.DB) error,
+) error {
+	if cfg.MigrationsMode == "startup-gate" {
+		if err := runMigrations(ctx, db); err != nil {
+			return err
+		}
+		log.Info("worker database migrations complete")
+	} else {
+		log.Info("worker database migrations skipped", slog.String("mode", cfg.MigrationsMode))
+	}
+
+	return nil
 }
 
 func workerHealthcheckFile() string {
