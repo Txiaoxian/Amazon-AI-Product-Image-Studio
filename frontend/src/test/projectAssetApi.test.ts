@@ -319,10 +319,5 @@ describe('project and asset API wrappers', () => {
 })
 
 async function readBlobText(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsText(blob)
-  })
+  return blob.text()
 }
