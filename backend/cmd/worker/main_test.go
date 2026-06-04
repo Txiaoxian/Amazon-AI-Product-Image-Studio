@@ -1,9 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
+	"gorm.io/gorm"
 )
 
 func TestWorkerHealthcheckFileUsesDefault(t *testing.T) {
@@ -113,6 +121,62 @@ func TestWorkerStartupRejectsUnsafeProductionConfig(t *testing.T) {
 				t.Fatalf("loadStartupConfig returned unexpected error: %q", got)
 			}
 		})
+	}
+}
+
+func TestRunWorkerDatabaseStartupTasksRunsMigrationsInStartupGateMode(t *testing.T) {
+	var calls []string
+	err := runWorkerDatabaseStartupTasks(
+		context.Background(),
+		nil,
+		config.DatabaseConfig{MigrationsMode: "startup-gate"},
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "migrations")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runWorkerDatabaseStartupTasks returned error: %v", err)
+	}
+	if want := []string{"migrations"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("startup task calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRunWorkerDatabaseStartupTasksSkipsMigrationsWhenDisabled(t *testing.T) {
+	var calls []string
+	err := runWorkerDatabaseStartupTasks(
+		context.Background(),
+		nil,
+		config.DatabaseConfig{MigrationsMode: "disabled"},
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		func(context.Context, *gorm.DB) error {
+			calls = append(calls, "migrations")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runWorkerDatabaseStartupTasks returned error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("startup task calls = %v, want none", calls)
+	}
+}
+
+func TestRunWorkerDatabaseStartupTasksPropagatesMigrationFailure(t *testing.T) {
+	migrationErr := errors.New("migration failed")
+	err := runWorkerDatabaseStartupTasks(
+		context.Background(),
+		nil,
+		config.DatabaseConfig{MigrationsMode: "startup-gate"},
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		func(context.Context, *gorm.DB) error {
+			return migrationErr
+		},
+	)
+	if !errors.Is(err, migrationErr) {
+		t.Fatalf("runWorkerDatabaseStartupTasks error = %v, want %v", err, migrationErr)
 	}
 }
 

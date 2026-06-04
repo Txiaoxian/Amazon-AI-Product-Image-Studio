@@ -2,57 +2,103 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
+)
+
+const (
+	migrationLockName           = "amazon-ai-product-image-studio:migrations"
+	migrationLockTimeoutSeconds = 30
+	migrationLockReleaseTimeout = 5 * time.Second
 )
 
 type Migration struct {
 	ID         string
 	Name       string
 	Statements []string
+	Checks     []SchemaCheck
+}
+
+type SchemaCheck struct {
+	Table   string
+	Columns []string
+	Indexes []string
 }
 
 func RunMigrations(ctx context.Context, db *gorm.DB) error {
+	return runMigrations(ctx, db, migrations, withMigrationLock)
+}
+
+type migrationLockRunner func(context.Context, *gorm.DB, func(*gorm.DB) error) error
+
+func runMigrations(ctx context.Context, db *gorm.DB, migrationList []Migration, lockRunner migrationLockRunner) error {
 	if db == nil {
 		return ErrNilDB
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if lockRunner == nil {
+		lockRunner = withMigrationLock
+	}
 
 	db = db.WithContext(ctx)
-	if err := ensureSchemaMigrations(db); err != nil {
-		return err
-	}
-
-	for _, migration := range migrations {
-		applied, err := migrationApplied(db, migration.ID)
-		if err != nil {
+	return lockRunner(ctx, db, func(lockedDB *gorm.DB) error {
+		db := lockedDB.WithContext(ctx)
+		if err := ensureSchemaMigrations(db); err != nil {
 			return err
 		}
-		if applied {
-			continue
+
+		for _, migration := range migrationList {
+			if err := validateMigrationDefinition(migration); err != nil {
+				return err
+			}
+
+			applied, err := migrationApplied(db, migration.ID)
+			if err != nil {
+				return err
+			}
+			if !applied {
+				if err := runMigration(db, migration); err != nil {
+					return err
+				}
+			}
+
+			if err := verifyMigrationSchema(db, migration); err != nil {
+				return err
+			}
 		}
 
-		if err := runMigration(db, migration); err != nil {
-			return err
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func ensureSchemaMigrations(db *gorm.DB) error {
-	if err := db.Exec(`
+	statement := `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id VARCHAR(128) NOT NULL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Backend migration history'
-`).Error; err != nil {
-		return fmt.Errorf("ensure schema_migrations table: %w", err)
+`
+	if dialectName(db) == "sqlite" {
+		statement = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+`
+	}
+
+	if err := db.Exec(statement).Error; err != nil {
+		return migrationDatabaseError("ensure schema_migrations table", err)
 	}
 
 	return nil
@@ -61,26 +107,33 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 func migrationApplied(db *gorm.DB, id string) (bool, error) {
 	var count int64
 	if err := db.Table("schema_migrations").Where("id = ?", id).Count(&count).Error; err != nil {
-		return false, fmt.Errorf("check migration %s: %w", id, err)
+		return false, migrationDatabaseError(fmt.Sprintf("check migration %s", id), err)
 	}
 
 	return count > 0, nil
 }
 
-func runMigration(db *gorm.DB, migration Migration) error {
+func validateMigrationDefinition(migration Migration) error {
 	if strings.TrimSpace(migration.ID) == "" {
 		return fmt.Errorf("migration id is required")
 	}
 	if strings.TrimSpace(migration.Name) == "" {
 		return fmt.Errorf("migration name is required")
 	}
+	return nil
+}
+
+func runMigration(db *gorm.DB, migration Migration) error {
+	if err := validateMigrationDefinition(migration); err != nil {
+		return err
+	}
 
 	for _, statement := range migration.Statements {
 		if strings.TrimSpace(statement) == "" {
 			continue
 		}
-		if err := db.Exec(statement).Error; err != nil {
-			return fmt.Errorf("apply migration %s: %w", migration.ID, err)
+		if err := executeMigrationStatement(db, migration.ID, statement); err != nil {
+			return err
 		}
 	}
 
@@ -88,16 +141,300 @@ func runMigration(db *gorm.DB, migration Migration) error {
 		"id":   migration.ID,
 		"name": migration.Name,
 	}).Error; err != nil {
-		return fmt.Errorf("record migration %s: %w", migration.ID, err)
+		return migrationDatabaseError(fmt.Sprintf("record migration %s", migration.ID), err)
 	}
 
 	return nil
+}
+
+var (
+	addColumnStatementPattern   = regexp.MustCompile("(?is)^ALTER\\s+TABLE\\s+`?([A-Za-z0-9_]+)`?\\s+ADD\\s+COLUMN\\s+`?([A-Za-z0-9_]+)`?\\b")
+	createIndexStatementPattern = regexp.MustCompile(
+		"(?is)^CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+`?([A-Za-z0-9_]+)`?\\s+ON\\s+`?([A-Za-z0-9_]+)`?\\s*\\(",
+	)
+)
+
+func executeMigrationStatement(db *gorm.DB, migrationID, statement string) error {
+	statement = strings.TrimSpace(statement)
+	if match := addColumnStatementPattern.FindStringSubmatch(statement); match != nil {
+		table, column := match[1], match[2]
+		exists, err := columnExists(db, table, column)
+		if err != nil {
+			return migrationDatabaseError(fmt.Sprintf("check migration %s column %s.%s", migrationID, table, column), err)
+		}
+		if exists {
+			return nil
+		}
+	}
+	if match := createIndexStatementPattern.FindStringSubmatch(statement); match != nil {
+		indexName, table := match[1], match[2]
+		exists, err := indexExists(db, table, indexName)
+		if err != nil {
+			return migrationDatabaseError(fmt.Sprintf("check migration %s index %s", migrationID, indexName), err)
+		}
+		if exists {
+			return nil
+		}
+	}
+
+	if err := db.Exec(statement).Error; err != nil {
+		return migrationDatabaseError(fmt.Sprintf("apply migration %s", migrationID), err)
+	}
+
+	return nil
+}
+
+func verifyMigrationSchema(db *gorm.DB, migration Migration) error {
+	for _, check := range migration.Checks {
+		table := strings.TrimSpace(check.Table)
+		if table == "" {
+			return fmt.Errorf("verify migration %s: schema check table is required", migration.ID)
+		}
+
+		exists, err := tableExists(db, table)
+		if err != nil {
+			return migrationDatabaseError(fmt.Sprintf("verify migration %s table %s", migration.ID, table), err)
+		}
+		if !exists {
+			return fmt.Errorf("verify migration %s: missing table %s", migration.ID, table)
+		}
+
+		for _, column := range check.Columns {
+			column = strings.TrimSpace(column)
+			if column == "" {
+				return fmt.Errorf("verify migration %s: schema check column is required", migration.ID)
+			}
+			exists, err := columnExists(db, table, column)
+			if err != nil {
+				return migrationDatabaseError(fmt.Sprintf("verify migration %s column %s.%s", migration.ID, table, column), err)
+			}
+			if !exists {
+				return fmt.Errorf("verify migration %s: missing column %s.%s", migration.ID, table, column)
+			}
+		}
+
+		for _, indexName := range check.Indexes {
+			indexName = strings.TrimSpace(indexName)
+			if indexName == "" {
+				return fmt.Errorf("verify migration %s: schema check index is required", migration.ID)
+			}
+			exists, err := indexExists(db, table, indexName)
+			if err != nil {
+				return migrationDatabaseError(fmt.Sprintf("verify migration %s index %s", migration.ID, indexName), err)
+			}
+			if !exists {
+				return fmt.Errorf("verify migration %s: missing index %s on %s", migration.ID, indexName, table)
+			}
+		}
+	}
+
+	return nil
+}
+
+func withMigrationLock(ctx context.Context, db *gorm.DB, fn func(*gorm.DB) error) error {
+	if dialectName(db) != "mysql" {
+		return fn(db)
+	}
+
+	connectionOpened := false
+	err := db.Connection(func(connDB *gorm.DB) error {
+		connectionOpened = true
+		connDB = connDB.WithContext(ctx)
+		if err := acquireMySQLMigrationLock(ctx, connDB); err != nil {
+			return err
+		}
+
+		runErr := fn(connDB)
+
+		releaseCtx, cancel := context.WithTimeout(context.Background(), migrationLockReleaseTimeout)
+		defer cancel()
+		releaseErr := releaseMySQLMigrationLock(releaseCtx, connDB.WithContext(releaseCtx))
+		if runErr != nil {
+			if releaseErr != nil {
+				return fmt.Errorf("%w; %v", runErr, releaseErr)
+			}
+			return runErr
+		}
+		if releaseErr != nil {
+			return releaseErr
+		}
+
+		return nil
+	})
+	if err != nil && !connectionOpened {
+		return migrationDatabaseError("open migration lock connection", err)
+	}
+	return err
+}
+
+func acquireMySQLMigrationLock(ctx context.Context, db *gorm.DB) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+
+	var acquired sql.NullInt64
+	if err := db.WithContext(ctx).Raw("SELECT GET_LOCK(?, ?)", migrationLockName, migrationLockTimeoutSeconds).Scan(&acquired).Error; err != nil {
+		return migrationDatabaseError("acquire migration lock", err)
+	}
+	if !acquired.Valid {
+		return fmt.Errorf("acquire migration lock: database returned no lock state")
+	}
+	if acquired.Int64 != 1 {
+		return fmt.Errorf("acquire migration lock: lock not acquired before timeout")
+	}
+
+	return nil
+}
+
+func releaseMySQLMigrationLock(ctx context.Context, db *gorm.DB) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("release migration lock: %w", err)
+	}
+
+	var released sql.NullInt64
+	if err := db.WithContext(ctx).Raw("SELECT RELEASE_LOCK(?)", migrationLockName).Scan(&released).Error; err != nil {
+		return migrationDatabaseError("release migration lock", err)
+	}
+	if !released.Valid {
+		return fmt.Errorf("release migration lock: database returned no lock state")
+	}
+	if released.Int64 != 1 {
+		return fmt.Errorf("release migration lock: lock was not held by this connection")
+	}
+
+	return nil
+}
+
+func tableExists(db *gorm.DB, table string) (bool, error) {
+	switch dialectName(db) {
+	case "mysql":
+		var count int64
+		err := db.Raw(
+			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+			table,
+		).Scan(&count).Error
+		return count > 0, err
+	case "sqlite":
+		var count int64
+		err := db.Raw(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+			table,
+		).Scan(&count).Error
+		return count > 0, err
+	default:
+		return db.Migrator().HasTable(table), nil
+	}
+}
+
+func columnExists(db *gorm.DB, table, column string) (bool, error) {
+	switch dialectName(db) {
+	case "mysql":
+		var count int64
+		err := db.Raw(
+			"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+			table,
+			column,
+		).Scan(&count).Error
+		return count > 0, err
+	case "sqlite":
+		rows, err := db.Raw("PRAGMA table_info(" + quoteSQLiteIdentifier(table) + ")").Rows()
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var cid int
+			var name, columnType string
+			var notNull int
+			var defaultValue sql.NullString
+			var primaryKey int
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				return false, err
+			}
+			if strings.EqualFold(name, column) {
+				return true, nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		return false, nil
+	default:
+		return db.Migrator().HasColumn(table, column), nil
+	}
+}
+
+func indexExists(db *gorm.DB, table, indexName string) (bool, error) {
+	switch dialectName(db) {
+	case "mysql":
+		var count int64
+		err := db.Raw(
+			"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+			table,
+			indexName,
+		).Scan(&count).Error
+		return count > 0, err
+	case "sqlite":
+		var count int64
+		err := db.Raw(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name = ?",
+			table,
+			indexName,
+		).Scan(&count).Error
+		return count > 0, err
+	default:
+		return db.Migrator().HasIndex(table, indexName), nil
+	}
+}
+
+func quoteSQLiteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func dialectName(db *gorm.DB) string {
+	if db == nil || db.Dialector == nil {
+		return ""
+	}
+	return strings.ToLower(db.Dialector.Name())
+}
+
+func migrationDatabaseError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s: %w", operation, context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
+	}
+	return fmt.Errorf("%s: database operation failed", operation)
+}
+
+func schemaCheck(table string, columns []string, indexes []string) SchemaCheck {
+	return SchemaCheck{Table: table, Columns: columns, Indexes: indexes}
 }
 
 var migrations = []Migration{
 	{
 		ID:   "202605110001_identity_and_audit_base",
 		Name: "create tenant identity rbac and operation log tables",
+		Checks: []SchemaCheck{
+			schemaCheck("tenants", []string{"id", "name", "status", "created_at", "updated_at"}, []string{"idx_tenants_status"}),
+			schemaCheck("users", []string{"id", "tenant_id", "email", "display_name", "password_hash", "status", "last_login_at", "created_at", "updated_at"}, []string{"uk_users_tenant_email", "idx_users_tenant_id", "uk_users_tenant_id", "idx_users_status"}),
+			schemaCheck("roles", []string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "updated_at"}, []string{"uk_roles_tenant_code", "idx_roles_tenant_id", "uk_roles_tenant_id", "idx_roles_status"}),
+			schemaCheck("permissions", []string{"id", "code", "name", "description", "created_at", "updated_at"}, []string{"uk_permissions_code"}),
+			schemaCheck("user_roles", []string{"id", "tenant_id", "user_id", "role_id", "created_at"}, []string{"uk_user_roles_tenant_user_role", "idx_user_roles_tenant_id", "idx_user_roles_user_id", "idx_user_roles_role_id"}),
+			schemaCheck("role_permissions", []string{"id", "tenant_id", "role_id", "permission_id", "created_at"}, []string{"uk_role_permissions_tenant_role_permission", "idx_role_permissions_tenant_id", "idx_role_permissions_role_id", "idx_role_permissions_permission_id"}),
+			schemaCheck("operation_logs", []string{"id", "tenant_id", "actor_user_id", "action", "resource_type", "resource_id", "ip", "user_agent", "metadata_json", "created_at"}, []string{"idx_operation_logs_tenant_id", "idx_operation_logs_tenant_created", "idx_operation_logs_actor_user_id", "idx_operation_logs_action", "idx_operation_logs_resource_type", "idx_operation_logs_resource_id"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS tenants (
@@ -214,6 +551,10 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 	{
 		ID:   "202605120001_projects_and_members",
 		Name: "create project and project member tables",
+		Checks: []SchemaCheck{
+			schemaCheck("projects", []string{"id", "tenant_id", "name", "brand", "asin", "site", "notes", "status", "created_by", "created_at", "updated_at", "deleted_at"}, []string{"uk_projects_tenant_id", "idx_projects_tenant_status_created", "idx_projects_tenant_asin", "idx_projects_tenant_deleted", "idx_projects_created_by"}),
+			schemaCheck("project_members", []string{"id", "tenant_id", "project_id", "user_id", "role", "created_at", "updated_at"}, []string{"uk_project_members_tenant_project_user", "idx_project_members_tenant_project", "idx_project_members_tenant_user", "idx_project_members_role"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS projects (
@@ -261,6 +602,9 @@ CREATE TABLE IF NOT EXISTS project_members (
 	{
 		ID:   "202605120002_image_assets",
 		Name: "create image asset metadata table",
+		Checks: []SchemaCheck{
+			schemaCheck("image_assets", []string{"id", "tenant_id", "project_id", "kind", "category", "filename", "object_key", "thumbnail_object_key", "mime_type", "size_bytes", "width", "height", "sha256", "is_favorite", "source_task_id", "created_by", "created_at", "updated_at", "deleted_at"}, []string{"uk_image_assets_tenant_id", "uk_image_assets_object_key", "idx_image_assets_tenant_project_created", "idx_image_assets_tenant_project_kind", "idx_image_assets_tenant_favorite", "idx_image_assets_tenant_deleted", "idx_image_assets_tenant_sha256", "idx_image_assets_created_by"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS image_assets (
@@ -301,6 +645,9 @@ CREATE TABLE IF NOT EXISTS image_assets (
 	{
 		ID:   "202605120003_ai_providers",
 		Name: "create tenant scoped ai provider configuration table",
+		Checks: []SchemaCheck{
+			schemaCheck("ai_providers", []string{"id", "tenant_id", "type", "name", "base_url", "encrypted_api_key", "api_key_hint", "api_key_updated_at", "status", "timeout_seconds", "concurrency_limit", "last_test_status", "last_tested_at", "last_test_error", "created_by", "created_at", "updated_at", "deleted_at"}, []string{"uk_ai_providers_tenant_id", "idx_ai_providers_tenant_type", "idx_ai_providers_tenant_status", "idx_ai_providers_tenant_deleted", "idx_ai_providers_created_by"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS ai_providers (
@@ -336,6 +683,9 @@ CREATE TABLE IF NOT EXISTS ai_providers (
 	{
 		ID:   "202605130001_ai_models",
 		Name: "create tenant scoped ai model capability table",
+		Checks: []SchemaCheck{
+			schemaCheck("ai_models", []string{"id", "tenant_id", "provider_id", "model_name", "display_name", "supports_generate", "supports_edit", "supports_multi_reference", "supports_n", "max_output_count", "supported_sizes_json", "supported_qualities_json", "supported_output_formats_json", "pricing_json", "status", "created_by", "created_at", "updated_at", "deleted_at"}, []string{"uk_ai_models_tenant_id", "idx_ai_models_tenant_provider", "idx_ai_models_tenant_status", "idx_ai_models_tenant_provider_model", "idx_ai_models_tenant_generate", "idx_ai_models_tenant_edit", "idx_ai_models_tenant_deleted", "idx_ai_models_created_by"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS ai_models (
@@ -376,6 +726,13 @@ CREATE TABLE IF NOT EXISTS ai_models (
 	{
 		ID:   "202605130002_tasks_events_outputs_usage",
 		Name: "create generation task state event output usage and api call log tables",
+		Checks: []SchemaCheck{
+			schemaCheck("generation_tasks", []string{"id", "tenant_id", "project_id", "type", "provider_id", "model_id", "status", "prompt", "image_type", "params_json", "input_asset_ids_json", "attempt", "max_attempts", "queued_at", "started_at", "finished_at", "timeout_at", "created_by", "error_code", "error_message", "created_at", "updated_at"}, []string{"uk_generation_tasks_tenant_id", "idx_generation_tasks_tenant_project_created", "idx_generation_tasks_tenant_status", "idx_generation_tasks_tenant_created_by", "idx_generation_tasks_tenant_provider_status", "idx_generation_tasks_tenant_model_status", "idx_generation_tasks_tenant_timeout"}),
+			schemaCheck("task_events", []string{"sequence", "id", "tenant_id", "task_id", "project_id", "event_type", "event_payload_json", "created_at"}, []string{"uk_task_events_id", "idx_task_events_tenant_task_sequence", "idx_task_events_tenant_project_sequence", "idx_task_events_tenant_sequence", "idx_task_events_event_type"}),
+			schemaCheck("task_outputs", []string{"id", "tenant_id", "task_id", "asset_id", "output_index", "created_at"}, []string{"uk_task_outputs_tenant_id", "uk_task_outputs_tenant_task_index", "idx_task_outputs_tenant_task", "idx_task_outputs_tenant_asset"}),
+			schemaCheck("api_call_logs", []string{"id", "tenant_id", "task_id", "provider_id", "model_id", "status", "duration_ms", "request_id", "http_status", "error_code", "error_message", "redacted_request_json", "redacted_response_json", "created_at"}, []string{"idx_api_call_logs_tenant_task", "idx_api_call_logs_tenant_provider", "idx_api_call_logs_tenant_created", "idx_api_call_logs_model_id", "idx_api_call_logs_status"}),
+			schemaCheck("usage_records", []string{"id", "tenant_id", "task_id", "user_id", "project_id", "provider_id", "model_id", "input_tokens", "output_tokens", "image_count", "estimated_cost", "currency", "raw_usage_json", "created_at"}, []string{"idx_usage_records_tenant_task", "idx_usage_records_tenant_project_created", "idx_usage_records_tenant_user_created", "idx_usage_records_provider_id", "idx_usage_records_model_id"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS generation_tasks (
@@ -514,6 +871,9 @@ CREATE TABLE IF NOT EXISTS usage_records (
 	{
 		ID:   "202605180001_system_settings",
 		Name: "create tenant scoped system settings table",
+		Checks: []SchemaCheck{
+			schemaCheck("system_settings", []string{"id", "tenant_id", "key", "value_json", "created_at", "updated_at"}, []string{"uk_system_settings_tenant_id", "uk_system_settings_tenant_key", "idx_system_settings_tenant_id"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS system_settings (
@@ -534,6 +894,9 @@ CREATE TABLE IF NOT EXISTS system_settings (
 	{
 		ID:   "202605240001_image_asset_purge_marker",
 		Name: "add durable image asset physical purge marker",
+		Checks: []SchemaCheck{
+			schemaCheck("image_assets", []string{"purged_at"}, []string{"idx_image_assets_tenant_deleted_purged"}),
+		},
 		Statements: []string{
 			`ALTER TABLE image_assets ADD COLUMN purged_at DATETIME(3) NULL`,
 			`CREATE INDEX idx_image_assets_tenant_deleted_purged ON image_assets (tenant_id, deleted_at, purged_at)`,
@@ -542,6 +905,10 @@ CREATE TABLE IF NOT EXISTS system_settings (
 	{
 		ID:   "202605270001_storage_quota_reservations",
 		Name: "create tenant scoped storage quota counter and reservation tables",
+		Checks: []SchemaCheck{
+			schemaCheck("storage_quota_counters", []string{"id", "tenant_id", "used_bytes", "reserved_bytes", "reconciled_at", "created_at", "updated_at"}, []string{"uk_storage_quota_counters_tenant", "uk_storage_quota_counters_tenant_id"}),
+			schemaCheck("storage_quota_reservations", []string{"id", "tenant_id", "bytes", "finalized_bytes", "status", "expires_at", "created_at", "updated_at"}, []string{"uk_storage_quota_reservations_tenant_id", "idx_storage_quota_reservations_tenant_status", "idx_storage_quota_reservations_tenant_expires"}),
+		},
 		Statements: []string{
 			`
 CREATE TABLE IF NOT EXISTS storage_quota_counters (
