@@ -90,7 +90,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	if summary.Applied {
 		mode = "apply"
 	}
-	if _, err := fmt.Fprintf(output, "provider key rotation mode=%s providers=%d result=success\n", mode, summary.ProviderCount); err != nil {
+	if _, err := fmt.Fprintf(output, "provider key rotation mode=%s providers=%d deleted_provider_erase_candidates=%d result=success\n", mode, summary.ProviderCount, summary.DeletedProviderEraseCount); err != nil {
 		return errRotationOutputFailed
 	}
 	return nil

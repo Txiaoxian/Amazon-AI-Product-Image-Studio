@@ -200,7 +200,9 @@ the password in the shell environment.
 
 Rotate the Provider API-key encryption master key only during an approved
 maintenance window with Provider writes paused. First run the default dry-run
-against all non-deleted Provider rows:
+against all Provider rows. The dry-run validates active Provider credentials and
+reports only a count of soft-deleted Provider rows that still need credential
+crypto erase:
 
 ```bash
 export PROVIDER_KEY_ROTATION_OLD_SECRET='<current secret>'
@@ -228,7 +230,8 @@ unset PROVIDER_KEY_ROTATION_CONFIRM
 ```
 
 The apply path serializes one database transaction, re-encrypts all eligible
-credentials, and rolls back fully if any row fails. It never prints plaintext,
+active credentials, crypto-erases credential material from soft-deleted Provider
+rows, and rolls back fully if any active row fails. It never prints plaintext,
 ciphertext, hint, URL, tenant, or Provider details. After apply succeeds, deploy
 API and Worker with the new `API_KEY_ENCRYPTION_KEY` and
 `API_KEY_ENCRYPTION_KEY_ID`, then run backend-mediated Provider smoke checks.
@@ -447,9 +450,9 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -v "$PWD/backup/minio:/backup" \
   --entrypoint /bin/sh minio-bootstrap -c '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-    mc mirror local/"$MINIO_BUCKET_ORIGINALS" /backup/"$MINIO_BUCKET_ORIGINALS"
-    mc mirror local/"$MINIO_BUCKET_GENERATED" /backup/"$MINIO_BUCKET_GENERATED"
-    mc mirror local/"$MINIO_BUCKET_THUMBNAILS" /backup/"$MINIO_BUCKET_THUMBNAILS"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_ORIGINALS" /backup/"$MINIO_BUCKET_ORIGINALS"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_GENERATED" /backup/"$MINIO_BUCKET_GENERATED"
+    mc mirror --overwrite --remove local/"$MINIO_BUCKET_THUMBNAILS" /backup/"$MINIO_BUCKET_THUMBNAILS"
   '
 ```
 
@@ -470,7 +473,10 @@ docker compose -f deploy/docker-compose.yml exec -T mysql \
   < backup/mysql.sql
 ```
 
-Restore MinIO objects with the same bucket names, then start the application:
+Restore MinIO objects with the same bucket names, then start the application.
+The `--remove` option makes the restore exact by deleting bucket objects that
+are absent from the matching backup. Run this only against the stopped or
+isolated restore target:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up minio-bootstrap
@@ -478,9 +484,9 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps \
   -v "$PWD/backup/minio:/backup:ro" \
   --entrypoint /bin/sh minio-bootstrap -c '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-    mc mirror /backup/"$MINIO_BUCKET_ORIGINALS" local/"$MINIO_BUCKET_ORIGINALS"
-    mc mirror /backup/"$MINIO_BUCKET_GENERATED" local/"$MINIO_BUCKET_GENERATED"
-    mc mirror /backup/"$MINIO_BUCKET_THUMBNAILS" local/"$MINIO_BUCKET_THUMBNAILS"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_ORIGINALS" local/"$MINIO_BUCKET_ORIGINALS"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_GENERATED" local/"$MINIO_BUCKET_GENERATED"
+    mc mirror --overwrite --remove /backup/"$MINIO_BUCKET_THUMBNAILS" local/"$MINIO_BUCKET_THUMBNAILS"
   '
 docker compose -f deploy/docker-compose.yml up -d backend-api backend-worker frontend
 ```

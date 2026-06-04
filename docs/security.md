@@ -69,6 +69,8 @@ Resolved transition item:
 - P19 host TLS reverse-proxy hardening added an auditable Nginx template and static guardrails. Public traffic must terminate TLS and proxy only to loopback frontend `127.0.0.1:8080`; it must never route directly to backend-api, AI Providers, or relays.
 - P19 API startup now reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
 - P20 pins the CSRF request-header contract to `X-CSRF-Token` across frontend, backend, CORS, Compose, and production-env preflight. Custom header aliases are rejected fail closed.
+- P20 frontend tenant/custom-role administration uses only same-origin backend APIs with CSRF-protected writes. Built-in roles remain read-only in the UI, and role drafts, passwords, tokens, and sensitive responses are not persisted in browser storage.
+- P21 Provider credential lifecycle hardening now crypto-erases `encrypted_api_key`, `api_key_hint`, and `api_key_updated_at` during Provider soft delete. Provider master-key rotation apply also scrubs historical soft-deleted Provider rows that still contain credential material, while dry-run reports count-only erase candidates.
 
 Storage and P5 review hardening backlog:
 
@@ -84,6 +86,14 @@ P20 operational controls:
 - Tenant HTTP APIs remain tenant-scoped; tenant admin sessions never imply platform-wide super-admin rights.
 - Custom-role HTTP writes are tenant-scoped, CSRF protected, audited, and blocked for built-in roles. Deletion fails while a user assignment exists.
 - Backup/restore/rollback rehearsal runs only against a disposable dynamically named Compose project and never against shared development or production services.
+
+R20 release-blocking security follow-ups:
+
+- `APP_ENV=production` must reject `CSRF_ENABLED=false`; a fixed header name without mandatory enforcement is insufficient.
+- Login endpoints need bounded Redis-backed rate limiting without credential or email leakage.
+- JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
+- Provider delete now crypto-erases stored encrypted credentials; historical soft-deleted rows are scrubbed by the provider key rotation apply workflow.
+- Redis queue migrations, SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, and deployment log handling must fail closed under partial failures.
 
 ## Authentication
 

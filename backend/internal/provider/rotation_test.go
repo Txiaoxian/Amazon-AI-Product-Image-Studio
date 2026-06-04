@@ -53,7 +53,7 @@ func TestAPIKeyRotationServiceApplyUpdatesAllActiveProvidersOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rotate returned error: %v", err)
 	}
-	if summary != (APIKeyRotationSummary{ProviderCount: 2, Applied: true}) {
+	if summary != (APIKeyRotationSummary{ProviderCount: 2, DeletedProviderEraseCount: 1, Applied: true}) {
 		t.Fatalf("summary = %+v", summary)
 	}
 
@@ -82,10 +82,26 @@ func TestAPIKeyRotationServiceApplyUpdatesAllActiveProvidersOnly(t *testing.T) {
 	}
 
 	storedDeleted := loadAPIKeyRotationProvider(t, db, deleted.ID, true)
-	assertProviderCredentialMetadataUnchanged(t, storedDeleted, deleted)
-	if storedDeleted.EncryptedAPIKey != deleted.EncryptedAPIKey {
-		t.Fatal("soft-deleted provider encrypted api key was rotated")
+	if storedDeleted.EncryptedAPIKey != "" || storedDeleted.APIKeyHint != "" || storedDeleted.APIKeyUpdatedAt != nil {
+		t.Fatalf("soft-deleted provider credential metadata was not erased: %#v", storedDeleted)
 	}
+}
+
+func TestAPIKeyRotationServiceDryRunReportsDeletedProviderEraseCandidatesWithoutWriting(t *testing.T) {
+	db := newAPIKeyRotationTestDB(t)
+	oldCipher := mustAPIKeyCipher(t, rotationOldSecret, rotationOldKeyID)
+	newCipher := mustAPIKeyCipher(t, rotationNewSecret, rotationNewKeyID)
+	deleted := seedAPIKeyRotationProvider(t, db, oldCipher, "tenant-a", "provider-deleted", "sk-deleted", true)
+
+	summary, err := NewAPIKeyRotationService(db).Rotate(context.Background(), oldCipher, newCipher, false)
+	if err != nil {
+		t.Fatalf("Rotate returned error: %v", err)
+	}
+	if summary != (APIKeyRotationSummary{DeletedProviderEraseCount: 1, Applied: false}) {
+		t.Fatalf("summary = %+v", summary)
+	}
+	stored := loadAPIKeyRotationProvider(t, db, deleted.ID, true)
+	assertProviderCredentialMetadataUnchanged(t, stored, deleted)
 }
 
 func TestAPIKeyRotationServiceApplyRollsBackEveryWriteWhenAnyProviderFails(t *testing.T) {

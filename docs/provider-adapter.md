@@ -26,13 +26,16 @@ Provider records store:
 
 API keys must be encrypted at rest and never returned in full to the frontend.
 
-Provider master-key rotation is an operator-only maintenance workflow. It must use a backend CLI with a safe dry-run default and an explicit apply confirmation. Rotation must re-encrypt all eligible Provider credentials in one database transaction, leave Provider credential hints and credential-update timestamps unchanged, roll back fully if any row cannot be processed, and never print plaintext keys, encrypted payloads, hints, base URLs, or tenant/object details.
+Provider master-key rotation is an operator-only maintenance workflow. It must use a backend CLI with a safe dry-run default and an explicit apply confirmation. Rotation must re-encrypt all eligible active Provider credentials in one database transaction, leave active Provider credential hints and credential-update timestamps unchanged, roll back fully if any active row cannot be processed, crypto-erase credential material from soft-deleted Provider rows, and never print plaintext keys, encrypted payloads, hints, base URLs, or tenant/object details.
+
+Provider soft delete must crypto-erase stored credentials in the same write path. A deleted Provider record may remain as metadata/audit history, but `encrypted_api_key`, `api_key_hint`, and `api_key_updated_at` must be cleared before the delete succeeds. Historical soft-deleted rows created before this policy are scrubbed by the provider key rotation apply workflow.
 
 Current implementation:
 
 - `backend/cmd/provider-key-rotation` implements the operator workflow.
 - Default mode validates all eligible rows without writing. `--apply` additionally requires `PROVIDER_KEY_ROTATION_CONFIRM=I_UNDERSTAND_PROVIDER_KEY_ROTATION`.
-- The service serializes the database transaction, locks eligible non-deleted Provider rows, updates only `encrypted_api_key`, and fails the complete rotation when any row cannot be decrypted or re-encrypted.
+- The service serializes the database transaction, locks eligible Provider rows, re-encrypts active Provider `encrypted_api_key` values, and fails the complete rotation when any active row cannot be decrypted or re-encrypted.
+- Soft-deleted Provider rows are not re-encrypted. If any deleted row still contains encrypted key material or key metadata, the apply path clears it and the dry-run path reports it as a deleted-provider erase candidate.
 - Encrypted payload key IDs must match the decrypting cipher key ID. A mismatched key ID fails closed.
 - Operators must run the apply path during an approved Provider-write maintenance window, then deploy API and Worker with the new active key and key ID.
 
@@ -68,6 +71,7 @@ Current P6 model capability result:
 - P7 Provider Adapter execution must consume these backend model records as the trusted source for allowed task parameters; it must not infer allowed image parameters from frontend constants.
 - Current P7 runtime uses stable `modelId` references. P18 strengthens control-plane integrity by serializing Provider/model/default-setting writes and rejecting duplicate same-tenant same-Provider non-deleted `model_name` values in model write paths.
 - P14 Provider/model lifecycle policy is implemented and merged: Provider deletion is blocked while any non-deleted same-tenant model still references the Provider; Provider disable is blocked while enabled linked models exist; model create/update/enable rejects disabled, deleted, or cross-tenant Providers; soft-deleted models do not block Provider deletion.
+- P21 Provider credential lifecycle hardening is implemented: Provider delete immediately crypto-erases encrypted key material and key metadata, and provider master-key rotation apply scrubs any historical soft-deleted Provider rows that still contain credential material.
 
 Current P6 frontend management result:
 

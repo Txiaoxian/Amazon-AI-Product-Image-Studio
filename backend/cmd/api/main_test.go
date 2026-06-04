@@ -73,6 +73,12 @@ func TestAPIStartupRejectsUnsafeProductionConfig(t *testing.T) {
 			value:            "X-Test-CSRF",
 			wantErrorMessage: "invalid CSRF_HEADER_NAME: must be X-CSRF-Token",
 		},
+		{
+			name:             "disabled CSRF",
+			key:              "CSRF_ENABLED",
+			value:            "false",
+			wantErrorMessage: "invalid CSRF_ENABLED: must be true in production",
+		},
 	}
 
 	for _, tt := range tests {
