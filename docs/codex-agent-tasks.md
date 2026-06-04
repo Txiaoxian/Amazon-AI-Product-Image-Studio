@@ -133,7 +133,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P20-CSRF-CONTRACT-HARDENING`
   - 后端、Compose、CORS 和 production-env preflight 已固定使用 `X-CSRF-Token`；别名 fail closed。
 - `P20-BE-PROVIDER-KEY-ROTATION`
-  - 已提供 `backend/cmd/provider-key-rotation`。默认 dry-run；`--apply` 需要强确认；未删除 Provider 在串行化事务内重加密；坏行整体回滚；输出仅 sanitized 计数；payload key ID 错配 fail closed。
+  - 已提供 `backend/cmd/provider-key-rotation`。默认 dry-run；`--apply` 需要强确认；活跃 Provider 在串行化事务内重加密；软删除 Provider 的历史凭据残留在 dry-run 中只输出 sanitized 候选计数、在 apply 中 crypto erase；坏行整体回滚；payload key ID 错配 fail closed。
 - `P20-DEPLOY-BACKUP-RESTORE-REHEARSAL`
   - 已提供 `scripts/backup-restore-rehearsal.sh` 和 sanitized evidence 模板。默认 guardrail-only；显式 live 模式只操作动态隔离 Compose project；真实 matching MySQL/MinIO restore 和 rollback rehearsal 已通过并完成 scoped cleanup。
 - `P20-BE-TENANT-PROVISIONING`

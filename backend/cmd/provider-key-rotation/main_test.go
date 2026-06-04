@@ -103,13 +103,13 @@ func TestRunOutputsOnlySanitizedSummary(t *testing.T) {
 			if apply {
 				t.Fatal("run enabled apply by default")
 			}
-			return provider.APIKeyRotationSummary{ProviderCount: 3, Applied: false}, nil
+			return provider.APIKeyRotationSummary{ProviderCount: 3, DeletedProviderEraseCount: 2, Applied: false}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
 	}
-	if got := output.String(); got != "provider key rotation mode=dry-run providers=3 result=success\n" {
+	if got := output.String(); got != "provider key rotation mode=dry-run providers=3 deleted_provider_erase_candidates=2 result=success\n" {
 		t.Fatalf("output = %q", got)
 	}
 	if strings.Contains(output.String(), sensitiveMarker) {

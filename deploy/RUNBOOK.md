@@ -200,7 +200,9 @@ the password in the shell environment.
 
 Rotate the Provider API-key encryption master key only during an approved
 maintenance window with Provider writes paused. First run the default dry-run
-against all non-deleted Provider rows:
+against all Provider rows. The dry-run validates active Provider credentials and
+reports only a count of soft-deleted Provider rows that still need credential
+crypto erase:
 
 ```bash
 export PROVIDER_KEY_ROTATION_OLD_SECRET='<current secret>'
@@ -228,7 +230,8 @@ unset PROVIDER_KEY_ROTATION_CONFIRM
 ```
 
 The apply path serializes one database transaction, re-encrypts all eligible
-credentials, and rolls back fully if any row fails. It never prints plaintext,
+active credentials, crypto-erases credential material from soft-deleted Provider
+rows, and rolls back fully if any active row fails. It never prints plaintext,
 ciphertext, hint, URL, tenant, or Provider details. After apply succeeds, deploy
 API and Worker with the new `API_KEY_ENCRYPTION_KEY` and
 `API_KEY_ENCRYPTION_KEY_ID`, then run backend-mediated Provider smoke checks.

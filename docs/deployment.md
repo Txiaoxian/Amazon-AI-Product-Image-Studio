@@ -37,7 +37,7 @@ Current verified state:
 - `scripts/prod-dry-run.sh` passed safe default and live Compose rehearsal modes with scoped cleanup; no project containers or volumes remained afterwards.
 - `deploy/nginx/amazon-ai-product-image-studio.conf.template` and `scripts/tls-reverse-proxy-check.sh` define and validate the host TLS edge. External traffic routes only to loopback frontend `127.0.0.1:8080`.
 - Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
-- `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation.
+- `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation. Active Provider credentials are re-encrypted; historical soft-deleted Provider credential remnants are count-reported in dry-run and crypto-erased in apply.
 - `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
 - The `backend-api` image bundles both operator CLI binaries so Compose servers can run them through scoped `docker compose run --rm --no-deps` commands without a host Go toolchain.
 - `scripts/backup-restore-rehearsal.sh` passed an isolated live Compose matching MySQL/MinIO restore and rollback rehearsal with scoped cleanup.
