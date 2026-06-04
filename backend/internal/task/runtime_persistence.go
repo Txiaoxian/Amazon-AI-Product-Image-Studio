@@ -46,7 +46,7 @@ type uploadedOutput struct {
 }
 
 func hasAPICall(call APICallResult) bool {
-	return call.Status != "" || call.DurationMs > 0 || call.RequestID != "" || call.HTTPStatus != nil || call.ErrorCode != "" || call.ErrorMessage != "" || len(call.RequestMetadata) > 0 || len(call.ResponseMetadata) > 0
+	return call.ID != "" || call.Status != "" || call.DurationMs > 0 || call.RequestID != "" || call.HTTPStatus != nil || call.ErrorCode != "" || call.ErrorMessage != "" || len(call.RequestMetadata) > 0 || len(call.ResponseMetadata) > 0
 }
 
 func (p *WorkerProcessor) recordAPICall(ctx context.Context, scope tenant.Scope, taskRecord database.GenerationTask, call APICallResult) error {
@@ -56,6 +56,33 @@ func (p *WorkerProcessor) recordAPICall(ctx context.Context, scope tenant.Scope,
 	status := strings.ToUpper(strings.TrimSpace(call.Status))
 	if status == "" {
 		status = provideradapter.APICallStatusFailure
+	}
+	requestMetadata := sanitizeProviderRuntimeMetadata(call.RequestMetadata, provideradapter.NewRedactor())
+	responseMetadata := sanitizeProviderRuntimeMetadata(call.ResponseMetadata, provideradapter.NewRedactor())
+	if strings.TrimSpace(call.ID) != "" {
+		updates := map[string]any{
+			"status":                 status,
+			"duration_ms":            nonNegativeInt64(call.DurationMs),
+			"request_id":             cleanWorkerMessage(call.RequestID),
+			"http_status":            call.HTTPStatus,
+			"error_code":             cleanWorkerCode(call.ErrorCode, ""),
+			"error_message":          cleanWorkerMessage(provideradapter.SanitizeErrorMessage(call.ErrorMessage)),
+			"redacted_request_json":  provideradapter.JSONString(requestMetadata),
+			"redacted_response_json": provideradapter.JSONString(responseMetadata),
+		}
+		if updates["error_message"] == "Provider request failed." && status == provideradapter.APICallStatusSuccess {
+			updates["error_message"] = ""
+		}
+		result := p.db.WithContext(ctx).Model(&database.APICallLog{}).
+			Where("tenant_id = ? AND id = ? AND task_id = ?", scope.ID(), strings.TrimSpace(call.ID), taskRecord.ID).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 && !apiCallLedgerExists(ctx, p.db, scope.ID(), strings.TrimSpace(call.ID), taskRecord.ID) {
+			return ErrNotFound
+		}
+		return nil
 	}
 	now := p.now()
 	record := database.APICallLog{
@@ -70,8 +97,8 @@ func (p *WorkerProcessor) recordAPICall(ctx context.Context, scope tenant.Scope,
 		HTTPStatus:           call.HTTPStatus,
 		ErrorCode:            cleanWorkerCode(call.ErrorCode, ""),
 		ErrorMessage:         cleanWorkerMessage(provideradapter.SanitizeErrorMessage(call.ErrorMessage)),
-		RedactedRequestJSON:  provideradapter.JSONString(call.RequestMetadata),
-		RedactedResponseJSON: provideradapter.JSONString(call.ResponseMetadata),
+		RedactedRequestJSON:  provideradapter.JSONString(requestMetadata),
+		RedactedResponseJSON: provideradapter.JSONString(responseMetadata),
 		CreatedAt:            now,
 	}
 	if record.ErrorMessage == "Provider request failed." && status == provideradapter.APICallStatusSuccess {

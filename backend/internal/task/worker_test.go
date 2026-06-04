@@ -786,6 +786,420 @@ func TestProviderRuntimeExecutorRedactsCurrentAPIKeyBeforeWorkerPersistsAPICall(
 	}
 }
 
+func TestProviderRuntimeAttemptLedgerPrewritesAndFinalizesSuccess(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-success", Status: StatusQueued})
+	apiKey := "relay_live_success_1234567890abcdef"
+	pngBytes := workerTinyPNG(t)
+	var providerCalls int32
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, apiKey, fakeProviderRuntime(func(_ context.Context, req provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		atomic.AddInt32(&providerCalls, 1)
+		logs := loadWorkerAPICallLogs(t, db, taskID)
+		if len(logs) != 1 {
+			t.Fatalf("pre-call api logs = %d, want 1", len(logs))
+		}
+		if logs[0].Status != provideradapter.APICallStatusAttempting {
+			t.Fatalf("pre-call ledger status = %q, want ATTEMPTING", logs[0].Status)
+		}
+		request := decodeWorkerJSONMap(t, logs[0].RedactedRequestJSON)
+		assertWorkerJSONField(t, request, "tenantId", "tenant-worker")
+		assertWorkerJSONField(t, request, "userId", "user-worker")
+		assertWorkerJSONField(t, request, "projectId", "project-worker")
+		assertWorkerJSONField(t, request, "taskId", taskID)
+		assertWorkerJSONNumber(t, request, "attempt", 1)
+		httpStatus := 200
+		return provideradapter.ImageResult{
+			Images: []provideradapter.Image{{Data: pngBytes, MIMEType: "image/png"}},
+			Usage:  provideradapter.Usage{InputTokens: 3, OutputTokens: 2, ImageCount: 1, Raw: map[string]any{"input_tokens": 3}},
+			APICall: provideradapter.APICall{
+				Status:     provideradapter.APICallStatusSuccess,
+				DurationMs: 17,
+				RequestID:  "req-ledger-success",
+				HTTPStatus: &httpStatus,
+				RequestMetadata: map[string]any{
+					"operation":     "generate",
+					"Authorization": "Bearer " + apiKey,
+				},
+				ResponseMetadata: map[string]any{"outputCount": 1},
+			},
+		}, nil
+	}))
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         store,
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor:      runtimeExecutor,
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	if got := atomic.LoadInt32(&providerCalls); got != 1 {
+		t.Fatalf("provider calls = %d, want 1", got)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	assertTableCount(t, db, &database.ImageAsset{}, 1)
+	assertTableCount(t, db, &database.TaskOutput{}, 1)
+	assertTableCount(t, db, &database.UsageRecord{}, 1)
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 {
+		t.Fatalf("api logs = %d, want 1", len(logs))
+	}
+	if logs[0].Status != provideradapter.APICallStatusSuccess || logs[0].RequestID != "req-ledger-success" || logs[0].HTTPStatus == nil || *logs[0].HTTPStatus != 200 {
+		t.Fatalf("final api log = %#v, want finalized success", logs[0])
+	}
+	assertWorkerRuntimeMetadataSanitized(t, db)
+	assertNoWorkerPersistedText(t, db, apiKey)
+}
+
+func TestProviderRuntimeAttemptLedgerFinalizesProviderFailureWithoutAssets(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-failure", Status: StatusQueued})
+	apiKey := "relay_live_failure_1234567890abcdef"
+	httpStatus := 503
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, apiKey, fakeProviderRuntime(func(_ context.Context, _ provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		return provideradapter.ImageResult{
+				APICall: provideradapter.APICall{
+					Status:       provideradapter.APICallStatusFailure,
+					DurationMs:   23,
+					HTTPStatus:   &httpStatus,
+					ErrorCode:    "PROVIDER_HTTP_ERROR",
+					ErrorMessage: "provider echoed " + apiKey,
+					RequestMetadata: map[string]any{
+						"Cookie": "session=" + apiKey,
+					},
+				},
+			}, provideradapter.ProviderError{
+				Code:       "PROVIDER_HTTP_ERROR",
+				Message:    "provider echoed " + apiKey,
+				HTTPStatus: &httpStatus,
+			}
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorCode != "PROVIDER_HTTP_ERROR" {
+		t.Fatalf("task = %#v, want failed provider error", record)
+	}
+	assertWorkerNoOutputsOrUsage(t, db)
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 || logs[0].Status != provideradapter.APICallStatusFailure {
+		t.Fatalf("api logs = %#v, want one finalized failure", logs)
+	}
+	assertNoWorkerPersistedText(t, db, apiKey)
+	assertWorkerRuntimeMetadataSanitized(t, db)
+}
+
+func TestProviderRuntimeAttemptLedgerFinalizesTimeoutWithoutCompletingTask(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{
+		ID:        "job-runtime-ledger-timeout",
+		Status:    StatusQueued,
+		TimeoutAt: time.Now().UTC().Add(20 * time.Millisecond),
+	})
+	apiKey := "relay_live_timeout_1234567890abcdef"
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, apiKey, fakeProviderRuntime(func(ctx context.Context, _ provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		<-ctx.Done()
+		return provideradapter.ImageResult{
+			APICall: provideradapter.APICall{
+				Status:       provideradapter.APICallStatusFailure,
+				ErrorCode:    "PROVIDER_TRANSPORT_ERROR",
+				ErrorMessage: ctx.Err().Error(),
+			},
+		}, ctx.Err()
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Now:      func() time.Time { return time.Now().UTC() },
+		Executor: runtimeExecutor,
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusTimedOut {
+		t.Fatalf("task status = %q, want TIMED_OUT", record.Status)
+	}
+	assertWorkerNoOutputsOrUsage(t, db)
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 || logs[0].Status != provideradapter.APICallStatusTimeout {
+		t.Fatalf("api logs = %#v, want one timeout ledger", logs)
+	}
+}
+
+func TestProviderRuntimeAttemptLedgerFinalizesCanceledWithoutCompletingTask(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-canceled", Status: StatusQueued})
+	apiKey := "relay_live_cancel_1234567890abcdef"
+	runtimeStarted := make(chan struct{})
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, apiKey, fakeProviderRuntime(func(ctx context.Context, _ provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		close(runtimeStarted)
+		<-ctx.Done()
+		return provideradapter.ImageResult{
+			APICall: provideradapter.APICall{
+				Status:       provideradapter.APICallStatusFailure,
+				ErrorCode:    "PROVIDER_TRANSPORT_ERROR",
+				ErrorMessage: ctx.Err().Error(),
+			},
+		}, ctx.Err()
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct {
+		result ProcessResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := processor.Process(ctx, queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+		done <- struct {
+			result ProcessResult
+			err    error
+		}{result: result, err: err}
+	}()
+	waitForTestSignal(t, runtimeStarted, time.Second, "provider runtime to start")
+	cancel()
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatalf("Process returned error: %v", outcome.err)
+	}
+	if outcome.result.Action != claimActionNone {
+		t.Fatalf("Process action = %v, want none for canceled context", outcome.result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status == StatusSucceeded || record.FinishedAt != nil {
+		t.Fatalf("canceled task = %#v, want not completed", record)
+	}
+	assertWorkerNoOutputsOrUsage(t, db)
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 || logs[0].Status != provideradapter.APICallStatusCancelled {
+		t.Fatalf("api logs = %#v, want one cancelled ledger", logs)
+	}
+}
+
+func TestProviderRuntimeAttemptLedgerPrewriteFailureDoesNotCallProviderOrCreateSideEffects(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-prewrite-failure", Status: StatusQueued})
+	if err := db.Callback().Create().Before("gorm:create").Register("worker_test_fail_api_call_create", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Table == "api_call_logs" {
+			tx.AddError(errors.New("api call ledger insert failed"))
+		}
+	}); err != nil {
+		t.Fatalf("register api call create failure callback: %v", err)
+	}
+	var providerCalls int32
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, "relay_live_prewrite_1234567890", fakeProviderRuntime(func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		atomic.AddInt32(&providerCalls, 1)
+		return provideradapter.ImageResult{}, nil
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionRetry {
+		t.Fatalf("Process action = %v, want retry for ledger prewrite failure", result.Action)
+	}
+	if got := atomic.LoadInt32(&providerCalls); got != 0 {
+		t.Fatalf("provider calls = %d, want 0 when prewrite fails", got)
+	}
+	assertWorkerNoOutputsOrUsage(t, db)
+	assertTableCount(t, db, &database.APICallLog{}, 0)
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusQueued || record.Attempt != 2 {
+		t.Fatalf("task = %#v, want queued retry attempt 2", record)
+	}
+}
+
+func TestProviderRuntimeAttemptLedgerFinalizeFailureFailsClosedWithoutOutputs(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-finalize-failure", Status: StatusQueued})
+	if err := db.Callback().Update().Before("gorm:update").Register("worker_test_fail_api_call_update", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Table == "api_call_logs" {
+			tx.AddError(errors.New("api call ledger update failed"))
+		}
+	}); err != nil {
+		t.Fatalf("register api call update failure callback: %v", err)
+	}
+	pngBytes := workerTinyPNG(t)
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, "relay_live_finalize_1234567890", fakeProviderRuntime(func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		httpStatus := 200
+		return provideradapter.ImageResult{
+			Images:  []provideradapter.Image{{Data: pngBytes, MIMEType: "image/png"}},
+			Usage:   provideradapter.Usage{ImageCount: 1, Raw: map[string]any{"image_count": 1}},
+			APICall: provideradapter.APICall{Status: provideradapter.APICallStatusSuccess, HTTPStatus: &httpStatus},
+		}, nil
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Store:         newMemoryObjectStore(),
+		StorageConfig: config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		Executor:      runtimeExecutor,
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack for fail-closed task failure", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorCode != "PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED" {
+		t.Fatalf("task = %#v, want failed ledger finalization", record)
+	}
+	assertWorkerNoOutputsOrUsage(t, db)
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 || logs[0].Status != provideradapter.APICallStatusAttempting {
+		t.Fatalf("api logs = %#v, want one unfinished attempt ledger", logs)
+	}
+}
+
+func TestProviderRuntimeAttemptLedgerDuplicateDeliveryDoesNotDuplicateProviderCallOrLedger(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-duplicate", Status: StatusQueued})
+	runtimeStarted := make(chan struct{})
+	releaseRuntime := make(chan struct{})
+	var startedOnce sync.Once
+	var providerCalls int32
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, "relay_live_duplicate_1234567890", fakeProviderRuntime(func(ctx context.Context, _ provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		atomic.AddInt32(&providerCalls, 1)
+		startedOnce.Do(func() { close(runtimeStarted) })
+		select {
+		case <-releaseRuntime:
+		case <-ctx.Done():
+		}
+		httpStatus := 200
+		return provideradapter.ImageResult{
+			APICall: provideradapter.APICall{
+				Status:     provideradapter.APICallStatusSuccess,
+				DurationMs: 12,
+				HTTPStatus: &httpStatus,
+			},
+		}, nil
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+	taskQueue := newDuplicateDeliveryQueue(taskID, runtimeStarted)
+	worker := NewWorker(taskQueue, processor, nil, WorkerOptions{
+		Concurrency:      2,
+		RecoveryInterval: time.Hour,
+		RetryBackoff:     time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := runWorkerForTest(worker, ctx)
+
+	waitForTestSignal(t, runtimeStarted, time.Second, "first provider runtime call")
+	waitForTestSignal(t, taskQueue.duplicateClaimed, time.Second, "duplicate delivery claim")
+	close(releaseRuntime)
+	waitForTestSignal(t, taskQueue.ackDone, time.Second, "duplicate delivery ack")
+	cancel()
+	assertWorkerRunCanceled(t, runErr)
+
+	if got := atomic.LoadInt32(&providerCalls); got != 1 {
+		t.Fatalf("provider calls = %d, want 1", got)
+	}
+	logs := loadWorkerAPICallLogs(t, db, taskID)
+	if len(logs) != 1 || logs[0].Status != provideradapter.APICallStatusSuccess {
+		t.Fatalf("api logs = %#v, want one success ledger", logs)
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskCompleted})
+}
+
+func TestProviderRuntimeAttemptLedgerRedactsSensitiveMetadataBeforePersistence(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "job-runtime-ledger-redaction", Status: StatusQueued})
+	apiKey := "relay_live_redact_1234567890abcdef"
+	runtimeExecutor := newProviderRuntimeExecutorForTest(t, db, apiKey, fakeProviderRuntime(func(context.Context, provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+		httpStatus := 200
+		return provideradapter.ImageResult{
+			Usage: provideradapter.Usage{InputTokens: 1, Raw: map[string]any{
+				"note":      "usage included " + apiKey,
+				"objectKey": "tenants/tenant-worker/projects/project-worker/assets/asset/original.png",
+			}},
+			APICall: provideradapter.APICall{
+				Status:     provideradapter.APICallStatusSuccess,
+				HTTPStatus: &httpStatus,
+				RequestMetadata: map[string]any{
+					"message":       "request included " + apiKey,
+					"Authorization": "Bearer " + apiKey,
+					"Cookie":        "session=" + apiKey,
+					"nested": map[string]any{
+						"prefix_" + apiKey: "secret key must be dropped",
+					},
+					"image": map[string]any{
+						"b64_json": "raw-image-base64",
+					},
+					"objectKey": "tenants/tenant-worker/projects/project-worker/assets/asset/original.png",
+					"bucket":    "generated-assets",
+					"signedUrl": "https://minio.local/bucket/key?X-Amz-Signature=abc123",
+				},
+				ResponseMetadata: map[string]any{
+					"message":    "response included " + apiKey,
+					"object_key": "tenants/tenant-worker/projects/project-worker/assets/asset/original.png",
+					"bucketName": "thumbnail-assets",
+					"signed_url": "https://minio.local/bucket/key?X-Amz-Signature=abc123",
+				},
+			},
+		}, nil
+	}))
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{Executor: runtimeExecutor})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	assertTableCount(t, db, &database.APICallLog{}, 1)
+	assertTableCount(t, db, &database.UsageRecord{}, 1)
+	for _, forbidden := range []string{
+		apiKey,
+		"authorization",
+		"cookie",
+		"raw-image-base64",
+		"b64_json",
+		"tenants/",
+		"generated-assets",
+		"thumbnail-assets",
+		"x-amz-signature",
+		"minio.local",
+		"object_key",
+		"objectkey",
+		"bucket",
+		"signedurl",
+		"signed_url",
+	} {
+		assertNoWorkerPersistedText(t, db, forbidden)
+	}
+}
+
 func TestExecutionResultFromProviderRedactsCurrentAPIKeyInOutputsAndUsage(t *testing.T) {
 	apiKey := "relay_live_abcdef1234567890"
 	httpStatus := 200
@@ -2159,6 +2573,22 @@ func (f fakeProviderRuntime) Execute(ctx context.Context, request provideradapte
 	return f(ctx, request)
 }
 
+func newProviderRuntimeExecutorForTest(t *testing.T, db *gorm.DB, apiKey string, runtime provideradapter.Runtime) *ProviderRuntimeExecutor {
+	t.Helper()
+	executor, err := NewProviderRuntimeExecutor(db, nil, ProviderRuntimeExecutorOptions{
+		Runtime:      runtime,
+		Decrypter:    staticAPIKeyDecrypter(apiKey),
+		URLValidator: providerpkg.NewURLValidator(staticIPResolver{ip: net.ParseIP("8.8.8.8")}),
+		Now: func() time.Time {
+			return time.Now().UTC()
+		},
+	})
+	if err != nil {
+		t.Fatalf("create runtime executor: %v", err)
+	}
+	return executor
+}
+
 type staticAPIKeyDecrypter string
 
 func (d staticAPIKeyDecrypter) Decrypt(string) (string, error) {
@@ -2611,6 +3041,39 @@ func loadWorkerTask(t *testing.T, db *gorm.DB, taskID string) database.Generatio
 	return record
 }
 
+func loadWorkerAPICallLogs(t *testing.T, db *gorm.DB, taskID string) []database.APICallLog {
+	t.Helper()
+	var records []database.APICallLog
+	if err := db.Where("tenant_id = ? AND task_id = ?", "tenant-worker", taskID).Order("created_at ASC, id ASC").Find(&records).Error; err != nil {
+		t.Fatalf("load api call logs for %s: %v", taskID, err)
+	}
+	return records
+}
+
+func decodeWorkerJSONMap(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("decode json map %q: %v", raw, err)
+	}
+	return decoded
+}
+
+func assertWorkerJSONField(t *testing.T, data map[string]any, key string, expected string) {
+	t.Helper()
+	if got, _ := data[key].(string); got != expected {
+		t.Fatalf("json field %s = %#v, want %q in %#v", key, data[key], expected, data)
+	}
+}
+
+func assertWorkerJSONNumber(t *testing.T, data map[string]any, key string, expected int) {
+	t.Helper()
+	got, ok := data[key].(float64)
+	if !ok || int(got) != expected {
+		t.Fatalf("json number %s = %#v, want %d in %#v", key, data[key], expected, data)
+	}
+}
+
 func assertWorkerEvents(t *testing.T, db *gorm.DB, taskID string, expected []string) {
 	t.Helper()
 	var events []database.TaskEvent
@@ -2717,6 +3180,10 @@ func assertNoWorkerPersistedText(t *testing.T, db *gorm.DB, value string) {
 	if err := db.Find(&tasks).Error; err != nil {
 		t.Fatalf("load tasks: %v", err)
 	}
+	var usageRecords []database.UsageRecord
+	if err := db.Find(&usageRecords).Error; err != nil {
+		t.Fatalf("load usage records: %v", err)
+	}
 	combined := ""
 	for _, record := range apiLogs {
 		combined += record.ErrorMessage + record.RedactedRequestJSON + record.RedactedResponseJSON
@@ -2726,6 +3193,9 @@ func assertNoWorkerPersistedText(t *testing.T, db *gorm.DB, value string) {
 	}
 	for _, taskRecord := range tasks {
 		combined += taskRecord.ErrorMessage
+	}
+	for _, usageRecord := range usageRecords {
+		combined += usageRecord.RawUsageJSON
 	}
 	if strings.Contains(strings.ToLower(combined), value) {
 		t.Fatalf("persisted worker data leaked %q: %s", value, combined)

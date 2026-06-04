@@ -9,8 +9,11 @@ const (
 	OperationGenerate = "generate"
 	OperationEdit     = "edit"
 
-	APICallStatusSuccess = "SUCCESS"
-	APICallStatusFailure = "FAILURE"
+	APICallStatusSuccess    = "SUCCESS"
+	APICallStatusFailure    = "FAILURE"
+	APICallStatusAttempting = "ATTEMPTING"
+	APICallStatusTimeout    = "TIMEOUT"
+	APICallStatusCancelled  = "CANCELLED"
 )
 
 var (
@@ -71,6 +74,7 @@ type Usage struct {
 }
 
 type APICall struct {
+	ID               string
 	Status           string
 	DurationMs       int64
 	RequestID        string
