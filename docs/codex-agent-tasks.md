@@ -115,7 +115,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
 - P20 已完成：前端租户名称更新、自定义角色 CRUD/权限替换与只读内置角色 UI 已合并；Vitest 升级到 `^4.1.8` 后前端门禁和 `npm audit` 通过。
-- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流、API/Worker migration 串行锁、Worker quota reconciliation runtime、Provider attempt ledger 已完成并合并。下一批继续推进 SSE resilience、可撤销 session、租约续期、Worker readiness、前端 legacy blob 清理和最终 Go/No-Go。
+- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流、API/Worker migration 串行锁、Worker quota reconciliation runtime、Provider attempt ledger、前端 legacy IndexedDB Blob 清理已完成并合并。下一批继续推进 SSE resilience、可撤销 session、租约续期、Worker readiness 和最终 Go/No-Go。
 
 ## P20：稳定生产运营收口
 
@@ -170,7 +170,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P21-DEPLOY-EXACT-MINIO-RESTORE`：已完成并合并。恢复时移除备份外对象，证明 exact restore。
 - `P21-BE-CONCURRENCY-LEASE-RENEWAL`：运行中 lease 续期或严格约束 TTL 覆盖 Provider timeout。
 - `P21-BE-WORKER-READINESS`：以 Worker 心跳和依赖可用性替代静态 readiness。
-- `P21-FE-LEGACY-BLOB-CLEANUP`：确认生产路径不依赖旧 IndexedDB Blob 后删除残留兼容实现。
+- `P21-FE-LEGACY-BLOB-CLEANUP`：已完成并合并。生产结果、详情和历史路径只消费后端 task/asset/history；旧 IndexedDB image/history repository、Blob object URL 结果分支、legacy 结果类型和未用 base64/object-url helpers 已删除；Dexie v2 删除旧 image/history stores 并保留 prompt templates。
 - `R21-STABLE-PRODUCTION-GO-NO-GO`：主 agent 全量回归、脚本、Compose live、备份恢复、远程 CI 与外部上线前置审计。
 
 ## 建议剩余阶段

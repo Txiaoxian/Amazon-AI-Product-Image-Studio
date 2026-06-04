@@ -1,14 +1,14 @@
 # Security Plan
 
-## Current Transition Risks During P20 Operational Hardening
+## Current Transition Risks During P21 Operational Hardening
 
-The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 production dry-run, and the merged P19/P20 operational hardening slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 production dry-run, the merged P19/P20 operational hardening slices, and multiple P21 production reliability slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
 
-| Risk | Previous location | Current status after R12 | Acceptance check |
+| Risk | Previous location | Current status | Acceptance check |
 | --- | --- | --- | --- |
 | Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | Resolved. Normal Provider settings were removed; Provider keys are submitted only through backend Provider management forms and are not persisted in browser storage. | Static scan and tests must continue to show no Provider API key/API URL persistence in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
 | Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, old browser Provider adapters | Resolved. Browser Provider adapter files and frontend Provider registry/types were removed; workbench generation creates backend tasks only. | Browser generation flow creates backend tasks only; no Provider `Authorization` header or direct Provider host appears in production frontend code. |
-| Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved for production workbench. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates and residual non-production helpers/tests. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
+| Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates. Dexie v2 deletes retired image/history stores during upgrade. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
 | Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
 
 Remaining security and hardening risks:
@@ -79,6 +79,7 @@ Resolved transition item:
 - P21 migration startup hardening now serializes API/Worker migrations with a MySQL advisory lock on MySQL paths, skips the lock only for SQLite/unit-test paths, and fails closed when an applied migration's expected schema objects are missing.
 - P21 quota maintenance now reconciles tenant storage quota counters from MySQL metadata through bounded rotating active-tenant batches. It does not use MinIO listing as quota truth and logs only sanitized aggregate error kinds.
 - P21 Provider attempt ledger hardening now persists an `ATTEMPTING` API-call row before external Provider execution and finalizes it after success, failure, timeout, or cancellation. Prewrite failure prevents the Provider call; finalize failure fails the task closed without output/usage side effects. Request/response metadata is recursively redacted and drops object keys, buckets, MinIO URLs, signed URLs, Authorization/Cookie/JWT/API-key/base64 fields.
+- P21 frontend legacy cleanup removed the old browser image/history repositories, legacy Blob result/detail branches, object URL result hook, and unused base64/object-url file helpers. Production history/detail/download/re-edit remain backend asset/task/history only; IndexedDB remains only for prompt templates and actively drops retired image/history stores through Dexie schema upgrade.
 
 Storage and P5 review hardening backlog:
 
@@ -98,7 +99,7 @@ P20 operational controls:
 R20 release-blocking security follow-ups:
 
 - JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
-- SSE replay/catch-up, concurrency lease lifecycle, session revocation, Worker readiness, and final frontend legacy cleanup still must fail closed under partial failures.
+- SSE replay/catch-up, concurrency lease lifecycle, session revocation, and Worker readiness still must fail closed under partial failures before final Go/No-Go.
 
 ## Authentication
 
@@ -222,7 +223,7 @@ Current R12 frontend security status:
 - Production workbench generation/edit flows create backend tasks and use SSE for status.
 - Static scans through R12 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, sensitive browser storage, or polling loop.
 - Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates or explicitly non-production code paths. Frontend production history now consumes the unified backend history endpoint directly.
+- Remaining IndexedDB usage must stay limited to prompt templates. Frontend production history consumes the unified backend history endpoint directly, and legacy image/history stores are deleted by the Dexie upgrade path.
 
 ## Upload defense
 
