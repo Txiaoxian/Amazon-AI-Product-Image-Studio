@@ -53,7 +53,7 @@ Known runtime notes:
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
 - Provider master-key rotation and backup/restore rehearsal are implemented. Operators must still execute their default-safe checks and approved target-environment procedures before production changes.
-- R20 deployment follow-ups for production env-file propagation, redacted health-failure logs, bounded container log rotation, and exact MinIO restore semantics are now implemented. P21 still requires the remaining backend reliability and auth hardening slices before final Go/No-Go.
+- R20 deployment follow-ups for production env-file propagation, redacted health-failure logs, bounded container log rotation, exact MinIO restore semantics, startup migration serialization, Worker quota reconciliation, Provider attempt ledgering, and Redis-backed login rate limiting are now implemented. P21 still requires the remaining SSE/session/lease/readiness/frontend-cleanup hardening slices before final Go/No-Go.
 
 ## Services
 

@@ -9,6 +9,15 @@
 - MySQL stores image metadata and MinIO `object_key`, never image bytes.
 - Soft delete is the default for user-visible business data.
 - State transitions that affect tasks, outputs, usage, and events must be transactional.
+- Startup migrations must be serialized on MySQL paths with a database advisory lock. API and Worker startup must fail closed if migration lock acquisition/release fails or an applied migration's required tables, columns, or indexes are missing.
+
+## Migration runtime policy
+
+- MySQL startup migrations use a named advisory lock so concurrent API/Worker processes cannot apply DDL at the same time.
+- SQLite/unit-test paths bypass the MySQL advisory lock but still execute the same idempotent migration runner where applicable.
+- Incremental DDL must be retry-safe: already-existing columns/indexes are skipped, and failed migrations are not recorded as applied until all statements and schema checks succeed.
+- After every migration, schema checks verify the required tables, columns, and indexes. A missing object on an already-applied migration is a startup-blocking integrity failure.
+- Migration errors must not expose database URLs, passwords, Authorization headers, Cookies, JWTs, Provider keys, or raw SQL error payloads containing secrets.
 
 ## Core tables
 

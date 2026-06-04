@@ -115,7 +115,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
 - P20 已完成：前端租户名称更新、自定义角色 CRUD/权限替换与只读内置角色 UI 已合并；Vitest 升级到 `^4.1.8` 后前端门禁和 `npm audit` 通过。
-- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流已完成并合并。下一批继续推进迁移串行锁、配额 reconciliation、Provider attempt ledger、SSE resilience、可撤销 session、租约续期、Worker readiness 和最终 Go/No-Go。
+- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流、API/Worker migration 串行锁、Worker quota reconciliation runtime、Provider attempt ledger 已完成并合并。下一批继续推进 SSE resilience、可撤销 session、租约续期、Worker readiness、前端 legacy blob 清理和最终 Go/No-Go。
 
 ## P20：稳定生产运营收口
 
@@ -161,9 +161,9 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 ### 后续串行与有限并行
 
 - `P21-BE-QUEUE-ATOMIC-RECONCILIATION`：已完成并合并。Redis Lua 原子迁移与 MySQL queued/retrying 恢复已落地；主 agent review 追加了 stale recovery 扫过未超时前缀的回归，避免 processing 列表前缀导致恢复饥饿。
-- `P21-BE-MIGRATION-LOCK`：API/Worker 启动 migration advisory lock、完整性门禁与中断恢复。
-- `P21-BE-QUOTA-RECONCILIATION-RUNTIME`：Worker bounded maintenance 消费已有 quota reconciliation。
-- `P21-BE-PROVIDER-ATTEMPT-LEDGER`：外部调用前写入 attempt，结束后 finalize，崩溃状态可审计。
+- `P21-BE-MIGRATION-LOCK`：已完成并合并。API/Worker 启动 migration 使用 MySQL advisory lock 串行化，已应用但 schema 不完整时 fail closed，incremental DDL 支持中断后幂等恢复。
+- `P21-BE-QUOTA-RECONCILIATION-RUNTIME`：已完成并合并。Worker maintenance 消费已有 quota reconciliation，按 active tenant 旋转 batch 推进；主 agent review 修复了固定前缀 batch 导致后续租户饥饿的问题。
+- `P21-BE-PROVIDER-ATTEMPT-LEDGER`：已完成并合并。外部 Provider 调用前写入 `ATTEMPTING` ledger，成功/失败/超时/取消后 finalize；prewrite/finalize 失败均 fail closed，metadata 递归脱敏。
 - `P21-BE-SSE-RESILIENCE`：heartbeat DB catch-up、subscriber 重启、bounded replay。
 - `P21-BE-AUTH-RATE-LIMIT-SESSION-REVOCATION`：登录限流已完成并合并；logout/改密/禁用后的 session 失效和 SSE 周期复验仍待实现。
 - `P21-BE-PROVIDER-CRYPTO-ERASE`：已完成并合并。Provider 删除时擦除密文，不让 deleted secret 留存或绕过轮换；provider key rotation apply 同步擦除历史软删除凭据残留。

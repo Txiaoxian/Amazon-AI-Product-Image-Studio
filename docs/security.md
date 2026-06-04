@@ -76,6 +76,9 @@ Resolved transition item:
 - P21 deployment hardening now propagates a single production env file through Compose/release-validation commands, redacts health-failure logs, configures bounded `json-file` logging for long-running services, and keeps exact MinIO restore semantics in backup/restore rehearsal.
 - P21 frontend workbench hardening now submits the selected Amazon image type through backend task `imageType`, preserves backend history image types on re-edit, and normalizes invalid drafts before submission.
 - P21 login hardening now uses Redis-backed failed-login rate limiting keyed by an opaque hash of tenant, normalized email, and IP. Limit checks happen before user lookup, failures are counted after invalid credentials, successful login resets the counter before success audit/session response, and Redis limiter failures fail closed without echoing credentials.
+- P21 migration startup hardening now serializes API/Worker migrations with a MySQL advisory lock on MySQL paths, skips the lock only for SQLite/unit-test paths, and fails closed when an applied migration's expected schema objects are missing.
+- P21 quota maintenance now reconciles tenant storage quota counters from MySQL metadata through bounded rotating active-tenant batches. It does not use MinIO listing as quota truth and logs only sanitized aggregate error kinds.
+- P21 Provider attempt ledger hardening now persists an `ATTEMPTING` API-call row before external Provider execution and finalizes it after success, failure, timeout, or cancellation. Prewrite failure prevents the Provider call; finalize failure fails the task closed without output/usage side effects. Request/response metadata is recursively redacted and drops object keys, buckets, MinIO URLs, signed URLs, Authorization/Cookie/JWT/API-key/base64 fields.
 
 Storage and P5 review hardening backlog:
 
@@ -95,7 +98,7 @@ P20 operational controls:
 R20 release-blocking security follow-ups:
 
 - JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
-- SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, Provider attempt ledgers, and Worker readiness still must fail closed under partial failures.
+- SSE replay/catch-up, concurrency lease lifecycle, session revocation, Worker readiness, and final frontend legacy cleanup still must fail closed under partial failures.
 
 ## Authentication
 

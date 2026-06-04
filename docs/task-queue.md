@@ -111,6 +111,20 @@ P7 Provider runtime result:
 - Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
 - The previous runtime carry-forward item after P10 worker-pool merge is resolved: API Redis subscription lifecycle is now bound to API server shutdown.
 
+P21 Provider attempt ledger result:
+
+- Provider runtime now writes a tenant-scoped `api_call_logs` row with status `ATTEMPTING` before the external Provider call starts.
+- Success, Provider failure, task timeout, and context cancellation finalize the same ledger row with sanitized request/response metadata.
+- Attempt prewrite failure prevents the Provider call and leaves the task eligible for retry.
+- Attempt finalize failure fails the running task closed with `PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED` and does not persist output assets, usage records, or successful terminal side effects.
+- Worker persistence treats APICall IDs as idempotent ledger updates, so duplicate deliveries do not create duplicate Provider calls or duplicate API-call rows.
+
+P21 Worker quota reconciliation result:
+
+- Worker maintenance now consumes storage quota reconciliation using existing MySQL metadata and quota counter/reservation tables.
+- Active tenants are processed in bounded rotating batches. A fixed first-page batch must not starve later tenants.
+- Reconciliation is tenant-scoped, fail-closed for malformed settings/counters/reservations, and logs only sanitized aggregate metadata.
+
 P10 Worker pool result:
 
 - `P10-BE-WORKER-POOL` is merged.

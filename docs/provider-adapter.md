@@ -94,6 +94,13 @@ Current P7 runtime result:
 - Provider errors and runtime metadata are recursively redacted. Review fixes explicitly cover the decrypted Provider API key when it appears both as a value and as a nested JSON map key.
 - Unknown secrets that are not supplied to the redactor and do not match heuristic rules remain outside automatic detection; configured Provider API keys are supplied as known secrets in the active runtime path.
 
+Current P21 Provider attempt ledger result:
+
+- Runtime execution writes an `ATTEMPTING` API-call ledger before it calls the Provider Adapter runtime.
+- The same ledger row is finalized after success, Provider failure, timeout, or cancellation.
+- Prewrite failure prevents any external Provider call. Finalize failure fails the task closed without output/usage success side effects.
+- Ledger metadata uses the runtime redactor plus an additional Provider-runtime metadata filter that removes object keys, buckets, MinIO URLs, signed URLs, Authorization/Cookie/JWT/API-key markers, and image base64 fields before persistence.
+
 P8 frontend migration result:
 
 - The production workbench consumes backend Provider/model/task APIs only.
