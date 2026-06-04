@@ -14,6 +14,7 @@ type UsageResult struct {
 }
 
 type APICallResult struct {
+	ID               string
 	Status           string
 	DurationMs       int64
 	RequestID        string

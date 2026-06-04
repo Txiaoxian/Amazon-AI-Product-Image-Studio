@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
@@ -30,6 +31,7 @@ type ProviderRuntimeExecutorOptions struct {
 	Upload        config.UploadConfig
 	Store         storage.ObjectStore
 	MaxInputBytes int64
+	Now           func() time.Time
 }
 
 type ProviderRuntimeExecutor struct {
@@ -40,6 +42,7 @@ type ProviderRuntimeExecutor struct {
 	storage       config.StorageConfig
 	store         storage.ObjectStore
 	maxInputBytes int64
+	now           func() time.Time
 }
 
 func NewProviderRuntimeExecutor(db *gorm.DB, log *slog.Logger, options ProviderRuntimeExecutorOptions) (*ProviderRuntimeExecutor, error) {
@@ -68,6 +71,12 @@ func NewProviderRuntimeExecutor(db *gorm.DB, log *slog.Logger, options ProviderR
 	if maxInputBytes <= 0 {
 		maxInputBytes = upload.MaxFileSizeBytes
 	}
+	now := options.Now
+	if now == nil {
+		now = func() time.Time {
+			return time.Now().UTC()
+		}
+	}
 	return &ProviderRuntimeExecutor{
 		db:            db,
 		runtime:       runtime,
@@ -76,6 +85,7 @@ func NewProviderRuntimeExecutor(db *gorm.DB, log *slog.Logger, options ProviderR
 		storage:       config.NormalizeStorageConfig(options.Storage),
 		store:         options.Store,
 		maxInputBytes: maxInputBytes,
+		now:           now,
 	}, nil
 }
 
@@ -107,7 +117,7 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 		operation = provideradapter.OperationEdit
 	}
 
-	result, err := e.runtime.Execute(ctx, provideradapter.ImageRequest{
+	request := provideradapter.ImageRequest{
 		TenantID:    execution.Task.TenantID,
 		ProjectID:   execution.Task.ProjectID,
 		TaskID:      execution.Task.ID,
@@ -118,7 +128,17 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 		Model:       provideradapter.ModelConfig{ID: execution.Model.ID, ModelName: execution.Model.ModelName},
 		Parameters:  parameters,
 		InputImages: inputImages,
-	})
+	}
+	attempt, err := e.beginProviderAttemptLedger(ctx, execution, request, redactor)
+	if err != nil {
+		return ExecutionResult{
+			ErrorCode:    "PROVIDER_ATTEMPT_LEDGER_UNAVAILABLE",
+			ErrorMessage: "Provider attempt ledger is unavailable.",
+			Retryable:    true,
+		}
+	}
+
+	result, err := e.runtime.Execute(ctx, request)
 	executionResult := executionResultFromProvider(result, redactor)
 	if err != nil {
 		var providerErr provideradapter.ProviderError
@@ -136,6 +156,14 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 			executionResult.Retryable = true
 		}
 	}
+	finalizedCall, finalizeErr := e.finalizeProviderAttemptLedger(attempt, executionResult.APICall, ctx.Err(), redactor)
+	if finalizeErr != nil {
+		return ExecutionResult{
+			ErrorCode:    "PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED",
+			ErrorMessage: "Provider attempt ledger could not be finalized.",
+		}
+	}
+	executionResult.APICall = finalizedCall
 	return executionResult
 }
 
@@ -200,7 +228,7 @@ func executionResultFromProvider(result provideradapter.ImageResult, redactor *p
 		outputs = append(outputs, GeneratedImageOutput{
 			Data:     image.Data,
 			MIMEType: image.MIMEType,
-			Metadata: redactor.SanitizeMetadata(image.Metadata),
+			Metadata: sanitizeProviderRuntimeMetadata(image.Metadata, redactor),
 		})
 	}
 	call := redactor.SanitizeAPICall(result.APICall)
@@ -210,17 +238,18 @@ func executionResultFromProvider(result provideradapter.ImageResult, redactor *p
 			InputTokens:  result.Usage.InputTokens,
 			OutputTokens: result.Usage.OutputTokens,
 			ImageCount:   result.Usage.ImageCount,
-			Raw:          redactor.SanitizeMetadata(result.Usage.Raw),
+			Raw:          sanitizeProviderRuntimeMetadata(result.Usage.Raw, redactor),
 		},
 		APICall: APICallResult{
+			ID:               call.ID,
 			Status:           call.Status,
 			DurationMs:       call.DurationMs,
 			RequestID:        call.RequestID,
 			HTTPStatus:       call.HTTPStatus,
 			ErrorCode:        call.ErrorCode,
 			ErrorMessage:     call.ErrorMessage,
-			RequestMetadata:  call.RequestMetadata,
-			ResponseMetadata: call.ResponseMetadata,
+			RequestMetadata:  sanitizeProviderRuntimeMetadata(call.RequestMetadata, redactor),
+			ResponseMetadata: sanitizeProviderRuntimeMetadata(call.ResponseMetadata, redactor),
 		},
 	}
 }
