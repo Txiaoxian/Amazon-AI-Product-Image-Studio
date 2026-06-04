@@ -25,6 +25,12 @@ type StorageQuotaReservation struct {
 	Bytes int64
 }
 
+type StorageQuotaReconciliationResult struct {
+	UsedBytes          int64
+	ReservedBytes      int64
+	ReleasedStaleCount int64
+}
+
 func ReserveStorageQuota(ctx context.Context, repo Repository, scope tenant.Scope, pendingBytes int64) (StorageQuotaReservation, error) {
 	if repo.db == nil {
 		return StorageQuotaReservation{}, database.ErrNilDB
@@ -181,22 +187,29 @@ func ReleaseStorageQuotaReservation(ctx context.Context, repo Repository, scope 
 }
 
 func ReconcileStorageQuotaCounter(ctx context.Context, repo Repository, scope tenant.Scope) error {
+	_, err := ReconcileStorageQuotaCounterWithResult(ctx, repo, scope)
+	return err
+}
+
+func ReconcileStorageQuotaCounterWithResult(ctx context.Context, repo Repository, scope tenant.Scope) (StorageQuotaReconciliationResult, error) {
 	if repo.db == nil {
-		return database.ErrNilDB
+		return StorageQuotaReconciliationResult{}, database.ErrNilDB
 	}
 	now := time.Now().UTC()
-	return repo.db.WithContext(normalizeContext(ctx)).Transaction(func(tx *gorm.DB) error {
+	var result StorageQuotaReconciliationResult
+	err := repo.db.WithContext(normalizeContext(ctx)).Transaction(func(tx *gorm.DB) error {
 		txRepo := repo.withDB(tx)
 		if _, err := ensureStorageQuotaCounter(ctx, txRepo, scope, now, true); err != nil {
 			return err
 		}
-		if err := tx.Model(&database.StorageQuotaReservation{}).
+		staleRelease := tx.Model(&database.StorageQuotaReservation{}).
 			Where("tenant_id = ? AND status = ? AND expires_at <= ?", scope.ID(), storageQuotaReservationStatusReserved, now).
 			Updates(map[string]any{
 				"status":     storageQuotaReservationStatusReleased,
 				"updated_at": now,
-			}).Error; err != nil {
-			return err
+			})
+		if staleRelease.Error != nil {
+			return staleRelease.Error
 		}
 		usedBytes, err := metadataStorageUsedBytes(ctx, tx, scope)
 		if err != nil {
@@ -206,15 +219,27 @@ func ReconcileStorageQuotaCounter(ctx context.Context, repo Repository, scope te
 		if err != nil {
 			return err
 		}
-		return tx.Model(&database.StorageQuotaCounter{}).
+		if err := tx.Model(&database.StorageQuotaCounter{}).
 			Where("tenant_id = ?", scope.ID()).
 			Updates(map[string]any{
 				"used_bytes":     usedBytes,
 				"reserved_bytes": reservedBytes,
 				"reconciled_at":  now,
 				"updated_at":     now,
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		result = StorageQuotaReconciliationResult{
+			UsedBytes:          usedBytes,
+			ReservedBytes:      reservedBytes,
+			ReleasedStaleCount: staleRelease.RowsAffected,
+		}
+		return nil
 	})
+	if err != nil {
+		return StorageQuotaReconciliationResult{}, err
+	}
+	return result, nil
 }
 
 func DecrementStorageQuotaUsedBytes(ctx context.Context, repo Repository, scope tenant.Scope, bytes int64) error {

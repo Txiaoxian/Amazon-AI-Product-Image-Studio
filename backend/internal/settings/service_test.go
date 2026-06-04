@@ -132,6 +132,24 @@ func TestLoadStorageQuotaNullableUsageAndTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestListActiveTenantIDsIsBoundedAndSkipsInactiveTenants(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewRepository(db)
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	seedSettingsTenant(t, db, "tenant-a", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-b", "DISABLED", now)
+	seedSettingsTenant(t, db, "tenant-c", "ACTIVE", now)
+	seedSettingsTenant(t, db, "tenant-d", "ACTIVE", now)
+
+	tenantIDs, err := repo.ListActiveTenantIDs(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("ListActiveTenantIDs returned error: %v", err)
+	}
+	if len(tenantIDs) != 2 || tenantIDs[0] != "tenant-a" || tenantIDs[1] != "tenant-c" {
+		t.Fatalf("active tenant ids = %#v, want tenant-a and tenant-c", tenantIDs)
+	}
+}
+
 func TestStorageQuotaRejectsMalformedStoredValuesAndFailClosed(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -16,20 +16,22 @@ type retentionCleaner interface {
 }
 
 type retentionMaintenanceOptions struct {
-	Interval   time.Duration
-	BatchLimit int
-	Now        func() time.Time
-	LogCleaner logRetentionCleaner
+	Interval        time.Duration
+	BatchLimit      int
+	Now             func() time.Time
+	LogCleaner      logRetentionCleaner
+	QuotaReconciler quotaReconciler
 }
 
 type retentionMaintenanceRunner struct {
-	repo       settings.Repository
-	cleaner    retentionCleaner
-	logCleaner logRetentionCleaner
-	log        *slog.Logger
-	interval   time.Duration
-	batchLimit int
-	now        func() time.Time
+	repo            settings.Repository
+	cleaner         retentionCleaner
+	logCleaner      logRetentionCleaner
+	quotaReconciler quotaReconciler
+	log             *slog.Logger
+	interval        time.Duration
+	batchLimit      int
+	now             func() time.Time
 }
 
 type retentionMaintenanceLoop struct {
@@ -54,13 +56,14 @@ func newRetentionMaintenanceRunner(repo settings.Repository, cleaner retentionCl
 		}
 	}
 	return &retentionMaintenanceRunner{
-		repo:       repo,
-		cleaner:    cleaner,
-		logCleaner: options.LogCleaner,
-		log:        log,
-		interval:   options.Interval,
-		batchLimit: options.BatchLimit,
-		now:        options.Now,
+		repo:            repo,
+		cleaner:         cleaner,
+		logCleaner:      options.LogCleaner,
+		quotaReconciler: options.QuotaReconciler,
+		log:             log,
+		interval:        options.Interval,
+		batchLimit:      options.BatchLimit,
+		now:             options.Now,
 	}
 }
 
@@ -202,6 +205,39 @@ func (r *retentionMaintenanceRunner) runOnce(ctx context.Context) error {
 			}
 		}
 	}
+
+	if r.quotaReconciler != nil {
+		tenantIDs, err := r.repo.ListActiveTenantIDs(ctx, r.batchLimit)
+		if err != nil {
+			return err
+		}
+		for _, tenantID := range tenantIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			result, err := r.quotaReconciler.ReconcileStorageQuota(ctx, tenantID)
+			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if errors.Is(err, settings.ErrStoredStorageQuotaInvalid) {
+					r.log.Warn("storage quota setting invalid",
+						slog.String("tenant_id", tenantID),
+						slog.String("error_kind", retentionMaintenanceErrorKind(err)),
+					)
+					continue
+				}
+				r.log.Warn("storage quota reconciliation failed",
+					slog.String("tenant_id", tenantID),
+					slog.Int64("used_bytes", result.UsedBytes),
+					slog.Int64("reserved_bytes", result.ReservedBytes),
+					slog.Int64("released_stale_count", result.ReleasedStaleCount),
+					slog.String("error_kind", retentionMaintenanceErrorKind(err)),
+				)
+				continue
+			}
+		}
+	}
 	return ctx.Err()
 }
 
@@ -217,6 +253,12 @@ func retentionMaintenanceErrorKind(err error) string {
 		return "invalid_setting"
 	case errors.Is(err, settings.ErrStoredLogRetentionInvalid):
 		return "invalid_setting"
+	case errors.Is(err, settings.ErrStoredStorageQuotaInvalid):
+		return "invalid_setting"
+	case errors.Is(err, settings.ErrStorageQuotaCounterInvalid):
+		return "invalid_counter"
+	case errors.Is(err, settings.ErrStorageQuotaReservationInvalid):
+		return "invalid_reservation"
 	case errors.Is(err, asset.ErrCleanupFailed):
 		return "cleanup_failed"
 	case errors.Is(err, errLogRetentionCleanupFailed):
