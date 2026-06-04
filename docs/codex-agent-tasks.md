@@ -115,7 +115,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
 - P20 已完成：前端租户名称更新、自定义角色 CRUD/权限替换与只读内置角色 UI 已合并；Vitest 升级到 `^4.1.8` 后前端门禁和 `npm audit` 通过。
-- P21 当前优先级：按 R20 审计结果，先完成生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型；再推进 Redis 队列原子迁移与 MySQL reconciliation、迁移串行锁、配额 reconciliation、Provider attempt ledger、SSE resilience、登录限流、可撤销 session、Provider 删除 crypto erase、MinIO exact restore、租约续期和 Worker readiness。
+- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore 已完成并合并。下一批继续推进迁移串行锁、配额 reconciliation、Provider attempt ledger、SSE resilience、登录限流、可撤销 session、租约续期、Worker readiness 和最终 Go/No-Go。
 
 ## P20：稳定生产运营收口
 
@@ -152,22 +152,22 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 ### 第一批有限并行
 
 1. `P21-DEPLOY-PRODUCTION-ENV-AND-LOG-HARDENING`
-   - 生产 env 文件贯穿 Compose config/build/up/down/health/logs 与 delegated release validation；健康失败日志统一脱敏；长期容器 stdout/stderr 增加有限轮转。
+   - 已完成并合并。生产 env 文件贯穿 Compose config/build/up/down/health/logs 与 delegated release validation；健康失败日志统一脱敏；长期容器 stdout/stderr 增加有限轮转；production env preflight 强制 `CSRF_ENABLED=true`。
 2. `P21-BE-CSRF-PRODUCTION-GUARD`
-   - 统一配置层在 `APP_ENV=production` 时拒绝 `CSRF_ENABLED=false`；非 production 保持兼容。
+   - 已完成并合并。统一配置层在 `APP_ENV=production` 时拒绝 `CSRF_ENABLED=false`；非 production 保持兼容。
 3. `P21-FE-WORKBENCH-IMAGE-TYPE`
-   - 工作台补齐亚马逊电商图片类型选择，并把合法值通过 task API `imageType` 字段提交。
+   - 已完成并合并。工作台补齐亚马逊电商图片类型选择，并把合法值通过 task API `imageType` 字段提交；历史再次编辑保留后端任务图片类型，非法 draft 回退到 `MAIN`。
 
 ### 后续串行与有限并行
 
-- `P21-BE-QUEUE-ATOMIC-RECONCILIATION`：Redis Lua 原子迁移与 MySQL queued/retrying 恢复。
+- `P21-BE-QUEUE-ATOMIC-RECONCILIATION`：已完成并合并。Redis Lua 原子迁移与 MySQL queued/retrying 恢复已落地；主 agent review 追加了 stale recovery 扫过未超时前缀的回归，避免 processing 列表前缀导致恢复饥饿。
 - `P21-BE-MIGRATION-LOCK`：API/Worker 启动 migration advisory lock、完整性门禁与中断恢复。
 - `P21-BE-QUOTA-RECONCILIATION-RUNTIME`：Worker bounded maintenance 消费已有 quota reconciliation。
 - `P21-BE-PROVIDER-ATTEMPT-LEDGER`：外部调用前写入 attempt，结束后 finalize，崩溃状态可审计。
 - `P21-BE-SSE-RESILIENCE`：heartbeat DB catch-up、subscriber 重启、bounded replay。
 - `P21-BE-AUTH-RATE-LIMIT-SESSION-REVOCATION`：登录限流、logout/改密/禁用后的 session 失效和 SSE 周期复验。
-- `P21-BE-PROVIDER-CRYPTO-ERASE`：Provider 删除时擦除密文，不让 deleted secret 留存或绕过轮换。
-- `P21-DEPLOY-EXACT-MINIO-RESTORE`：恢复时移除备份外对象，证明 exact restore。
+- `P21-BE-PROVIDER-CRYPTO-ERASE`：已完成并合并。Provider 删除时擦除密文，不让 deleted secret 留存或绕过轮换；provider key rotation apply 同步擦除历史软删除凭据残留。
+- `P21-DEPLOY-EXACT-MINIO-RESTORE`：已完成并合并。恢复时移除备份外对象，证明 exact restore。
 - `P21-BE-CONCURRENCY-LEASE-RENEWAL`：运行中 lease 续期或严格约束 TTL 覆盖 Provider timeout。
 - `P21-BE-WORKER-READINESS`：以 Worker 心跳和依赖可用性替代静态 readiness。
 - `P21-FE-LEGACY-BLOB-CLEANUP`：确认生产路径不依赖旧 IndexedDB Blob 后删除残留兼容实现。

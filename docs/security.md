@@ -71,6 +71,10 @@ Resolved transition item:
 - P20 pins the CSRF request-header contract to `X-CSRF-Token` across frontend, backend, CORS, Compose, and production-env preflight. Custom header aliases are rejected fail closed.
 - P20 frontend tenant/custom-role administration uses only same-origin backend APIs with CSRF-protected writes. Built-in roles remain read-only in the UI, and role drafts, passwords, tokens, and sensitive responses are not persisted in browser storage.
 - P21 Provider credential lifecycle hardening now crypto-erases `encrypted_api_key`, `api_key_hint`, and `api_key_updated_at` during Provider soft delete. Provider master-key rotation apply also scrubs historical soft-deleted Provider rows that still contain credential material, while dry-run reports count-only erase candidates.
+- P21 production CSRF hardening now rejects `CSRF_ENABLED=false` in `APP_ENV=production` at backend startup and in production dry-run preflight.
+- P21 reliable queue hardening now uses Redis Lua atomic migration for retry, ack, dead-letter, stale recovery, and delayed promotion. MySQL-backed queued/retrying delivery reconciliation repairs missing Redis delivery state while preserving MySQL as the task source of truth.
+- P21 deployment hardening now propagates a single production env file through Compose/release-validation commands, redacts health-failure logs, configures bounded `json-file` logging for long-running services, and keeps exact MinIO restore semantics in backup/restore rehearsal.
+- P21 frontend workbench hardening now submits the selected Amazon image type through backend task `imageType`, preserves backend history image types on re-edit, and normalizes invalid drafts before submission.
 
 Storage and P5 review hardening backlog:
 
@@ -89,11 +93,9 @@ P20 operational controls:
 
 R20 release-blocking security follow-ups:
 
-- `APP_ENV=production` must reject `CSRF_ENABLED=false`; a fixed header name without mandatory enforcement is insufficient.
 - Login endpoints need bounded Redis-backed rate limiting without credential or email leakage.
 - JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
-- Provider delete now crypto-erases stored encrypted credentials; historical soft-deleted rows are scrubbed by the provider key rotation apply workflow.
-- Redis queue migrations, SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, and deployment log handling must fail closed under partial failures.
+- SSE replay/catch-up, migration startup, quota reconciliation, concurrency lease lifecycle, Provider attempt ledgers, and Worker readiness still must fail closed under partial failures.
 
 ## Authentication
 
