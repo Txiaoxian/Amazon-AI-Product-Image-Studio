@@ -280,6 +280,7 @@ describe('project asset workbench', () => {
       prompt: 'Fresh project B prompt',
       providerId: 'provider_1',
       modelId: 'model_1',
+      imageType: 'MAIN',
       parameters: {
         size: '1024x1024',
         quality: 'standard',

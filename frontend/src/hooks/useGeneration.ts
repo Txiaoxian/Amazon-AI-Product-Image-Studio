@@ -356,6 +356,7 @@ function buildTaskCreateRequest(prompt: string, workbenchInput: WorkbenchTaskInp
     prompt,
     providerId: workbenchInput.providerId,
     modelId: workbenchInput.modelId,
+    imageType: workbenchInput.imageType,
     ...(workbenchInput.referenceAssetIds.length > 0 ? { referenceAssetIds: workbenchInput.referenceAssetIds } : {}),
     ...(workbenchInput.editSourceAssetId ? { editSourceAssetId: workbenchInput.editSourceAssetId } : {}),
     parameters: workbenchInput.parameters,
