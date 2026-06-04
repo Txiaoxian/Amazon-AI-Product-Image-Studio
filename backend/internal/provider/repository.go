@@ -146,7 +146,12 @@ func (r Repository) SoftDeleteProvider(ctx context.Context, scope tenant.Scope, 
 
 	result := db.Model(&database.AIProvider{}).
 		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), providerID).
-		Update("deleted_at", deletedAt.UTC())
+		Updates(map[string]any{
+			"encrypted_api_key":  "",
+			"api_key_hint":       "",
+			"api_key_updated_at": nil,
+			"deleted_at":         deletedAt.UTC(),
+		})
 	if result.Error != nil {
 		return result.Error
 	}
