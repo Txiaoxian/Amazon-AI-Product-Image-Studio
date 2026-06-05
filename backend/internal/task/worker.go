@@ -51,22 +51,23 @@ type WorkerOptions struct {
 }
 
 type WorkerProcessorOptions struct {
-	Limiter             queue.ConcurrencyLimiter
-	EventPublisher      EventPublisher
-	Executor            Executor
-	ConcurrencyLeaseTTL time.Duration
-	GlobalConcurrency   int
-	TenantConcurrency   int
-	UserConcurrency     int
-	ProviderConcurrency int
-	ModelConcurrency    int
-	RetryBackoff        time.Duration
-	DisableAutoRetry    bool
-	RecoveryBatch       int
-	Store               storage.ObjectStore
-	StorageConfig       config.StorageConfig
-	UploadConfig        config.UploadConfig
-	Now                 func() time.Time
+	Limiter                       queue.ConcurrencyLimiter
+	EventPublisher                EventPublisher
+	Executor                      Executor
+	ConcurrencyLeaseTTL           time.Duration
+	ConcurrencyLeaseRenewInterval time.Duration
+	GlobalConcurrency             int
+	TenantConcurrency             int
+	UserConcurrency               int
+	ProviderConcurrency           int
+	ModelConcurrency              int
+	RetryBackoff                  time.Duration
+	DisableAutoRetry              bool
+	RecoveryBatch                 int
+	Store                         storage.ObjectStore
+	StorageConfig                 config.StorageConfig
+	UploadConfig                  config.UploadConfig
+	Now                           func() time.Time
 }
 
 type ProcessResult struct {
@@ -152,6 +153,12 @@ func NewWorkerProcessor(db *gorm.DB, log *slog.Logger, options WorkerProcessorOp
 	}
 	if options.ConcurrencyLeaseTTL <= 0 {
 		options.ConcurrencyLeaseTTL = 10 * time.Minute
+	}
+	if options.ConcurrencyLeaseRenewInterval <= 0 || options.ConcurrencyLeaseRenewInterval >= options.ConcurrencyLeaseTTL {
+		options.ConcurrencyLeaseRenewInterval = options.ConcurrencyLeaseTTL / 2
+	}
+	if options.ConcurrencyLeaseRenewInterval <= 0 {
+		options.ConcurrencyLeaseRenewInterval = options.ConcurrencyLeaseTTL
 	}
 	if options.RetryBackoff <= 0 {
 		options.RetryBackoff = 5 * time.Second
@@ -404,7 +411,14 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 	}
 	defer cancel()
 
+	stopRenewal := p.startConcurrencyLeaseRenewal(execCtx, cancel, lease)
 	result := p.executor.Execute(execCtx, snapshot)
+	if err := stopRenewal(); err != nil {
+		if failErr := p.failRunningTask(ctx, scope, running.ID, ExecutionResult{ErrorCode: "CONCURRENCY_LEASE_LOST", ErrorMessage: "Task concurrency lease was lost."}); failErr != nil {
+			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr
+		}
+		return ProcessResult{Action: claimActionAck}, nil
+	}
 	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 		if err := p.timeoutTask(ctx, scope, running.ID); err != nil {
 			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, err
@@ -628,6 +642,69 @@ func (p *WorkerProcessor) acquireConcurrency(ctx context.Context, scope tenant.S
 		{Name: "model", Value: snapshot.Task.ModelID, Limit: policy.ModelLimit},
 	}
 	return p.limiter.Acquire(ctx, dimensions, p.options.ConcurrencyLeaseTTL, p.now())
+}
+
+func (p *WorkerProcessor) startConcurrencyLeaseRenewal(ctx context.Context, cancel context.CancelFunc, lease queue.ConcurrencyLease) func() error {
+	if p == nil || p.limiter == nil || cancel == nil || strings.TrimSpace(lease.ID) == "" || len(lease.Keys) == 0 {
+		return func() error { return nil }
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	errCh := make(chan error, 1)
+	var stopOnce sync.Once
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(p.options.ConcurrencyLeaseRenewInterval)
+		defer ticker.Stop()
+		currentLease := lease
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				renewCtx, renewCancel := context.WithTimeout(context.Background(), p.concurrencyLeaseRenewTimeout())
+				renewed, err := p.limiter.Renew(renewCtx, currentLease, p.options.ConcurrencyLeaseTTL, p.now())
+				renewCancel()
+				if err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					cancel()
+					return
+				}
+				currentLease = renewed
+			}
+		}
+	}()
+	return func() error {
+		stopOnce.Do(func() {
+			close(done)
+			<-stopped
+		})
+		select {
+		case err := <-errCh:
+			return fmt.Errorf("%w: %v", queue.ErrConcurrencyLeaseLost, err)
+		default:
+			return nil
+		}
+	}
+}
+
+func (p *WorkerProcessor) concurrencyLeaseRenewTimeout() time.Duration {
+	timeout := p.options.ConcurrencyLeaseRenewInterval
+	if timeout <= 0 {
+		timeout = p.options.ConcurrencyLeaseTTL / 2
+	}
+	if timeout <= 0 {
+		return time.Second
+	}
+	if timeout > 5*time.Second {
+		return 5 * time.Second
+	}
+	return timeout
 }
 
 func (p *WorkerProcessor) claimRunning(ctx context.Context, scope tenant.Scope, taskID string) (database.GenerationTask, bool, error) {

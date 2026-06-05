@@ -1462,6 +1462,87 @@ func TestWorkerProcessorUsesStoredTaskConcurrencyPolicyInAllEffectiveDimensions(
 	}
 }
 
+func TestWorkerProcessorRenewsConcurrencyLeaseDuringExecution(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-concurrency-renew", Status: StatusQueued})
+	limiter := &recordingLimiter{renewed: make(chan struct{})}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter:                       limiter,
+		ConcurrencyLeaseTTL:           40 * time.Millisecond,
+		ConcurrencyLeaseRenewInterval: 5 * time.Millisecond,
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			select {
+			case <-limiter.renewed:
+				return ExecutionResult{}
+			case <-ctx.Done():
+				return ExecutionResult{ErrorCode: "UNEXPECTED_CONTEXT_CANCEL", ErrorMessage: ctx.Err().Error()}
+			case <-time.After(time.Second):
+				return ExecutionResult{ErrorCode: "RENEWAL_NOT_OBSERVED", ErrorMessage: "renewal was not observed"}
+			}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusSucceeded {
+		t.Fatalf("task status = %q, want SUCCEEDED", record.Status)
+	}
+	if got := atomic.LoadInt32(&limiter.renewCalls); got < 1 {
+		t.Fatalf("renew calls = %d, want at least 1", got)
+	}
+	if !limiter.released {
+		t.Fatal("concurrency lease was not released")
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskCompleted})
+}
+
+func TestWorkerProcessorFailsClosedWhenConcurrencyLeaseRenewalFails(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-concurrency-renew-failed", Status: StatusQueued})
+	limiter := &recordingLimiter{
+		renewed:  make(chan struct{}),
+		renewErr: errors.New("redis unavailable"),
+	}
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Limiter:                       limiter,
+		ConcurrencyLeaseTTL:           40 * time.Millisecond,
+		ConcurrencyLeaseRenewInterval: 5 * time.Millisecond,
+		Executor: executorFunc(func(ctx context.Context, _ ExecutionContext) ExecutionResult {
+			<-ctx.Done()
+			return ExecutionResult{}
+		}),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.Action != claimActionAck {
+		t.Fatalf("Process action = %v, want ack", result.Action)
+	}
+	record := loadWorkerTask(t, db, taskID)
+	if record.Status != StatusFailed || record.ErrorCode != "CONCURRENCY_LEASE_LOST" {
+		t.Fatalf("task = %#v, want FAILED CONCURRENCY_LEASE_LOST", record)
+	}
+	if got := atomic.LoadInt32(&limiter.renewCalls); got < 1 {
+		t.Fatalf("renew calls = %d, want at least 1", got)
+	}
+	if !limiter.released {
+		t.Fatal("concurrency lease was not released")
+	}
+	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventTaskFailed})
+	assertWorkerNoOutputsOrUsage(t, db)
+	assertTableCount(t, db, &database.APICallLog{}, 0)
+}
+
 func TestWorkerProcessorTaskConcurrencyAtEachFullDimensionRetriesBeforeExecutor(t *testing.T) {
 	for _, dimension := range []string{"tenant", "user", "provider", "model"} {
 		t.Run(dimension, func(t *testing.T) {
@@ -2082,6 +2163,10 @@ type recordingLimiter struct {
 	lastDimensions []queue.ConcurrencyDimension
 	released       bool
 	reaped         bool
+	renewErr       error
+	renewed        chan struct{}
+	renewOnce      sync.Once
+	renewCalls     int32
 }
 
 func (l *recordingLimiter) Acquire(_ context.Context, dimensions []queue.ConcurrencyDimension, _ time.Duration, now time.Time) (queue.ConcurrencyLease, error) {
@@ -2095,6 +2180,20 @@ func (l *recordingLimiter) Acquire(_ context.Context, dimensions []queue.Concurr
 func (l *recordingLimiter) Release(context.Context, queue.ConcurrencyLease) error {
 	l.released = true
 	return nil
+}
+
+func (l *recordingLimiter) Renew(_ context.Context, lease queue.ConcurrencyLease, ttl time.Duration, now time.Time) (queue.ConcurrencyLease, error) {
+	atomic.AddInt32(&l.renewCalls, 1)
+	if l.renewed != nil {
+		l.renewOnce.Do(func() {
+			close(l.renewed)
+		})
+	}
+	if l.renewErr != nil {
+		return queue.ConcurrencyLease{}, l.renewErr
+	}
+	lease.ExpiresAt = now.Add(ttl)
+	return lease, nil
 }
 
 func (l *recordingLimiter) ReapStale(context.Context, time.Time) error {
@@ -2141,6 +2240,11 @@ func (l *activeLimitLimiter) Release(context.Context, queue.ConcurrencyLease) er
 		l.active--
 	}
 	return nil
+}
+
+func (l *activeLimitLimiter) Renew(_ context.Context, lease queue.ConcurrencyLease, ttl time.Duration, now time.Time) (queue.ConcurrencyLease, error) {
+	lease.ExpiresAt = now.Add(ttl)
+	return lease, nil
 }
 
 func (l *activeLimitLimiter) ReapStale(context.Context, time.Time) error {
