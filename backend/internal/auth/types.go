@@ -13,14 +13,15 @@ const (
 )
 
 type Principal struct {
-	UserID      string
-	TenantID    string
-	Email       string
-	DisplayName string
-	Status      string
-	CSRFToken   string
-	Roles       []RoleInfo
-	Permissions []string
+	UserID         string
+	TenantID       string
+	Email          string
+	DisplayName    string
+	Status         string
+	SessionVersion int64
+	CSRFToken      string
+	Roles          []RoleInfo
+	Permissions    []string
 }
 
 type RoleInfo struct {
@@ -47,11 +48,12 @@ type TenantInfo struct {
 }
 
 type SessionResponse struct {
-	User        UserInfo   `json:"user"`
-	Tenant      TenantInfo `json:"tenant"`
-	Roles       []RoleInfo `json:"roles"`
-	Permissions []string   `json:"permissions"`
-	CSRFToken   string     `json:"csrfToken,omitempty"`
+	User           UserInfo   `json:"user"`
+	Tenant         TenantInfo `json:"tenant"`
+	Roles          []RoleInfo `json:"roles"`
+	Permissions    []string   `json:"permissions"`
+	CSRFToken      string     `json:"csrfToken,omitempty"`
+	SessionVersion int64      `json:"-"`
 }
 
 type contextKey struct{}

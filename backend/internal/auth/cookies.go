@@ -9,14 +9,15 @@ import (
 
 func (s *Service) setSessionCookies(c *gin.Context, session SessionResponse) {
 	principal := Principal{
-		UserID:      session.User.ID,
-		TenantID:    session.Tenant.ID,
-		Email:       session.User.Email,
-		DisplayName: session.User.DisplayName,
-		Status:      session.User.Status,
-		CSRFToken:   session.CSRFToken,
-		Roles:       session.Roles,
-		Permissions: session.Permissions,
+		UserID:         session.User.ID,
+		TenantID:       session.Tenant.ID,
+		Email:          session.User.Email,
+		DisplayName:    session.User.DisplayName,
+		Status:         session.User.Status,
+		SessionVersion: session.SessionVersion,
+		CSRFToken:      session.CSRFToken,
+		Roles:          session.Roles,
+		Permissions:    session.Permissions,
 	}
 
 	token, err := createToken(s.cfg.Auth.JWTSigningSecret, s.cfg.Auth.JWTIssuer, principal, s.cfg.Auth.AccessTokenTTL, s.now())

@@ -203,6 +203,10 @@ func TestUserAdminDisableEnableWritesAuditAndInvalidatesOldSession(t *testing.T)
 	if stringField(t, decodeData(t, enableResponse), "status") != "ACTIVE" {
 		t.Fatalf("enabled response status mismatch: %s", enableResponse.Body.String())
 	}
+	oldSessionAfterEnable := performJSON(router, http.MethodGet, "/api/v1/me", nil, userSession.cookies, nil)
+	if oldSessionAfterEnable.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled-then-enabled old session /me status = %d, want %d", oldSessionAfterEnable.Code, http.StatusUnauthorized)
+	}
 
 	assertUserAdminOperationLogs(t, db, []string{"user.disable", "user.enable"})
 }

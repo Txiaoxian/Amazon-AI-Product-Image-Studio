@@ -2704,6 +2704,7 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 			display_name TEXT NOT NULL,
 			password_hash TEXT NOT NULL,
 			status TEXT NOT NULL,
+			session_version INTEGER NOT NULL DEFAULT 1,
 			last_login_at TIMESTAMP NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL

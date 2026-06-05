@@ -219,6 +219,9 @@ func (s *Service) visibleEventsAfter(ctx context.Context, principal auth.Princip
 }
 
 func (s *Service) replayVisibleEvents(c *gin.Context, flusher http.Flusher, principal auth.Principal, scope tenant.Scope, cursor uint64, filter task.EventFilter) (uint64, bool) {
+	if !s.principalStillCurrent(c.Request.Context(), principal, c) {
+		return cursor, false
+	}
 	batch, err := s.visibleEventsAfter(c.Request.Context(), principal, scope, cursor, filter)
 	if err != nil {
 		s.log.Error("task SSE replay failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
@@ -231,6 +234,22 @@ func (s *Service) replayVisibleEvents(c *gin.Context, flusher http.Flusher, prin
 		return cursor, false
 	}
 	return cursor, true
+}
+
+func (s *Service) principalStillCurrent(ctx context.Context, principal auth.Principal, c *gin.Context) bool {
+	var userRecord database.User
+	err := s.db.WithContext(ctx).
+		Select("id", "tenant_id", "status", "session_version").
+		Where("tenant_id = ? AND id = ? AND status = ?", principal.TenantID, principal.UserID, auth.UserStatusActive).
+		First(&userRecord).Error
+	if err == nil {
+		return userRecord.SessionVersion > 0 && userRecord.SessionVersion == principal.SessionVersion
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false
+	}
+	s.log.Error("task SSE session revalidation failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+	return false
 }
 
 func (s *Service) canSeeEvent(ctx context.Context, principal auth.Principal, event database.TaskEvent, filter task.EventFilter) (bool, error) {

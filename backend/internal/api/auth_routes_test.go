@@ -132,12 +132,23 @@ func TestAuthLifecycleCookieCSRFAndAudit(t *testing.T) {
 		t.Fatalf("password change with bad CSRF status = %d, want %d", badCSRFResponse.Code, http.StatusForbidden)
 	}
 
+	oldAuthCookieBeforePasswordChange := authCookie
 	passwordResponse := performJSON(router, http.MethodPatch, "/api/v1/me/password", map[string]string{
 		"currentPassword": "initial-password-123",
 		"newPassword":     "updated-password-123",
 	}, []*http.Cookie{authCookie, csrfCookie}, map[string]string{"X-CSRF-Token": csrfCookie.Value})
 	if passwordResponse.Code != http.StatusOK {
 		t.Fatalf("password change status = %d, want %d: %s", passwordResponse.Code, http.StatusOK, passwordResponse.Body.String())
+	}
+	oldSessionAfterPasswordChange := performJSON(router, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{oldAuthCookieBeforePasswordChange}, nil)
+	if oldSessionAfterPasswordChange.Code != http.StatusUnauthorized {
+		t.Fatalf("old password-change session /me status = %d, want %d", oldSessionAfterPasswordChange.Code, http.StatusUnauthorized)
+	}
+	authCookie = findCookie(t, passwordResponse, "studio_auth")
+	csrfCookie = findCookie(t, passwordResponse, "studio_csrf")
+	currentSessionAfterPasswordChange := performJSON(router, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{authCookie}, nil)
+	if currentSessionAfterPasswordChange.Code != http.StatusOK {
+		t.Fatalf("rotated password-change session /me status = %d, want %d: %s", currentSessionAfterPasswordChange.Code, http.StatusOK, currentSessionAfterPasswordChange.Body.String())
 	}
 
 	oldPasswordLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
@@ -163,6 +174,10 @@ func TestAuthLifecycleCookieCSRFAndAudit(t *testing.T) {
 	logoutResponse := performJSON(router, http.MethodPost, "/api/v1/auth/logout", nil, []*http.Cookie{authCookie, csrfCookie}, map[string]string{"X-CSRF-Token": csrfCookie.Value})
 	if logoutResponse.Code != http.StatusOK {
 		t.Fatalf("logout status = %d, want %d: %s", logoutResponse.Code, http.StatusOK, logoutResponse.Body.String())
+	}
+	oldSessionAfterLogout := performJSON(router, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{authCookie}, nil)
+	if oldSessionAfterLogout.Code != http.StatusUnauthorized {
+		t.Fatalf("old logout session /me status = %d, want %d", oldSessionAfterLogout.Code, http.StatusUnauthorized)
 	}
 	clearedAuthCookie := findCookie(t, logoutResponse, "studio_auth")
 	if clearedAuthCookie.MaxAge >= 0 {
@@ -311,6 +326,7 @@ var authRouteTestSchema = []string{
 		display_name TEXT NOT NULL,
 		password_hash TEXT NOT NULL,
 		status TEXT NOT NULL,
+		session_version INTEGER NOT NULL DEFAULT 1,
 		last_login_at TIMESTAMP NULL,
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL

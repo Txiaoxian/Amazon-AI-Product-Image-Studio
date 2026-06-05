@@ -549,6 +549,19 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 		},
 	},
 	{
+		ID:   "202606050001_user_session_version",
+		Name: "add user session version for revocable jwt sessions",
+		Checks: []SchemaCheck{
+			schemaCheck("users", []string{"session_version"}, nil),
+		},
+		Statements: []string{
+			`
+ALTER TABLE users
+  ADD COLUMN session_version BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER status
+`,
+		},
+	},
+	{
 		ID:   "202605120001_projects_and_members",
 		Name: "create project and project member tables",
 		Checks: []SchemaCheck{

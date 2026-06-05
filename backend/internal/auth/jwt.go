@@ -18,24 +18,26 @@ var (
 )
 
 type tokenClaims struct {
-	Issuer    string `json:"iss"`
-	Subject   string `json:"sub"`
-	TenantID  string `json:"tenantId"`
-	Email     string `json:"email,omitempty"`
-	CSRFToken string `json:"csrf"`
-	IssuedAt  int64  `json:"iat"`
-	ExpiresAt int64  `json:"exp"`
+	Issuer         string `json:"iss"`
+	Subject        string `json:"sub"`
+	TenantID       string `json:"tenantId"`
+	Email          string `json:"email,omitempty"`
+	CSRFToken      string `json:"csrf"`
+	SessionVersion int64  `json:"sessionVersion"`
+	IssuedAt       int64  `json:"iat"`
+	ExpiresAt      int64  `json:"exp"`
 }
 
 func createToken(secret string, issuer string, principal Principal, ttl time.Duration, now time.Time) (string, error) {
 	claims := tokenClaims{
-		Issuer:    issuer,
-		Subject:   principal.UserID,
-		TenantID:  principal.TenantID,
-		Email:     principal.Email,
-		CSRFToken: principal.CSRFToken,
-		IssuedAt:  now.Unix(),
-		ExpiresAt: now.Add(ttl).Unix(),
+		Issuer:         issuer,
+		Subject:        principal.UserID,
+		TenantID:       principal.TenantID,
+		Email:          principal.Email,
+		CSRFToken:      principal.CSRFToken,
+		SessionVersion: principal.SessionVersion,
+		IssuedAt:       now.Unix(),
+		ExpiresAt:      now.Add(ttl).Unix(),
 	}
 
 	headerJSON, err := json.Marshal(map[string]string{
@@ -92,7 +94,7 @@ func parseToken(secret string, issuer string, token string, now time.Time) (toke
 	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
 		return tokenClaims{}, ErrInvalidToken
 	}
-	if claims.Issuer != issuer || claims.Subject == "" || claims.TenantID == "" || claims.CSRFToken == "" {
+	if claims.Issuer != issuer || claims.Subject == "" || claims.TenantID == "" || claims.CSRFToken == "" || claims.SessionVersion <= 0 {
 		return tokenClaims{}, ErrInvalidToken
 	}
 	if now.Unix() >= claims.ExpiresAt {

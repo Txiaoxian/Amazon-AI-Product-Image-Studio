@@ -487,14 +487,15 @@ func (s *Service) createUser(ctx context.Context, principal auth.Principal, inpu
 
 		now := s.now()
 		created = database.User{
-			ID:           idgen.New(),
-			TenantID:     scope.ID(),
-			Email:        input.Email,
-			DisplayName:  input.DisplayName,
-			PasswordHash: passwordHash,
-			Status:       UserStatusActive,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             idgen.New(),
+			TenantID:       scope.ID(),
+			Email:          input.Email,
+			DisplayName:    input.DisplayName,
+			PasswordHash:   passwordHash,
+			Status:         UserStatusActive,
+			SessionVersion: 1,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
 		if err := repo.CreateUser(ctx, scope, &created); err != nil {
 			return err
@@ -579,6 +580,9 @@ func (s *Service) updateUser(ctx context.Context, principal auth.Principal, user
 				}
 			}
 			updates["status"] = *input.Status
+			if *input.Status != current.Status {
+				updates["session_version"] = gorm.Expr("session_version + ?", 1)
+			}
 		}
 		updated, err = repo.UpdateUser(ctx, scope, current.ID, updates)
 		if err != nil {
@@ -636,8 +640,9 @@ func (s *Service) setStatus(ctx context.Context, principal auth.Principal, userI
 		}
 
 		updated, err = repo.UpdateUser(ctx, scope, current.ID, map[string]any{
-			"status":     status,
-			"updated_at": s.now(),
+			"status":          status,
+			"session_version": gorm.Expr("session_version + ?", 1),
+			"updated_at":      s.now(),
 		})
 		if err != nil {
 			return err

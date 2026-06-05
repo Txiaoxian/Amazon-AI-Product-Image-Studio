@@ -49,6 +49,10 @@ func (s *Service) RequireAuth() gin.HandlerFunc {
 			httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
 			return
 		}
+		if userRecord.SessionVersion <= 0 || userRecord.SessionVersion != claims.SessionVersion {
+			httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+			return
+		}
 
 		access, err := s.loadAccess(c.Request.Context(), s.db, claims.TenantID, claims.Subject)
 		if err != nil {
@@ -57,14 +61,15 @@ func (s *Service) RequireAuth() gin.HandlerFunc {
 		}
 
 		principal := Principal{
-			UserID:      userRecord.ID,
-			TenantID:    userRecord.TenantID,
-			Email:       userRecord.Email,
-			DisplayName: userRecord.DisplayName,
-			Status:      userRecord.Status,
-			CSRFToken:   claims.CSRFToken,
-			Roles:       access.Roles,
-			Permissions: access.Permissions,
+			UserID:         userRecord.ID,
+			TenantID:       userRecord.TenantID,
+			Email:          userRecord.Email,
+			DisplayName:    userRecord.DisplayName,
+			Status:         userRecord.Status,
+			SessionVersion: userRecord.SessionVersion,
+			CSRFToken:      claims.CSRFToken,
+			Roles:          access.Roles,
+			Permissions:    access.Permissions,
 		}
 
 		scope, err := tenant.NewScope(userRecord.TenantID)

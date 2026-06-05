@@ -21,15 +21,16 @@ func (Tenant) TableName() string {
 }
 
 type User struct {
-	ID           string     `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_users_tenant_id,priority:2"`
-	TenantID     string     `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_users_tenant_email,priority:1;uniqueIndex:uk_users_tenant_id,priority:1"`
-	Email        string     `gorm:"type:varchar(255);not null;uniqueIndex:uk_users_tenant_email,priority:2"`
-	DisplayName  string     `gorm:"type:varchar(255);not null"`
-	PasswordHash string     `gorm:"type:varchar(255);not null"`
-	Status       string     `gorm:"type:varchar(32);not null;index"`
-	LastLoginAt  *time.Time `gorm:"type:datetime(3)"`
-	CreatedAt    time.Time  `gorm:"type:datetime(3);not null"`
-	UpdatedAt    time.Time  `gorm:"type:datetime(3);not null"`
+	ID             string     `gorm:"type:varchar(36);primaryKey;uniqueIndex:uk_users_tenant_id,priority:2"`
+	TenantID       string     `gorm:"type:varchar(36);not null;index;uniqueIndex:uk_users_tenant_email,priority:1;uniqueIndex:uk_users_tenant_id,priority:1"`
+	Email          string     `gorm:"type:varchar(255);not null;uniqueIndex:uk_users_tenant_email,priority:2"`
+	DisplayName    string     `gorm:"type:varchar(255);not null"`
+	PasswordHash   string     `gorm:"type:varchar(255);not null"`
+	Status         string     `gorm:"type:varchar(32);not null;index"`
+	SessionVersion int64      `gorm:"type:bigint unsigned;not null;default:1"`
+	LastLoginAt    *time.Time `gorm:"type:datetime(3)"`
+	CreatedAt      time.Time  `gorm:"type:datetime(3);not null"`
+	UpdatedAt      time.Time  `gorm:"type:datetime(3);not null"`
 }
 
 func (User) TableName() string {

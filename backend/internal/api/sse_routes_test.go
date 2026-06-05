@@ -93,6 +93,21 @@ func TestTaskSSEHeartbeatCatchesUpPersistedEventsWithoutBrokerNotification(t *te
 	assertSSETaskEventFrame(t, frame, event)
 }
 
+func TestTaskSSEClosesWhenSessionVersionIsRevoked(t *testing.T) {
+	router, server, _, broker, adminSession := newSSERouteTestServer(t, 5*time.Millisecond)
+
+	response, cancel := openTaskSSE(t, server, "/api/v1/events/tasks", adminSession.cookies, nil)
+	defer closeSSE(response, cancel)
+	reader := bufio.NewReader(response.Body)
+	waitForSubscribers(t, broker, 1)
+
+	logoutResponse := performJSON(router, http.MethodPost, "/api/v1/auth/logout", nil, adminSession.cookies, adminSession.csrfHeader())
+	if logoutResponse.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, want %d: %s", logoutResponse.Code, http.StatusOK, logoutResponse.Body.String())
+	}
+	readSSEUntilClosed(t, reader)
+}
+
 func TestTaskSSEReplayIsBoundedAndContinuesOnHeartbeatCatchup(t *testing.T) {
 	router, server, db, _, adminSession := newSSERouteTestServerWithMaxReplay(t, 5*time.Millisecond, 2)
 	projectID := createTaskTestProject(t, router, adminSession, "SSE Bounded Replay Project")
@@ -415,6 +430,30 @@ func readSSEFrame(t *testing.T, reader *bufio.Reader) string {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SSE frame")
 		return ""
+	}
+}
+
+func readSSEUntilClosed(t *testing.T, reader *bufio.Reader) {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() {
+		for {
+			_, err := reader.ReadString('\n')
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+
+	select {
+	case err := <-done:
+		if err != io.EOF && !strings.Contains(strings.ToLower(err.Error()), "closed") {
+			t.Fatalf("read SSE close error = %v, want EOF/closed", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for revoked SSE stream to close")
 	}
 }
 

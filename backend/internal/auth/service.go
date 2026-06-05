@@ -164,18 +164,7 @@ func (s *Service) Logout(c *gin.Context) {
 		return
 	}
 
-	if err := s.recordOperation(c.Request.Context(), s.db, audit.Event{
-		TenantID:     principal.TenantID,
-		ActorUserID:  &principal.UserID,
-		Action:       "auth.logout",
-		ResourceType: "user",
-		ResourceID:   principal.UserID,
-		IP:           c.ClientIP(),
-		UserAgent:    c.Request.UserAgent(),
-		Metadata: map[string]any{
-			"result": "success",
-		},
-	}); err != nil {
+	if err := s.logout(c.Request.Context(), principal, c.ClientIP(), c.Request.UserAgent()); err != nil {
 		s.log.Error("logout audit failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
 		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
 		return
@@ -219,7 +208,8 @@ func (s *Service) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := s.changePassword(c.Request.Context(), principal, request.CurrentPassword, request.NewPassword, c.ClientIP(), c.Request.UserAgent()); err != nil {
+	session, err := s.changePassword(c.Request.Context(), principal, request.CurrentPassword, request.NewPassword, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
 		if errors.Is(err, errInvalidCredentials) {
 			httpx.AbortWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid current password.", nil)
 			return
@@ -229,6 +219,7 @@ func (s *Service) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	s.setSessionCookies(c, session)
 	httpx.JSON(c, http.StatusOK, gin.H{"ok": true})
 }
 
@@ -265,14 +256,15 @@ func (s *Service) initAdmin(ctx context.Context, tenantName string, email string
 		}
 
 		userRecord := database.User{
-			ID:           idgen.New(),
-			TenantID:     tenantRecord.ID,
-			Email:        email,
-			DisplayName:  displayName,
-			PasswordHash: passwordHash,
-			Status:       UserStatusActive,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             idgen.New(),
+			TenantID:       tenantRecord.ID,
+			Email:          email,
+			DisplayName:    displayName,
+			PasswordHash:   passwordHash,
+			Status:         UserStatusActive,
+			SessionVersion: 1,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
 		if err := tx.Create(&userRecord).Error; err != nil {
 			return err
@@ -388,17 +380,26 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 	}
 
 	now := s.now()
+	nextSessionVersion := userRecord.SessionVersion
+	if nextSessionVersion <= 0 {
+		nextSessionVersion = 1
+	}
+	updates := map[string]any{
+		"last_login_at": now,
+		"updated_at":    now,
+	}
+	if userRecord.SessionVersion <= 0 {
+		updates["session_version"] = nextSessionVersion
+	}
 	if err := s.db.WithContext(ctx).
 		Model(&database.User{}).
 		Where("tenant_id = ? AND id = ?", tenantRecord.ID, userRecord.ID).
-		Updates(map[string]any{
-			"last_login_at": now,
-			"updated_at":    now,
-		}).Error; err != nil {
+		Updates(updates).Error; err != nil {
 		return SessionResponse{}, err
 	}
 	userRecord.LastLoginAt = &now
 	userRecord.UpdatedAt = now
+	userRecord.SessionVersion = nextSessionVersion
 
 	csrfToken, err := newCSRFToken()
 	if err != nil {
@@ -425,6 +426,39 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 	}
 
 	return session, nil
+}
+
+func (s *Service) logout(ctx context.Context, principal Principal, ip string, userAgent string) error {
+	if s.db == nil {
+		return database.ErrNilDB
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := s.now()
+		result := tx.Model(&database.User{}).
+			Where("tenant_id = ? AND id = ? AND status = ?", principal.TenantID, principal.UserID, UserStatusActive).
+			Updates(map[string]any{
+				"session_version": gorm.Expr("session_version + ?", 1),
+				"updated_at":      now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return s.recordOperation(ctx, tx, audit.Event{
+			TenantID:     principal.TenantID,
+			ActorUserID:  &principal.UserID,
+			Action:       "auth.logout",
+			ResourceType: "user",
+			ResourceID:   principal.UserID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"result": "success",
+			},
+		})
+	})
 }
 
 func (s *Service) checkLoginRateLimit(ctx context.Context, identity LoginRateLimitIdentity) error {
@@ -497,8 +531,9 @@ func (s *Service) currentSession(ctx context.Context, tenantID string, userID st
 	return s.sessionResponse(ctx, s.db, tenantRecord, userRecord, csrfToken)
 }
 
-func (s *Service) changePassword(ctx context.Context, principal Principal, currentPassword string, newPassword string, ip string, userAgent string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (s *Service) changePassword(ctx context.Context, principal Principal, currentPassword string, newPassword string, ip string, userAgent string) (SessionResponse, error) {
+	var session SessionResponse
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var userRecord database.User
 		if err := tx.
 			Where("tenant_id = ? AND id = ? AND status = ?", principal.TenantID, principal.UserID, UserStatusActive).
@@ -532,13 +567,17 @@ func (s *Service) changePassword(ctx context.Context, principal Principal, curre
 		if err := tx.Model(&database.User{}).
 			Where("tenant_id = ? AND id = ?", principal.TenantID, principal.UserID).
 			Updates(map[string]any{
-				"password_hash": passwordHash,
-				"updated_at":    now,
+				"password_hash":   passwordHash,
+				"session_version": gorm.Expr("session_version + ?", 1),
+				"updated_at":      now,
 			}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("tenant_id = ? AND id = ?", principal.TenantID, principal.UserID).First(&userRecord).Error; err != nil {
+			return err
+		}
 
-		return s.recordOperation(ctx, tx, audit.Event{
+		if err := s.recordOperation(ctx, tx, audit.Event{
 			TenantID:     principal.TenantID,
 			ActorUserID:  &principal.UserID,
 			Action:       "auth.password_change",
@@ -549,8 +588,25 @@ func (s *Service) changePassword(ctx context.Context, principal Principal, curre
 			Metadata: map[string]any{
 				"result": "success",
 			},
-		})
+		}); err != nil {
+			return err
+		}
+
+		var tenantRecord database.Tenant
+		if err := tx.Where("id = ? AND status = ?", principal.TenantID, TenantStatusActive).First(&tenantRecord).Error; err != nil {
+			return err
+		}
+		nextCSRFToken, err := newCSRFToken()
+		if err != nil {
+			return err
+		}
+		session, err = s.sessionResponse(ctx, tx, tenantRecord, userRecord, nextCSRFToken)
+		return err
 	})
+	if err != nil {
+		return SessionResponse{}, err
+	}
+	return session, nil
 }
 
 func (s *Service) sessionResponse(ctx context.Context, db *gorm.DB, tenantRecord database.Tenant, userRecord database.User, csrfToken string) (SessionResponse, error) {
@@ -560,11 +616,12 @@ func (s *Service) sessionResponse(ctx context.Context, db *gorm.DB, tenantRecord
 	}
 
 	return SessionResponse{
-		User:        publicUser(userRecord),
-		Tenant:      publicTenant(tenantRecord),
-		Roles:       access.Roles,
-		Permissions: access.Permissions,
-		CSRFToken:   csrfToken,
+		User:           publicUser(userRecord),
+		Tenant:         publicTenant(tenantRecord),
+		Roles:          access.Roles,
+		Permissions:    access.Permissions,
+		CSRFToken:      csrfToken,
+		SessionVersion: userRecord.SessionVersion,
 	}, nil
 }
 
