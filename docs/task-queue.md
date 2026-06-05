@@ -125,6 +125,21 @@ P21 Worker quota reconciliation result:
 - Active tenants are processed in bounded rotating batches. A fixed first-page batch must not starve later tenants.
 - Reconciliation is tenant-scoped, fail-closed for malformed settings/counters/reservations, and logs only sanitized aggregate metadata.
 
+P21 concurrency lease renewal result:
+
+- Redis semaphore leases are renewed while a Worker is executing a Provider task.
+- Renewal happens after the task is claimed as `RUNNING` and before Provider execution can outlive the original lease TTL.
+- If renewal fails or Redis reports that the lease is no longer held, the Worker cancels execution and fails the task closed as `CONCURRENCY_LEASE_LOST`.
+- A lost lease must not be followed by successful output assets, usage records, successful API-call finalization, or `SUCCEEDED` task state.
+- The Worker still releases the lease after execution or fail-closed handling.
+
+P21 Worker readiness result:
+
+- The Worker readiness file is not a static startup marker anymore.
+- The Worker writes the file only after database, Redis, and MinIO dependency checks pass.
+- The Worker removes the readiness file immediately when `Worker.Run` exits, including error and normal shutdown paths.
+- Dependency readiness errors are reported at the dependency-name level and must not log passwords, Redis keys, object keys, bucket URLs, Provider secrets, Authorization headers, Cookies, JWTs, or image base64.
+
 P10 Worker pool result:
 
 - `P10-BE-WORKER-POOL` is merged.

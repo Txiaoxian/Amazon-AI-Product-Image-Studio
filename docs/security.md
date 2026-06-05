@@ -80,6 +80,10 @@ Resolved transition item:
 - P21 quota maintenance now reconciles tenant storage quota counters from MySQL metadata through bounded rotating active-tenant batches. It does not use MinIO listing as quota truth and logs only sanitized aggregate error kinds.
 - P21 Provider attempt ledger hardening now persists an `ATTEMPTING` API-call row before external Provider execution and finalizes it after success, failure, timeout, or cancellation. Prewrite failure prevents the Provider call; finalize failure fails the task closed without output/usage side effects. Request/response metadata is recursively redacted and drops object keys, buckets, MinIO URLs, signed URLs, Authorization/Cookie/JWT/API-key/base64 fields.
 - P21 frontend legacy cleanup removed the old browser image/history repositories, legacy Blob result/detail branches, object URL result hook, and unused base64/object-url file helpers. Production history/detail/download/re-edit remain backend asset/task/history only; IndexedDB remains only for prompt templates and actively drops retired image/history stores through Dexie schema upgrade.
+- P21 SSE resilience hardening now bounds replay, catches up persisted MySQL events during heartbeat even without Redis wakeups, and resubscribes when the Redis notification channel closes. Redis remains a wakeup path only.
+- P21 session revocation hardening now stores a user `session_version`, includes it in JWTs, rejects stale sessions in auth middleware, rotates sessions on password change, revokes old cookies on logout, invalidates disabled-user sessions, and closes SSE streams whose session version or user status is no longer current.
+- P21 concurrency lease renewal hardening now renews Worker Redis semaphore leases during long Provider execution. Renewal failure cancels the execution and fails the task closed as `CONCURRENCY_LEASE_LOST` before successful output, usage, API-call success, or completed-task side effects can be written.
+- P21 Worker readiness hardening now writes the Compose healthcheck file only after database, Redis, and MinIO dependency checks pass, reports sanitized dependency-level failures, and removes the file immediately when `Worker.Run` exits.
 
 Storage and P5 review hardening backlog:
 
@@ -98,8 +102,7 @@ P20 operational controls:
 
 R20 release-blocking security follow-ups:
 
-- JWT sessions need revocation semantics for logout, password change, user disable, and long-lived SSE authorization.
-- SSE replay/catch-up, concurrency lease lifecycle, session revocation, and Worker readiness still must fail closed under partial failures before final Go/No-Go.
+- JWT session revocation, SSE replay/catch-up, concurrency lease lifecycle, and Worker readiness have been implemented in P21 and verified in R21 with full frontend/backend regression, security regression, default deployment validation, live Compose health/proxy checks, and cleanup checks. Production rollout still requires operator-provided production secrets, target-environment backup/restore rehearsal, optional real Provider smoke with explicit cost confirmation, remote CI, and external release approval.
 
 ## Authentication
 

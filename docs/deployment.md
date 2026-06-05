@@ -17,7 +17,7 @@ If a deployment-specific verification starts the project Compose stack, clean it
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current state after P20 operational hardening
+## Current state after P21 reliability hardening
 
 The repository has a Docker Compose topology and buildable frontend/backend images validated after P9 release readiness work. R12 re-verified Compose config after P12 seller workflow and project-member hardening. P15 security regression added `scripts/security-regression.sh`, which now validates focused security tests, frontend forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety, Compose config, and whitespace checks.
 
@@ -53,7 +53,13 @@ Known runtime notes:
 - The Compose stack includes the one-shot `minio-bootstrap` service for required buckets.
 - Future release-affecting tasks must re-run Compose config/build/up/healthcheck before claiming release readiness.
 - Provider master-key rotation and backup/restore rehearsal are implemented. Operators must still execute their default-safe checks and approved target-environment procedures before production changes.
-- R20 deployment follow-ups for production env-file propagation, redacted health-failure logs, bounded container log rotation, exact MinIO restore semantics, startup migration serialization, Worker quota reconciliation, Provider attempt ledgering, and Redis-backed login rate limiting are now implemented. P21 still requires the remaining SSE/session/lease/readiness/frontend-cleanup hardening slices before final Go/No-Go.
+- R20 deployment follow-ups for production env-file propagation, redacted health-failure logs, bounded container log rotation, exact MinIO restore semantics, startup migration serialization, Worker quota reconciliation, Provider attempt ledgering, Redis-backed login rate limiting, SSE resilience, session revocation, Worker concurrency lease renewal, Worker readiness gating, and frontend legacy cleanup are implemented and validated by R21.
+
+R21 deployment validation result:
+
+- `bash scripts/deploy-release-validation.sh` passed, including Compose config, frontend `/api/` and SSE proxy checks, host TLS template static checks, backend operator CLI image checks, image builds, and delegated security regression.
+- `bash scripts/deploy-release-validation.sh --up --down` passed, including live Compose startup, MySQL/Redis/MinIO/API/Worker/frontend health, backend health endpoints, frontend root, frontend `/api/` proxy health, SSE auth-boundary check, and scoped cleanup.
+- Post-cleanup checks found no project Compose containers and no `amazon-ai-product-image-studio_` Docker volumes.
 
 ## Services
 
@@ -108,7 +114,7 @@ Required health checks:
 - Redis ping.
 - MinIO health endpoint.
 - Backend API `/healthz`.
-- Worker readiness or heartbeat.
+- Worker readiness file gated by database, Redis, and MinIO checks, and removed when `Worker.Run` exits.
 - Frontend static service.
 
 ## Volumes
@@ -158,7 +164,7 @@ Expected health state:
 
 - `mysql`, `redis`, and `minio` are healthy.
 - `backend-api` is healthy through `/healthz`.
-- `backend-worker` is healthy through the configured readiness mechanism.
+- `backend-worker` is healthy only while the configured readiness file exists; the Worker writes it after dependency checks pass and removes it when `Worker.Run` exits.
 - `frontend` is healthy and serves the app.
 
 The P3 deployment check validates runtime wiring only. It does not require business APIs, database migrations, authentication, task execution, Provider calls, or MinIO asset flows to be implemented yet.

@@ -16,7 +16,7 @@ Do not create project-specific MySQL, Redis, or MinIO containers for ordinary fe
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Current State After P20 Operational Hardening
+## Current State After P21 Reliability Hardening
 
 The project has moved from a pure frontend local app to a backend-backed multi-user platform foundation.
 
@@ -45,7 +45,7 @@ Phase status:
 | P18 | Complete | Provider/model/default-setting serialization, opt-in real Provider smoke tooling, sanitized production dry-run, live Compose rehearsal, and cleanup checks are complete. |
 | P19 | Complete | Production config guards, CI quality gates, frontend dependency audit remediation and gate, host TLS reverse-proxy template/checks, frontend log-retention controls, and existing-tenant built-in-role reconciliation are complete. |
 | P20 | Complete | Stable-operations foundation is merged: fixed CSRF header contract, transactional Provider master-key rotation CLI, transactional tenant provisioning CLI, current-tenant APIs, custom-role CRUD/permission replacement, frontend tenant/custom-role administration, operator CLI image bundling, and isolated backup/restore/rollback rehearsal. |
-| P21 | In Progress | R20 production audit follow-up: CSRF fail-closed, deployment env/log hardening, queue durability, Provider credential crypto erase, exact MinIO restore, workbench image type, migration serialization, quota reconciliation runtime, Provider attempt ledger, Redis-backed login rate limiting, and frontend legacy IndexedDB Blob cleanup are merged; SSE resilience, session revocation, concurrency lease renewal, Worker readiness, and final Go/No-Go remain. |
+| P21 | Complete | R20 production audit follow-up implementation and R21 Go/No-Go regression are complete: CSRF fail-closed, deployment env/log hardening, queue durability, Provider credential crypto erase, exact MinIO restore, workbench image type, migration serialization, quota reconciliation runtime, Provider attempt ledger, Redis-backed login rate limiting, frontend legacy IndexedDB Blob cleanup, SSE resilience, session revocation, concurrency lease renewal, and Worker readiness are merged and validated. |
 
 P18/P19/P20 operational hardening results:
 
@@ -72,7 +72,9 @@ R20 did not approve final production launch yet. The audit identified P21 follow
 - Worker maintenance now invokes tenant-scoped storage-quota reconciliation through bounded rotating tenant batches. Main-agent review fixed a starvation risk where a fixed first-page tenant list could block later tenants indefinitely.
 - Provider attempt persistence now pre-writes an `ATTEMPTING` API-call ledger row before external Provider execution and finalizes it for success, failure, timeout, and cancellation with recursively redacted metadata. Provider delete crypto erase, exact MinIO restore semantics, workbench image-type submission, and Redis-backed login rate limiting are also implemented.
 - Frontend legacy IndexedDB image/history cleanup is complete. Production result/detail/history paths now use backend task, asset, and history data only; old local image/history repository files, Blob object URL result handling, and base64 conversion helpers were removed. Dexie remains only for prompt templates and upgrades existing databases by deleting retired image/history stores.
-- SSE catch-up/resubscribe bounds, revocable sessions, concurrency lease renewal, Worker readiness, and final Go/No-Go remain required hardening slices before production approval.
+- SSE catch-up/resubscribe bounds, revocable sessions, concurrency lease renewal, and Worker readiness are implemented and validated in R21.
+
+R21 validated the complete production reliability closure. Frontend lint/type-check/test/build/audit passed; backend tests/race/vet/API-Worker-operator builds passed; `scripts/security-regression.sh`, `scripts/deploy-release-validation.sh`, and live `scripts/deploy-release-validation.sh --up --down` passed. Live Compose reached healthy MySQL, Redis, MinIO, backend API, backend Worker, and frontend states; backend health endpoints, frontend `/api/` proxy, and SSE auth boundary passed; cleanup left no project containers or project volumes.
 
 R11 found no blocking issues across the complete P11 code range. `P11-BE-USER-ROLE-ADMIN` was reviewed and merged after fixing role/status permission boundaries. `P11-FE-USER-ROLE-ADMIN` was reviewed and merged after frontend permission gating, CSRF write requests, password non-persistence, and current-user disable protection were verified.
 

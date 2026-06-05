@@ -26,6 +26,13 @@ P10 lifecycle update:
 - Redis task-event wakeups remain sequence-only. They do not carry tenant IDs, task IDs, project IDs, full event payloads, Authorization headers, Cookies, Provider/API keys, or image base64.
 - Redis remains a wakeup path only. The SSE service still reloads visible events from MySQL before writing frames.
 
+P21 resilience update:
+
+- Historical replay is bounded per stream attempt so a stale cursor cannot force an unbounded response before the live stream starts.
+- Heartbeat processing performs a MySQL catch-up pass before writing `HEARTBEAT`, so persisted events can reach clients even when Redis wakeups are delayed or missed.
+- If the Redis notification channel closes, the API SSE service resubscribes instead of permanently losing cross-process wakeups.
+- Long-lived SSE streams periodically revalidate the authenticated user's session version and active status. Logout, password change, user disable, or another session-version change closes stale streams instead of continuing to emit events.
+
 ## Browser rules
 
 - Frontend must use EventSource or an equivalent SSE client.

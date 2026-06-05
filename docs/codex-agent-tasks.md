@@ -115,7 +115,7 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P18-PROD-DRY-RUN` 已完成：默认 safe dry-run、生产 env preflight、live Compose rehearsal 和项目范围 cleanup 均通过；无真实 Provider 调用。
 - P19 已完成：生产配置门禁、CI、依赖审计、外层 TLS 模板、前端日志保留设置和既有租户内置角色补齐均已合并。
 - P20 已完成：前端租户名称更新、自定义角色 CRUD/权限替换与只读内置角色 UI 已合并；Vitest 升级到 `^4.1.8` 后前端门禁和 `npm audit` 通过。
-- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流、API/Worker migration 串行锁、Worker quota reconciliation runtime、Provider attempt ledger、前端 legacy IndexedDB Blob 清理已完成并合并。下一批继续推进 SSE resilience、可撤销 session、租约续期、Worker readiness 和最终 Go/No-Go。
+- P21 当前进展：生产 CSRF fail-closed、部署 env 贯穿/日志脱敏与轮转、工作台图片类型、Redis 队列原子迁移与 MySQL delivery reconciliation、Provider 删除 crypto erase、MinIO exact restore、Redis-backed 登录限流、API/Worker migration 串行锁、Worker quota reconciliation runtime、Provider attempt ledger、前端 legacy IndexedDB Blob 清理、SSE resilience、可撤销 session、Worker 并发租约续期和 Worker readiness 已完成并合并。`R21-STABLE-PRODUCTION-GO-NO-GO` 全量回归通过。
 
 ## P20：稳定生产运营收口
 
@@ -164,14 +164,29 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 - `P21-BE-MIGRATION-LOCK`：已完成并合并。API/Worker 启动 migration 使用 MySQL advisory lock 串行化，已应用但 schema 不完整时 fail closed，incremental DDL 支持中断后幂等恢复。
 - `P21-BE-QUOTA-RECONCILIATION-RUNTIME`：已完成并合并。Worker maintenance 消费已有 quota reconciliation，按 active tenant 旋转 batch 推进；主 agent review 修复了固定前缀 batch 导致后续租户饥饿的问题。
 - `P21-BE-PROVIDER-ATTEMPT-LEDGER`：已完成并合并。外部 Provider 调用前写入 `ATTEMPTING` ledger，成功/失败/超时/取消后 finalize；prewrite/finalize 失败均 fail closed，metadata 递归脱敏。
-- `P21-BE-SSE-RESILIENCE`：heartbeat DB catch-up、subscriber 重启、bounded replay。
-- `P21-BE-AUTH-RATE-LIMIT-SESSION-REVOCATION`：登录限流已完成并合并；logout/改密/禁用后的 session 失效和 SSE 周期复验仍待实现。
+- `P21-BE-SSE-RESILIENCE`：已完成并合并。SSE heartbeat 会从 MySQL catch up 持久化事件，subscriber 断开后重订阅，历史 replay 有上限，Redis 仍只作为 wakeup。
+- `P21-BE-AUTH-RATE-LIMIT-SESSION-REVOCATION`：已完成并合并。登录限流、logout、改密、用户禁用/启用后的旧 session 失效，以及 SSE 周期性 session 版本复验均已落地。
 - `P21-BE-PROVIDER-CRYPTO-ERASE`：已完成并合并。Provider 删除时擦除密文，不让 deleted secret 留存或绕过轮换；provider key rotation apply 同步擦除历史软删除凭据残留。
 - `P21-DEPLOY-EXACT-MINIO-RESTORE`：已完成并合并。恢复时移除备份外对象，证明 exact restore。
-- `P21-BE-CONCURRENCY-LEASE-RENEWAL`：运行中 lease 续期或严格约束 TTL 覆盖 Provider timeout。
-- `P21-BE-WORKER-READINESS`：以 Worker 心跳和依赖可用性替代静态 readiness。
+- `P21-BE-CONCURRENCY-LEASE-RENEWAL`：已完成并合并。Worker 执行期按 Redis semaphore lease TTL 定期续约；续约失败会取消 Provider 执行并把任务 fail closed 为 `CONCURRENCY_LEASE_LOST`，不会继续写成功输出、usage 或 terminal success。
+- `P21-BE-WORKER-READINESS`：已完成并合并。Worker ready 文件写入前必须通过 database、Redis、MinIO dependency checks；Worker.Run 退出后立即删除 ready 文件，避免进程不可消费时仍保持 healthy。
 - `P21-FE-LEGACY-BLOB-CLEANUP`：已完成并合并。生产结果、详情和历史路径只消费后端 task/asset/history；旧 IndexedDB image/history repository、Blob object URL 结果分支、legacy 结果类型和未用 base64/object-url helpers 已删除；Dexie v2 删除旧 image/history stores 并保留 prompt templates。
-- `R21-STABLE-PRODUCTION-GO-NO-GO`：主 agent 全量回归、脚本、Compose live、备份恢复、远程 CI 与外部上线前置审计。
+- `R21-STABLE-PRODUCTION-GO-NO-GO`：已完成。主 agent 全量回归、脚本和 live Compose 验证通过；项目容器与项目卷 cleanup 后无残留。远程 CI、生产 secrets 注入、真实 Provider smoke、备份恢复目标环境演练和外部上线审批仍属于实际发布流程，不属于仓库代码开发剩余项。
+
+### R21 实际结果
+
+- 总体结论：代码和文档达到稳定生产上线候选状态，未发现阻塞问题。
+- 已通过验证：
+  - `cd frontend && npm run lint && npm run type-check && npm run test && npm run build && npm audit --audit-level=high`
+  - `cd backend && go test ./... -count=1 && go test -race ./... && go vet ./... && go build ./cmd/api ./cmd/worker ./cmd/provision-tenant ./cmd/provider-key-rotation`
+  - `bash scripts/security-regression.sh`
+  - `bash scripts/deploy-release-validation.sh`
+  - `bash scripts/deploy-release-validation.sh --up --down`
+  - `docker compose -f deploy/docker-compose.yml ps -a`
+  - `docker volume ls --format '{{.Name}}' | rg '^amazon-ai-product-image-studio_' || true`
+  - `git diff --check`
+- Live Compose 验证确认 MySQL、Redis、MinIO、MinIO bootstrap、backend API、backend Worker 和 frontend 均达到健康状态；backend `/healthz`、backend `/api/v1/healthz`、frontend root、frontend `/api/` proxy health、frontend SSE proxy auth boundary 均通过。
+- Cleanup 结果：`docker compose ps -a` 无项目容器，项目名前缀 Docker volume 无残留。
 
 ## 建议剩余阶段
 
