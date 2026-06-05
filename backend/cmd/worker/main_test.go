@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
@@ -54,6 +55,37 @@ func TestWorkerReadinessFileLifecycle(t *testing.T) {
 
 	if err := removeWorkerReady(readyFile); err != nil {
 		t.Fatalf("second removeWorkerReady returned error: %v", err)
+	}
+}
+
+func TestMarkWorkerReadyAfterChecksWritesFileOnlyWhenDependenciesPass(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "health", "worker-ready")
+
+	if err := markWorkerReadyAfterChecks(context.Background(), readyFile, fakeWorkerReadinessChecker{name: "database"}); err != nil {
+		t.Fatalf("markWorkerReadyAfterChecks returned error: %v", err)
+	}
+	if _, err := os.Stat(readyFile); err != nil {
+		t.Fatalf("readiness file missing after healthy dependencies: %v", err)
+	}
+}
+
+func TestMarkWorkerReadyAfterChecksFailsClosedWithoutWritingFile(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "health", "worker-ready")
+	err := markWorkerReadyAfterChecks(context.Background(), readyFile, fakeWorkerReadinessChecker{
+		name: "redis",
+		err:  errors.New("redis password super-secret should not leak"),
+	})
+	if err == nil {
+		t.Fatal("markWorkerReadyAfterChecks returned nil error for unhealthy dependency")
+	}
+	if !strings.Contains(err.Error(), "redis dependency is unhealthy") {
+		t.Fatalf("readiness error = %q, want sanitized dependency failure", err.Error())
+	}
+	if strings.Contains(err.Error(), "super-secret") || strings.Contains(err.Error(), "password") {
+		t.Fatalf("readiness error leaked dependency details: %q", err.Error())
+	}
+	if _, statErr := os.Stat(readyFile); !os.IsNotExist(statErr) {
+		t.Fatalf("readiness file exists after failed dependency check or unexpected stat error: %v", statErr)
 	}
 }
 
@@ -196,4 +228,17 @@ func setValidWorkerProductionEnv(t *testing.T) {
 	} {
 		t.Setenv(key, value)
 	}
+}
+
+type fakeWorkerReadinessChecker struct {
+	name string
+	err  error
+}
+
+func (c fakeWorkerReadinessChecker) Name() string {
+	return c.name
+}
+
+func (c fakeWorkerReadinessChecker) Check(context.Context) error {
+	return c.err
 }

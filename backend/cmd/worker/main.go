@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/asset"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/config"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/database"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/health"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/logger"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/settings"
@@ -23,6 +25,7 @@ import (
 )
 
 const defaultWorkerHealthcheckFile = "/tmp/worker-ready"
+const workerReadinessDependencyTimeout = 2 * time.Second
 
 func main() {
 	bootstrapLog := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -93,8 +96,13 @@ func main() {
 		Concurrency:      cfg.Worker.Concurrency,
 	})
 
+	healthChecks, err := runtimeWorkerHealthChecks(cfg, db)
+	if err != nil {
+		log.Error("worker readiness setup failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	healthcheckFile := workerHealthcheckFile()
-	if err := markWorkerReady(healthcheckFile); err != nil {
+	if err := markWorkerReadyAfterChecks(ctx, healthcheckFile, healthChecks...); err != nil {
 		log.Error("worker readiness failed", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
@@ -117,6 +125,7 @@ func main() {
 		QuotaReconciler: newDatabaseQuotaReconciler(db),
 	}))
 	runErr := worker.Run(ctx)
+	cleanupReadyFile()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Worker.ShutdownTimeout)
 	defer cancel()
@@ -165,6 +174,18 @@ func openWorkerDatabase(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
 	return db, nil
 }
 
+func runtimeWorkerHealthChecks(cfg config.Config, db *gorm.DB) ([]health.DependencyChecker, error) {
+	minioChecker, err := health.NewMinIOChecker(cfg.Storage)
+	if err != nil {
+		return nil, err
+	}
+	return []health.DependencyChecker{
+		database.NewHealthChecker(db),
+		health.NewRedisChecker(cfg.Queue),
+		minioChecker,
+	}, nil
+}
+
 func runWorkerDatabaseStartupTasks(
 	ctx context.Context,
 	db *gorm.DB,
@@ -205,6 +226,35 @@ func markWorkerReady(path string) error {
 		return fmt.Errorf("write worker healthcheck file: %w", err)
 	}
 
+	return nil
+}
+
+func markWorkerReadyAfterChecks(ctx context.Context, path string, checkers ...health.DependencyChecker) error {
+	if err := verifyWorkerReadiness(ctx, checkers...); err != nil {
+		return err
+	}
+	return markWorkerReady(path)
+}
+
+func verifyWorkerReadiness(ctx context.Context, checkers ...health.DependencyChecker) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for _, checker := range checkers {
+		if checker == nil {
+			continue
+		}
+		name := strings.TrimSpace(checker.Name())
+		if name == "" {
+			name = "dependency"
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, workerReadinessDependencyTimeout)
+		err := checker.Check(checkCtx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("%s dependency is unhealthy", name)
+		}
+	}
 	return nil
 }
 
