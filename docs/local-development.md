@@ -1,221 +1,172 @@
-# Local Development Environment
+# 本地开发环境
 
-## Source of truth
+本项目的日常本地开发使用已经存在的机器级共享服务，不为普通功能开发额外启动项目专属 MySQL、Redis 或 MinIO 容器。
 
-Local development for this project uses the shared machine-level environment documented in:
+详细启动步骤见：
+
+- `docs/mac-mini-m4-local-startup.md`：Mac mini M4 本机前端、后端 API、Worker 启动说明。
+- `docs/mac-mini-m4-docker-deployment.md`：Mac mini M4 上的完整 Docker Compose 部署验证。
+
+## 真实凭据来源
+
+本机共享服务的真实密码只记录在全局说明中：
 
 ```text
 /Users/wohenhaoqi/.codex/agent-instructions/10-local-dev-environment.md
 ```
 
-That global document is the source of truth for local service credentials. Do not copy real local passwords or secrets into this repository.
+项目文档、`.env.example`、README、日志和最终交付说明不得写入真实本机密码或生产 secret。
 
-## Development policy
+## 开发策略
 
-- Use the existing global local services for feature development and validation.
-- The user has explicitly authorized future development tasks to use these shared local MySQL, Redis, and MinIO services for functional verification, including creating, reading, updating, and deleting project test data.
-- Do not start project-specific MySQL, Redis, or MinIO containers for normal backend, frontend, auth, asset, Provider, task, or SSE work.
-- Do not create project-specific Docker volumes for routine development validation.
-- `deploy/docker-compose.yml` remains the deployment topology and may be used for deployment-specific verification only.
-- If a deployment-specific test starts the project Compose stack, clean it up after verification unless the user explicitly asks to keep it running:
+- 后续开发任务允许使用共享本地 MySQL、Redis、MinIO 进行功能验证。
+- 允许对当前任务拥有的测试数据执行增删改查。
+- 测试数据应使用清晰前缀，例如 `codex_`、阶段名、任务名或分支名。
+- 不要删除非当前任务创建的数据。
+- 不要执行 `FLUSHALL`、`FLUSHDB`、删除 MinIO bucket、删除项目数据库等全局破坏操作，除非用户明确要求。
+- `deploy/docker-compose.yml` 是部署拓扑，不是普通开发默认环境。
+- 如果部署专项验证启动了项目 Compose 栈，验证结束后应清理，除非用户要求保留：
 
 ```bash
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-## Shared services
+## 共享服务概览
 
-### Go
+| 服务 | 容器 | 本机地址 | 说明 |
+| --- | --- | --- | --- |
+| MySQL 8 | `dev-mysql8` | `127.0.0.1:3306` | 项目库 `amazon_ai_image_studio` |
+| Redis | `dev-redis` | `127.0.0.1:6379` | 本机开发无密码 |
+| MinIO | `dev-minio` | API `http://127.0.0.1:9000`，Console `http://127.0.0.1:9001` | buckets：`product-originals`、`product-generated`、`product-thumbnails` |
 
-- Installed through Homebrew.
-- Global document currently records `go version go1.26.3 darwin/arm64`.
-- Verify with:
-
-```bash
-go version
-go env GOPATH
-```
-
-### Shared Docker Compose
-
-- Compose file:
+共享服务 Compose 文件：
 
 ```text
 /Volumes/wohenhaoqi/data/ApplicationsData/dev-env/compose/docker-compose.yml
 ```
 
-- Data root:
-
-```text
-/Volumes/wohenhaoqi/data/ApplicationsData/dev-env
-```
-
-- Check status:
+查看状态：
 
 ```bash
 docker compose -f /Volumes/wohenhaoqi/data/ApplicationsData/dev-env/compose/docker-compose.yml ps
 ```
 
-- Start shared services if stopped:
+启动共享服务：
 
 ```bash
 docker compose -f /Volumes/wohenhaoqi/data/ApplicationsData/dev-env/compose/docker-compose.yml start
 ```
 
-### MySQL 8
+## 后端本地环境变量
 
-- Container: `dev-mysql8`.
-- Image: `mysql:8.0`.
-- Current version in global document: `8.0.46`.
-- Host endpoint: `127.0.0.1:3306`.
-- User for local validation: `root`.
-- Password: read from the global local development document; do not duplicate it here.
-- Data directory:
+后端直接从环境变量读取配置，不会自动读取 `.env`。建议创建本地忽略文件 `.env.local.backend`，并用 `source` 导入。完整示例见 `docs/mac-mini-m4-local-startup.md`。
 
-```text
-/Volumes/wohenhaoqi/data/ApplicationsData/dev-env/mysql8/data
-```
-
-- Project database name:
-
-```text
-amazon_ai_image_studio
-```
-
-- Test data policy:
-  - Agents may create, update, and delete rows in the project database for local feature validation.
-  - Prefer clearly namespaced IDs, emails, names, and metadata such as `codex_`, `p13_`, or the task branch name so test data is easy to identify.
-  - Do not truncate shared service schemas, drop the project database, drop unrelated tables, or delete data that is not clearly created for the current validation unless the user explicitly asks.
-  - Destructive cleanup should target only the task-owned test data and should be mentioned in the final handoff.
-
-- Create the project database if needed:
+最小关键变量：
 
 ```bash
-MYSQL_PWD='<read from global local dev document>' docker exec dev-mysql8 \
-  mysql -uroot -e "CREATE DATABASE IF NOT EXISTS amazon_ai_image_studio CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
-```
+export APP_ENV=local
+export BACKEND_HTTP_HOST=127.0.0.1
+export BACKEND_HTTP_PORT=8081
 
-- Verify MySQL:
-
-```bash
-MYSQL_PWD='<read from global local dev document>' docker exec dev-mysql8 \
-  mysql -uroot -e "SHOW VARIABLES WHERE Variable_name IN ('lower_case_table_names','character_set_server','collation_server'); SELECT @@sql_mode;"
-```
-
-### Redis
-
-- Container: `dev-redis`.
-- Image: `redis:7`.
-- Current version in global document: `7.4.9`.
-- Host endpoint: `127.0.0.1:6379`.
-- Password: empty for local development.
-- Data directory:
-
-```text
-/Volumes/wohenhaoqi/data/ApplicationsData/dev-env/redis/data
-```
-
-- Verify Redis:
-
-```bash
-docker exec dev-redis redis-cli ping
-```
-
-- Test data policy:
-  - Agents may enqueue, inspect, and delete task-owned Redis keys or queue entries for local validation.
-  - Use project/task-specific queue names or key prefixes when adding temporary checks.
-  - Do not run broad `FLUSHALL` / `FLUSHDB` against shared Redis unless the user explicitly asks.
-
-### MinIO
-
-- Container: `dev-minio`.
-- Image:
-
-```text
-docker.m.daocloud.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-```
-
-- S3 API endpoint: `http://127.0.0.1:9000`.
-- Console endpoint: `http://127.0.0.1:9001`.
-- Access key / root user: `minioadmin`.
-- Secret key / root password: read from the global local development document; do not duplicate it here.
-- Data directory:
-
-```text
-/Volumes/wohenhaoqi/data/ApplicationsData/dev-env/minio/data
-```
-
-- Project buckets:
-
-```text
-product-originals
-product-generated
-product-thumbnails
-```
-
-- Test data policy:
-  - Agents may upload, download, and delete task-owned objects in the project buckets for local asset and worker validation.
-  - Use object keys that include a recognizable test prefix or task identifier when manually creating objects.
-  - Do not delete buckets or purge unrelated object prefixes unless the user explicitly asks.
-
-- Verify MinIO:
-
-```bash
-curl -fsS http://127.0.0.1:9000/minio/health/live
-nc -vz 127.0.0.1 9000
-nc -vz 127.0.0.1 9001
-```
-
-## Backend local environment
-
-For local backend runs and integration checks, use environment variables that point to the shared services:
-
-```bash
 export MYSQL_HOST=127.0.0.1
 export MYSQL_PORT=3306
 export MYSQL_DATABASE=amazon_ai_image_studio
 export MYSQL_USER=root
-export MYSQL_PASSWORD='<read from global local dev document>'
+export MYSQL_PASSWORD='<从全局本机环境文档读取>'
+
 export REDIS_ADDR=127.0.0.1:6379
 export REDIS_PASSWORD=
+
 export MINIO_ENDPOINT=http://127.0.0.1:9000
 export MINIO_ACCESS_KEY=minioadmin
-export MINIO_SECRET_KEY='<read from global local dev document>'
-export MINIO_REGION=us-east-1
+export MINIO_SECRET_KEY='<从全局本机环境文档读取>'
+export MINIO_BUCKET_ORIGINALS=product-originals
+export MINIO_BUCKET_GENERATED=product-generated
+export MINIO_BUCKET_THUMBNAILS=product-thumbnails
+
+export JWT_SIGNING_SECRET=local-dev-jwt-secret-at-least-32-bytes
+export API_KEY_ENCRYPTION_KEY=local-dev-provider-key-at-least-32-bytes
+export API_KEY_ENCRYPTION_KEY_ID=local-dev-v1
+export CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+export COOKIE_SECURE=false
+export CSRF_ENABLED=true
 ```
 
-Do not commit a local `.env` file that contains these values.
+不要把 Provider API Key 写入环境文件；Provider API Key 必须通过后端管理接口配置。
 
-## Verification guidance
+## 常用启动命令
 
-Normal feature validation should prefer:
+后端 API：
+
+```bash
+cd backend
+set -a
+source ../.env.local.backend
+set +a
+go run ./cmd/api
+```
+
+后端 Worker：
+
+```bash
+cd backend
+set -a
+source ../.env.local.backend
+set +a
+go run ./cmd/worker
+```
+
+前端：
+
+```bash
+cd frontend
+npm ci
+VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:8081 npm run dev
+```
+
+## 常用验证
+
+前端：
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run test
+npm run build
+```
+
+后端：
 
 ```bash
 cd backend
 go test ./...
 go test -race ./...
 go vet ./...
+go build ./cmd/api ./cmd/worker ./cmd/provider-key-rotation ./cmd/provision-tenant
 ```
 
-Use the shared service health checks above when a feature needs MySQL, Redis, or MinIO integration.
+共享服务：
 
-Deployment verification may still use:
+```bash
+docker exec dev-redis redis-cli ping
+curl -fsS http://127.0.0.1:9000/minio/health/live
+```
+
+## 部署验证例外
+
+部署验证可以使用项目 Compose 栈：
 
 ```bash
 docker compose -f deploy/docker-compose.yml config
 docker compose -f deploy/docker-compose.yml build backend-api backend-worker frontend
+docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Only run `docker compose -f deploy/docker-compose.yml up -d` for deployment-specific validation, and clean it up after the check unless instructed otherwise.
-
-## P9 deployment validation note
-
-`P9-DEPLOY-RELEASE-VALIDATION` is the deployment-specific exception to the shared-service rule. It may start the project Compose stack to validate release topology, including the one-shot `minio-bootstrap` service that creates or verifies the required MinIO buckets idempotently.
-
-After validation, clean all project-specific resources:
+部署验证结束后清理：
 
 ```bash
 docker compose -f deploy/docker-compose.yml down -v --remove-orphans
 ```
 
-Do not copy shared local service credentials into `.env`, `.env.example`, Compose files, documentation, logs, or final handoff notes.
+不要把共享本地服务凭据复制到 `.env`、`.env.example`、Compose 文件、文档、日志或最终交付说明中。

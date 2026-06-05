@@ -1,5 +1,15 @@
 # Deployment Plan
 
+## 中文部署说明入口
+
+面向实际启动和部署的中文操作文档：
+
+- `docs/mac-mini-m4-local-startup.md`：Mac mini M4 本机直接启动前端、后端 API、Worker，并连接共享本地 MySQL、Redis、MinIO。
+- `docs/mac-mini-m4-docker-deployment.md`：Mac mini M4 完整 Docker Compose 部署验证。
+- `docs/x86-server-docker-deployment.md`：X86 线上 Linux 服务器 Docker Compose 部署，包含 MySQL、Redis、MinIO 环境。
+
+本文件保留为部署架构、验收标准和历史验证记录；具体操作优先阅读上述中文专项文档。
+
 ## Local development environment
 
 Routine development and validation must use the shared machine-level services documented in `docs/local-development.md`.
