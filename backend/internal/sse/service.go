@@ -19,9 +19,11 @@ import (
 )
 
 const DefaultHeartbeatInterval = 25 * time.Second
+const DefaultMaxReplayEvents = 200
 
 type Options struct {
 	HeartbeatInterval time.Duration
+	MaxReplayEvents   int
 }
 
 type Service struct {
@@ -30,6 +32,7 @@ type Service struct {
 	broker            *Broker
 	log               *slog.Logger
 	heartbeatInterval time.Duration
+	maxReplayEvents   int
 }
 
 type replayBatch struct {
@@ -48,12 +51,17 @@ func NewService(db *gorm.DB, log *slog.Logger, broker *Broker, options Options) 
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = DefaultHeartbeatInterval
 	}
+	maxReplayEvents := options.MaxReplayEvents
+	if maxReplayEvents <= 0 {
+		maxReplayEvents = DefaultMaxReplayEvents
+	}
 	return &Service{
 		db:                db,
 		repo:              task.NewRepository(db),
 		broker:            broker,
 		log:               log,
 		heartbeatInterval: heartbeatInterval,
+		maxReplayEvents:   maxReplayEvents,
 	}
 }
 
@@ -90,7 +98,9 @@ func (s *Service) StreamTasks(c *gin.Context) {
 	}
 
 	notifications, unsubscribe := s.broker.Subscribe(c.Request.Context())
-	defer unsubscribe()
+	defer func() {
+		unsubscribe()
+	}()
 
 	batch, err := s.visibleEventsAfter(c.Request.Context(), principal, scope, cursor, filter)
 	if err != nil {
@@ -123,28 +133,34 @@ func (s *Service) StreamTasks(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return
 		case <-ticker.C:
+			nextCursor, ok := s.replayVisibleEvents(c, flusher, principal, scope, queryCursor, filter)
+			if !ok {
+				return
+			}
+			queryCursor = nextCursor
 			if err := WriteHeartbeat(c.Writer); err != nil {
 				return
 			}
 			flusher.Flush()
 		case notification, ok := <-notifications:
 			if !ok {
-				return
+				unsubscribe()
+				notifications, unsubscribe = s.broker.Subscribe(c.Request.Context())
+				nextCursor, ok := s.replayVisibleEvents(c, flusher, principal, scope, queryCursor, filter)
+				if !ok {
+					return
+				}
+				queryCursor = nextCursor
+				continue
 			}
 			if notification.Sequence != 0 && notification.Sequence <= queryCursor {
 				continue
 			}
-			batch, err := s.visibleEventsAfter(c.Request.Context(), principal, scope, queryCursor, filter)
-			if err != nil {
-				s.log.Error("task SSE live replay failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+			nextCursor, ok := s.replayVisibleEvents(c, flusher, principal, scope, queryCursor, filter)
+			if !ok {
 				return
 			}
-			if batch.maxSequence > queryCursor {
-				queryCursor = batch.maxSequence
-			}
-			if !s.writeEvents(c, flusher, batch.events) {
-				return
-			}
+			queryCursor = nextCursor
 		}
 	}
 }
@@ -181,7 +197,7 @@ func (s *Service) resolveFilter(ctx context.Context, principal auth.Principal, s
 }
 
 func (s *Service) visibleEventsAfter(ctx context.Context, principal auth.Principal, scope tenant.Scope, cursor uint64, filter task.EventFilter) (replayBatch, error) {
-	events, err := s.repo.ListEventsAfter(ctx, scope, cursor, filter)
+	events, err := s.repo.ListEventsAfter(ctx, scope, cursor, filter, s.maxReplayEvents)
 	if err != nil {
 		return replayBatch{}, err
 	}
@@ -200,6 +216,21 @@ func (s *Service) visibleEventsAfter(ctx context.Context, principal auth.Princip
 		}
 	}
 	return batch, nil
+}
+
+func (s *Service) replayVisibleEvents(c *gin.Context, flusher http.Flusher, principal auth.Principal, scope tenant.Scope, cursor uint64, filter task.EventFilter) (uint64, bool) {
+	batch, err := s.visibleEventsAfter(c.Request.Context(), principal, scope, cursor, filter)
+	if err != nil {
+		s.log.Error("task SSE replay failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+		return cursor, false
+	}
+	if batch.maxSequence > cursor {
+		cursor = batch.maxSequence
+	}
+	if !s.writeEvents(c, flusher, batch.events) {
+		return cursor, false
+	}
+	return cursor, true
 }
 
 func (s *Service) canSeeEvent(ctx context.Context, principal auth.Principal, event database.TaskEvent, filter task.EventFilter) (bool, error) {

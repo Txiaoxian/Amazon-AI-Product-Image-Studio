@@ -77,6 +77,39 @@ func TestTaskSSEReplayOrderingAndCursorAfterLatestHeartbeat(t *testing.T) {
 	}
 }
 
+func TestTaskSSEHeartbeatCatchesUpPersistedEventsWithoutBrokerNotification(t *testing.T) {
+	router, server, db, broker, adminSession := newSSERouteTestServer(t, 5*time.Millisecond)
+	projectID := createTaskTestProject(t, router, adminSession, "SSE Heartbeat Catchup Project")
+	seedSSETask(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-heartbeat-catchup")
+
+	response, cancel := openTaskSSE(t, server, "/api/v1/events/tasks", adminSession.cookies, nil)
+	defer closeSSE(response, cancel)
+	reader := bufio.NewReader(response.Body)
+	waitForSubscribers(t, broker, 1)
+
+	event := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-heartbeat-catchup", "TASK_PROGRESS")
+
+	frame := readSSEFrame(t, reader)
+	assertSSETaskEventFrame(t, frame, event)
+}
+
+func TestTaskSSEReplayIsBoundedAndContinuesOnHeartbeatCatchup(t *testing.T) {
+	router, server, db, _, adminSession := newSSERouteTestServerWithMaxReplay(t, 5*time.Millisecond, 2)
+	projectID := createTaskTestProject(t, router, adminSession, "SSE Bounded Replay Project")
+	seedSSETask(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-bounded-replay")
+	first := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-bounded-replay", task.EventTaskQueued)
+	second := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-bounded-replay", "TASK_PROGRESS")
+	third := seedSSEEvent(t, db, adminSession.tenantID, projectID, "task-bounded-replay", task.EventTaskCompleted)
+
+	response, cancel := openTaskSSE(t, server, "/api/v1/events/tasks?lastEventId=evt_00000000000000000000", adminSession.cookies, nil)
+	defer closeSSE(response, cancel)
+	reader := bufio.NewReader(response.Body)
+
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), first)
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), second)
+	assertSSETaskEventFrame(t, readSSEFrame(t, reader), third)
+}
+
 func TestTaskSSERejectsMalformedEventIDWithSanitizedValidationError(t *testing.T) {
 	router, _, _, _, adminSession := newSSERouteTestServer(t, 200*time.Millisecond)
 
@@ -257,17 +290,22 @@ func TestTaskSSEDisconnectCleansSubscription(t *testing.T) {
 }
 
 func newSSERouteTestServer(t *testing.T, heartbeat time.Duration) (http.Handler, *httptest.Server, *gorm.DB, *sse.Broker, projectRouteSession) {
+	return newSSERouteTestServerWithMaxReplay(t, heartbeat, 0)
+}
+
+func newSSERouteTestServerWithMaxReplay(t *testing.T, heartbeat time.Duration, maxReplayEvents int) (http.Handler, *httptest.Server, *gorm.DB, *sse.Broker, projectRouteSession) {
 	t.Helper()
 
 	db := newAuthRouteTestDB(t)
 	broker := sse.NewBroker(16)
 	router := NewRouter(RouterOptions{
-		Config:       authRouteTestConfig("test"),
-		Logger:       discardLogger(),
-		Database:     db,
-		TaskEnqueuer: &fakeTaskEnqueuer{},
-		SSEBroker:    broker,
-		SSEHeartbeat: heartbeat,
+		Config:             authRouteTestConfig("test"),
+		Logger:             discardLogger(),
+		Database:           db,
+		TaskEnqueuer:       &fakeTaskEnqueuer{},
+		SSEBroker:          broker,
+		SSEHeartbeat:       heartbeat,
+		SSEMaxReplayEvents: maxReplayEvents,
 	})
 
 	initResponse := performJSON(router, http.MethodPost, "/api/v1/auth/init-admin", map[string]string{

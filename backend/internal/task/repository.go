@@ -394,7 +394,7 @@ func (r Repository) ListDeliveryRepairCandidates(ctx context.Context, afterID st
 	return records, nil
 }
 
-func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cursor uint64, filter EventFilter) ([]database.TaskEvent, error) {
+func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cursor uint64, filter EventFilter, limit int) ([]database.TaskEvent, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -407,6 +407,9 @@ func (r Repository) ListEventsAfter(ctx context.Context, scope tenant.Scope, cur
 	}
 	if taskID := strings.TrimSpace(filter.TaskID); taskID != "" {
 		query = query.Where("task_id = ?", taskID)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
 	}
 
 	var events []database.TaskEvent

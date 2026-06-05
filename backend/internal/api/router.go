@@ -37,6 +37,7 @@ type RouterOptions struct {
 	QueueDepthInspector queue.QueueDepthInspector
 	SSEBroker           *sse.Broker
 	SSEHeartbeat        time.Duration
+	SSEMaxReplayEvents  int
 	LifecycleContext    context.Context
 	TaskEventSubscriber queue.TaskEventSubscriber
 	AuthLoginLimiter    auth.LoginRateLimiter
@@ -84,7 +85,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		provider.NewService(options.Database, options.Logger, options.Config.Provider, options.ProviderOpts...),
 		model.NewService(options.Database, options.Logger),
 		taskService,
-		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat}),
+		sse.NewService(options.Database, options.Logger, eventBroker, sse.Options{HeartbeatInterval: options.SSEHeartbeat, MaxReplayEvents: options.SSEMaxReplayEvents}),
 		newAdminAuditUsageService(options.Database, options.Logger, options.AuditReadRedactor),
 		newAdminDiagnosticsService(options.Database, options.Logger, options.QueueDepthInspector),
 		settingsService,
