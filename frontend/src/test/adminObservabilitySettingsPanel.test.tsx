@@ -507,11 +507,114 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(screen.getByText(/REDACTED/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'API 调用日志' }))
     expect(await screen.findByText('api_log_1')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    const detailTrigger = screen.getByRole('button', { name: '查看详情' })
+    await user.click(detailTrigger)
 
-    expect(await screen.findByText('API 调用详情：api_log_1')).toBeInTheDocument()
-    expect(screen.getByText(/内容已截断/)).toBeInTheDocument()
+    const detailDialog = await screen.findByRole('dialog', { name: 'API 调用详情：api_log_1' })
+    expect(detailDialog).toHaveAttribute('aria-modal', 'true')
+    expect(within(detailDialog).getByText(/内容已截断/)).toBeInTheDocument()
     expect(adminApi.getApiCallLog).toHaveBeenCalledWith('api_log_1')
+
+    await user.click(within(detailDialog).getByRole('button', { name: '关闭弹窗' }))
+    expect(screen.queryByRole('dialog', { name: 'API 调用详情：api_log_1' })).not.toBeInTheDocument()
+    expect(detailTrigger).toHaveFocus()
+  })
+
+  it('explains recent provider failures in Chinese and keeps raw diagnostics inside the detail dialog', async () => {
+    const user = userEvent.setup()
+    const transportFailure: ApiCallLog = {
+      ...apiCallLog,
+      id: 'api_log_timeout',
+      status: 'FAILURE',
+      durationMs: 120005,
+      httpStatus: null,
+      errorCode: 'PROVIDER_TRANSPORT_ERROR',
+      errorMessage: 'context deadline exceeded (Client.Timeout exceeded while awaiting headers)',
+    }
+    const oversizedResponse: ApiCallLog = {
+      ...transportFailure,
+      id: 'api_log_oversized',
+      durationMs: 102054,
+      httpStatus: 200,
+      errorCode: 'PROVIDER_RESPONSE_TOO_LARGE',
+      errorMessage: 'Provider response could not be read safely.',
+    }
+    const connectionClosed: ApiCallLog = {
+      ...transportFailure,
+      id: 'api_log_eof',
+      durationMs: 105924,
+      errorMessage: 'Post "https://relay.example.com/v1/images/edits": unexpected EOF',
+    }
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi.fn().mockResolvedValue(page([transportFailure, connectionClosed, oversizedResponse])),
+      getApiCallLog: vi.fn((id) => Promise.resolve(
+        id === transportFailure.id ? transportFailure : id === connectionClosed.id ? connectionClosed : oversizedResponse,
+      )),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    expect(await screen.findAllByText('中转站在超时时间内未返回响应。')).toHaveLength(1)
+    expect(screen.getByText('中转站在返回响应前提前断开了连接。')).toBeInTheDocument()
+    expect(screen.getByText('中转站已返回成功响应，但响应数据超过平台配置的安全接收上限。')).toBeInTheDocument()
+    await user.click(within(screen.getByText('api_log_timeout').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+
+    const detailDialog = await screen.findByRole('dialog', { name: 'API 调用详情：api_log_timeout' })
+    expect(within(detailDialog).getByText('建议提高中转站超时时间，并降低并发后重试。')).toBeInTheDocument()
+    expect(within(detailDialog).getByText(/Client\.Timeout exceeded/)).toBeInTheDocument()
+
+    await user.click(within(detailDialog).getByRole('button', { name: '关闭弹窗' }))
+    await user.click(within(screen.getByText('api_log_eof').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+    const eofDialog = await screen.findByRole('dialog', { name: 'API 调用详情：api_log_eof' })
+    expect(within(eofDialog).getByText('建议稍后重试或切换中转站；若持续出现，请中转站检查上游连接和网关超时。')).toBeInTheDocument()
+    await user.click(within(eofDialog).getByRole('button', { name: '关闭弹窗' }))
+    await user.click(within(screen.getByText('api_log_oversized').closest('tr') as HTMLElement).getByRole('button', { name: '查看详情' }))
+    const oversizedDialog = await screen.findByRole('dialog', { name: 'API 调用详情：api_log_oversized' })
+    expect(within(oversizedDialog).getByText(/平台会流式接收大图片/)).toBeInTheDocument()
+  })
+
+  it('keeps the detail trigger focusable while loading so focus can return when the dialog closes', async () => {
+    const user = userEvent.setup()
+    const detail = deferred<ApiCallLog>()
+    const adminApi = createMockAdminApi({
+      listOperationLogs: vi.fn().mockResolvedValue(page([])),
+      listApiCallLogs: vi.fn().mockResolvedValue(page([apiCallLog])),
+      getApiCallLog: vi.fn().mockReturnValue(detail.promise),
+    })
+
+    render(
+      <AdminObservabilitySettingsPanel
+        adminApi={adminApi}
+        canManageSystemSettings={false}
+        canReadAudit
+        canReadUsage={false}
+        csrfToken="csrf_memory_only"
+        isOpen
+        onClose={() => undefined}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'API 调用日志' }))
+    const detailTrigger = await screen.findByRole('button', { name: '查看详情' })
+    await user.click(detailTrigger)
+
+    const detailDialog = await screen.findByRole('dialog', { name: 'API 调用详情：api_log_1' })
+    expect(detailTrigger).toBeEnabled()
+    await user.click(within(detailDialog).getByRole('button', { name: '关闭弹窗' }))
+
+    expect(detailTrigger).toHaveFocus()
   })
 
   it('keeps the latest API call detail when older detail responses resolve later', async () => {
@@ -590,7 +693,7 @@ describe('AdminObservabilitySettingsPanel', () => {
 
     await waitFor(() => expect(screen.getByText('记录不存在或已不可见。')).toBeInTheDocument())
     expect(screen.queryByText('API 调用详情：api_log_1')).not.toBeInTheDocument()
-    expect(screen.queryByText('API 调用详情：api_log_2')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'API 调用详情：api_log_2' })).toBeInTheDocument()
   })
 
   it('ignores in-flight API call detail responses after the panel closes and reopens cleanly', async () => {

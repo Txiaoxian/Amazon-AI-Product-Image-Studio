@@ -24,6 +24,19 @@ type ListOptions struct {
 	MemberUserID string
 }
 
+type memberRow struct {
+	ID         string
+	TenantID   string
+	ProjectID  string
+	UserID     string
+	Role       string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	UserEmail  string
+	UserName   string
+	UserStatus string
+}
+
 func NewRepository(db *gorm.DB) Repository {
 	return Repository{db: db}
 }
@@ -71,7 +84,7 @@ func (r Repository) ListProjects(ctx context.Context, scope tenant.Scope, option
 	var records []database.Project
 	offset := (options.PageNum - 1) * options.PageSize
 	if err := query.
-		Order("projects.created_at DESC, projects.id DESC").
+		Order("projects.sort_order ASC, projects.created_at DESC, projects.id DESC").
 		Limit(options.PageSize).
 		Offset(offset).
 		Find(&records).Error; err != nil {
@@ -79,6 +92,22 @@ func (r Repository) ListProjects(ctx context.Context, scope tenant.Scope, option
 	}
 
 	return records, total, nil
+}
+
+func (r Repository) NextSortOrder(ctx context.Context, scope tenant.Scope) (int, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
+
+	var maxOrder int
+	if err := db.Model(&database.Project{}).
+		Where("tenant_id = ? AND deleted_at IS NULL", scope.ID()).
+		Select("COALESCE(MAX(sort_order), 0)").
+		Scan(&maxOrder).Error; err != nil {
+		return 0, err
+	}
+	return maxOrder + 10, nil
 }
 
 func (r Repository) FindProject(ctx context.Context, scope tenant.Scope, projectID string) (database.Project, error) {
@@ -151,7 +180,7 @@ func (r Repository) SoftDeleteProject(ctx context.Context, scope tenant.Scope, p
 	return nil
 }
 
-func (r Repository) ListMembers(ctx context.Context, scope tenant.Scope, projectID string) ([]database.ProjectMember, error) {
+func (r Repository) ListMembers(ctx context.Context, scope tenant.Scope, projectID string) ([]MemberRecord, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -160,12 +189,46 @@ func (r Repository) ListMembers(ctx context.Context, scope tenant.Scope, project
 		return nil, ErrValidation
 	}
 
-	var records []database.ProjectMember
-	err = db.Model(&database.ProjectMember{}).
-		Where("tenant_id = ? AND project_id = ?", scope.ID(), strings.TrimSpace(projectID)).
-		Order("created_at ASC, user_id ASC").
-		Find(&records).Error
-	return records, err
+	var rows []memberRow
+	err = db.Table("project_members").
+		Select(strings.Join([]string{
+			"project_members.id",
+			"project_members.tenant_id",
+			"project_members.project_id",
+			"project_members.user_id",
+			"project_members.role",
+			"project_members.created_at",
+			"project_members.updated_at",
+			"users.email AS user_email",
+			"users.display_name AS user_name",
+			"users.status AS user_status",
+		}, ", ")).
+		Joins("JOIN users ON users.tenant_id = project_members.tenant_id AND users.id = project_members.user_id").
+		Where("project_members.tenant_id = ? AND project_members.project_id = ?", scope.ID(), strings.TrimSpace(projectID)).
+		Order("project_members.created_at ASC, users.display_name ASC, users.email ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]MemberRecord, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, MemberRecord{
+			Member: database.ProjectMember{
+				ID:        row.ID,
+				TenantID:  row.TenantID,
+				ProjectID: row.ProjectID,
+				UserID:    row.UserID,
+				Role:      row.Role,
+				CreatedAt: row.CreatedAt,
+				UpdatedAt: row.UpdatedAt,
+			},
+			UserEmail:  row.UserEmail,
+			UserName:   row.UserName,
+			UserStatus: row.UserStatus,
+		})
+	}
+	return records, nil
 }
 
 func (r Repository) FindMember(ctx context.Context, scope tenant.Scope, projectID string, userID string) (database.ProjectMember, error) {
@@ -265,19 +328,66 @@ func (r Repository) DeleteMember(ctx context.Context, scope tenant.Scope, projec
 	return nil
 }
 
-func (r Repository) ActiveUserExists(ctx context.Context, scope tenant.Scope, userID string) (bool, error) {
+func (r Repository) FindUser(ctx context.Context, scope tenant.Scope, userID string) (database.User, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
-		return false, err
+		return database.User{}, err
 	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
-		return false, ErrValidation
+		return database.User{}, ErrValidation
 	}
 
-	var count int64
+	var record database.User
 	err = db.Model(&database.User{}).
-		Where("tenant_id = ? AND id = ? AND status = ?", scope.ID(), userID, auth.UserStatusActive).
-		Count(&count).Error
-	return count > 0, err
+		Where("tenant_id = ? AND id = ?", scope.ID(), userID).
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return database.User{}, ErrValidation
+	}
+	return record, err
+}
+
+func (r Repository) FindActiveUser(ctx context.Context, scope tenant.Scope, userID string) (database.User, error) {
+	record, err := r.FindUser(ctx, scope, userID)
+	if err != nil {
+		return database.User{}, err
+	}
+	if record.Status != auth.UserStatusActive {
+		return database.User{}, ErrValidation
+	}
+	return record, nil
+}
+
+func (r Repository) ListMemberCandidates(ctx context.Context, scope tenant.Scope, projectID string, query CandidateListQuery) ([]database.User, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, ErrValidation
+	}
+
+	db = db.Model(&database.User{}).
+		Where("tenant_id = ? AND status = ?", scope.ID(), auth.UserStatusActive).
+		Where(
+			"NOT EXISTS (SELECT 1 FROM project_members WHERE project_members.tenant_id = users.tenant_id AND project_members.project_id = ? AND project_members.user_id = users.id)",
+			projectID,
+		)
+	if strings.TrimSpace(query.Q) != "" {
+		q := "%" + strings.ToLower(strings.TrimSpace(query.Q)) + "%"
+		db = db.Where("LOWER(email) LIKE ? OR LOWER(display_name) LIKE ?", q, q)
+	}
+
+	var records []database.User
+	offset := (query.PageNum - 1) * query.PageSize
+	if err := db.
+		Order("display_name ASC, email ASC, id ASC").
+		Limit(query.PageSize).
+		Offset(offset).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil
 }

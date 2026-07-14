@@ -20,18 +20,39 @@ import (
 )
 
 const (
-	defaultMaxResponseBytes = 128 << 20
+	defaultMaxResponseBytes = 1 << 30
+	defaultMaxImageBytes    = 512 << 20
+	maxProviderErrorBytes   = 1 << 20
 )
+
+var gptImage2AspectRatioSizes = map[string]string{
+	"1:1":    "1024x1024",
+	"1.62:1": "1296x800",
+	"2:3":    "1024x1536",
+	"3:2":    "1536x1024",
+	"3:4":    "1152x1536",
+	"4:3":    "1536x1152",
+	"4:5":    "1024x1280",
+	"5:4":    "1280x1024",
+	"9:16":   "864x1536",
+	"16:9":   "1536x864",
+	"21:9":   "1792x768",
+}
 
 type ClientOptions struct {
 	HTTPClient       *http.Client
 	MaxResponseBytes int64
+	MaxImageBytes    int64
+	TempDir          string
 	Now              func() time.Time
 }
 
 type Client struct {
 	httpClient       *http.Client
+	defaultTimeout   time.Duration
 	maxResponseBytes int64
+	maxImageBytes    int64
+	tempDir          string
 	now              func() time.Time
 }
 
@@ -40,9 +61,19 @@ func NewClient(options ClientOptions) *Client {
 	if httpClient == nil {
 		httpClient = provider.NewSafeHTTPClient(nil, 0)
 	}
+	defaultTimeout := httpClient.Timeout
+	httpClient = &http.Client{
+		Transport:     httpClient.Transport,
+		CheckRedirect: httpClient.CheckRedirect,
+		Jar:           httpClient.Jar,
+	}
 	maxResponseBytes := options.MaxResponseBytes
 	if maxResponseBytes <= 0 {
 		maxResponseBytes = defaultMaxResponseBytes
+	}
+	maxImageBytes := options.MaxImageBytes
+	if maxImageBytes <= 0 {
+		maxImageBytes = defaultMaxImageBytes
 	}
 	now := options.Now
 	if now == nil {
@@ -50,7 +81,7 @@ func NewClient(options ClientOptions) *Client {
 			return time.Now().UTC()
 		}
 	}
-	return &Client{httpClient: httpClient, maxResponseBytes: maxResponseBytes, now: now}
+	return &Client{httpClient: httpClient, defaultTimeout: defaultTimeout, maxResponseBytes: maxResponseBytes, maxImageBytes: maxImageBytes, tempDir: options.TempDir, now: now}
 }
 
 func (c *Client) Execute(ctx context.Context, req ImageRequest) (ImageResult, error) {
@@ -60,9 +91,13 @@ func (c *Client) Execute(ctx context.Context, req ImageRequest) (ImageResult, er
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	timeout := c.defaultTimeout
 	if req.Provider.TimeoutSeconds > 0 {
+		timeout = time.Duration(req.Provider.TimeoutSeconds) * time.Second
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Provider.TimeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 
@@ -114,7 +149,7 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 		writeOpenAIParameterFields(writer, req, compatible)
 		for index, image := range req.InputImages {
 			fieldName := "image"
-			if index > 0 {
+			if compatible || len(req.InputImages) > 1 {
 				fieldName = "image[]"
 			}
 			part, err := writer.CreateFormFile(fieldName, inputFilename(image, index))
@@ -148,6 +183,7 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 	httpRequest.Header.Set("Authorization", "Bearer "+req.Provider.APIKey)
 
 	call := baseAPICall(req)
+	call.RequestMetadata["size"] = openAIImageSize(req)
 	call.RequestMetadata["endpointPath"] = endpoint
 	call.RequestMetadata["compatible"] = compatible
 	startedAt := c.now()
@@ -164,15 +200,8 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 	call.HTTPStatus = statusCodePointer(response.StatusCode)
 	call.RequestID = providerRequestID(response.Header)
 
-	data, readErr := readLimited(response.Body, c.maxResponseBytes)
-	if readErr != nil {
-		call.Status = APICallStatusFailure
-		call.ErrorCode = "PROVIDER_RESPONSE_TOO_LARGE"
-		call.ErrorMessage = "Provider response could not be read safely."
-		call = redactor.SanitizeAPICall(call)
-		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: true}
-	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		data, _ := readLimited(response.Body, maxProviderErrorBytes)
 		providerErr := providerHTTPError(response.StatusCode, data, redactor)
 		call.Status = APICallStatusFailure
 		call.ErrorCode = providerErr.Code
@@ -181,23 +210,31 @@ func (c *Client) executeOpenAI(ctx context.Context, req ImageRequest, compatible
 		return ImageResult{APICall: call}, providerErr
 	}
 
-	parsed, err := parseOpenAIResponse(data)
+	if response.ContentLength > c.maxResponseBytes {
+		call.Status = APICallStatusFailure
+		call.ErrorCode = "PROVIDER_RESPONSE_TOO_LARGE"
+		call.ErrorMessage = "Provider response exceeded the configured safety limit."
+		call = redactor.SanitizeAPICall(call)
+		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus}
+	}
+	images, usageRaw, err := c.parseOpenAIResponseStream(ctx, response.Body)
 	if err != nil {
 		call.Status = APICallStatusFailure
 		call.ErrorCode = "PROVIDER_RESPONSE_INVALID"
 		call.ErrorMessage = "Provider response could not be normalized."
+		retryable := false
+		if errors.Is(err, errProviderResponseTooLarge) || errors.Is(err, errProviderImageTooLarge) {
+			call.ErrorCode = "PROVIDER_RESPONSE_TOO_LARGE"
+			call.ErrorMessage = "Provider response exceeded the configured safety limit."
+		} else if errors.Is(err, errProviderImageFetch) {
+			call.ErrorCode = "PROVIDER_IMAGE_FETCH_FAILED"
+			call.ErrorMessage = "Provider image URL could not be fetched safely."
+			retryable = true
+		}
 		call = redactor.SanitizeAPICall(call)
-		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus}
+		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: retryable}
 	}
-	images, err := c.normalizeOpenAIImages(ctx, parsed)
-	if err != nil {
-		call.Status = APICallStatusFailure
-		call.ErrorCode = "PROVIDER_IMAGE_FETCH_FAILED"
-		call.ErrorMessage = redactor.SanitizeErrorMessage(err.Error())
-		call = redactor.SanitizeAPICall(call)
-		return ImageResult{APICall: call}, ProviderError{Code: call.ErrorCode, Message: call.ErrorMessage, HTTPStatus: call.HTTPStatus, Retryable: true}
-	}
-	usage := normalizeOpenAIUsage(parsed.Usage, redactor)
+	usage := normalizeOpenAIUsage(usageRaw, redactor)
 	if usage.ImageCount == 0 {
 		usage.ImageCount = len(images)
 	}
@@ -319,7 +356,7 @@ func openAIJSONPayload(req ImageRequest, compatible bool) map[string]any {
 	if count := outputCount(req.Parameters); count > 0 {
 		payload["n"] = count
 	}
-	if size := parameterString(req.Parameters, "size"); size != "" {
+	if size := openAIImageSize(req); size != "" {
 		payload["size"] = size
 	}
 	if quality := parameterString(req.Parameters, "quality"); quality != "" {
@@ -338,7 +375,7 @@ func writeOpenAIParameterFields(writer *multipart.Writer, req ImageRequest, comp
 	if count := outputCount(req.Parameters); count > 0 {
 		_ = writer.WriteField("n", strconv.Itoa(count))
 	}
-	if size := parameterString(req.Parameters, "size"); size != "" {
+	if size := openAIImageSize(req); size != "" {
 		_ = writer.WriteField("size", size)
 	}
 	if quality := parameterString(req.Parameters, "quality"); quality != "" {
@@ -350,6 +387,18 @@ func writeOpenAIParameterFields(writer *multipart.Writer, req ImageRequest, comp
 	if compatible {
 		_ = writer.WriteField("response_format", "b64_json")
 	}
+}
+
+func openAIImageSize(req ImageRequest) string {
+	size := parameterString(req.Parameters, "size")
+	modelName := strings.ToLower(strings.TrimSpace(req.Model.ModelName))
+	if modelName != "gpt-image-2" && !strings.HasPrefix(modelName, "gpt-image-2-") {
+		return size
+	}
+	if mapped, exists := gptImage2AspectRatioSizes[size]; exists {
+		return mapped
+	}
+	return size
 }
 
 func geminiPayload(req ImageRequest) map[string]any {
@@ -365,17 +414,29 @@ func geminiPayload(req ImageRequest) map[string]any {
 			},
 		})
 	}
+	generationConfig := map[string]any{
+		"responseModalities": []string{"IMAGE"},
+	}
+	imageConfig := map[string]any{}
+	if aspectRatio := parameterString(req.Parameters, "size"); strings.Contains(aspectRatio, ":") {
+		imageConfig["aspectRatio"] = aspectRatio
+	}
+	if imageSize := strings.ToUpper(parameterString(req.Parameters, "quality")); imageSize == "1K" || imageSize == "2K" || imageSize == "4K" {
+		imageConfig["imageSize"] = imageSize
+	}
+	if len(imageConfig) > 0 {
+		generationConfig["imageConfig"] = imageConfig
+	}
+
 	payload := map[string]any{
 		"contents": []map[string]any{{
 			"role":  "user",
 			"parts": parts,
 		}},
-		"generationConfig": map[string]any{
-			"responseModalities": []string{"IMAGE"},
-		},
+		"generationConfig": generationConfig,
 	}
 	if count := outputCount(req.Parameters); count > 0 {
-		payload["generationConfig"].(map[string]any)["candidateCount"] = count
+		generationConfig["candidateCount"] = count
 	}
 	return payload
 }

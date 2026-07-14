@@ -17,21 +17,24 @@ func TestReconcileBuiltInRolesBackfillsMissingRolesAndAssetPermissions(t *testin
 	now := time.Now().UTC()
 	tenant := database.Tenant{ID: "tenant-legacy", Name: "Legacy tenant", Status: TenantStatusActive, CreatedAt: now, UpdatedAt: now}
 	adminRole := database.Role{ID: "role-admin", TenantID: tenant.ID, Code: "admin", Name: "Admin", Status: RoleStatusActive, CreatedAt: now, UpdatedAt: now}
+	sellerRole := database.Role{ID: "role-seller", TenantID: tenant.ID, Code: "seller", Name: "Seller", Status: RoleStatusActive, CreatedAt: now, UpdatedAt: now}
 	customRole := database.Role{ID: "role-custom", TenantID: tenant.ID, Code: "catalog-editor", Name: "Catalog editor", Status: RoleStatusActive, CreatedAt: now, UpdatedAt: now}
 	projectRead := database.Permission{ID: "permission-project-read", Code: "project:read", Name: "project:read", CreatedAt: now, UpdatedAt: now}
+	providerRead := database.Permission{ID: "permission-provider-read", Code: "provider:read", Name: "provider:read", CreatedAt: now, UpdatedAt: now}
 	existingGrant := database.RolePermission{ID: "grant-admin-project-read", TenantID: tenant.ID, RoleID: adminRole.ID, PermissionID: projectRead.ID, CreatedAt: now}
 	customGrant := database.RolePermission{ID: "grant-custom-project-read", TenantID: tenant.ID, RoleID: customRole.ID, PermissionID: projectRead.ID, CreatedAt: now}
+	legacySellerProviderGrant := database.RolePermission{ID: "grant-seller-provider-read", TenantID: tenant.ID, RoleID: sellerRole.ID, PermissionID: providerRead.ID, CreatedAt: now}
 
 	if err := db.Create(&tenant).Error; err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
-	if err := db.Create([]database.Role{adminRole, customRole}).Error; err != nil {
+	if err := db.Create([]database.Role{adminRole, sellerRole, customRole}).Error; err != nil {
 		t.Fatalf("create roles: %v", err)
 	}
-	if err := db.Create(&projectRead).Error; err != nil {
+	if err := db.Create([]database.Permission{projectRead, providerRead}).Error; err != nil {
 		t.Fatalf("create permission: %v", err)
 	}
-	if err := db.Create([]database.RolePermission{existingGrant, customGrant}).Error; err != nil {
+	if err := db.Create([]database.RolePermission{existingGrant, customGrant, legacySellerProviderGrant}).Error; err != nil {
 		t.Fatalf("create role permissions: %v", err)
 	}
 
@@ -43,12 +46,38 @@ func TestReconcileBuiltInRolesBackfillsMissingRolesAndAssetPermissions(t *testin
 	assertRoleHasPermissions(t, db, tenant.ID, "seller", []string{"asset:read", "asset:upload", "asset:update", "asset:delete", "asset:download"})
 	assertRoleHasPermissions(t, db, tenant.ID, "viewer", []string{"asset:read", "asset:download"})
 
+	var reconciledPermission database.Permission
+	if err := db.Where("code = ?", "project:read").First(&reconciledPermission).Error; err != nil {
+		t.Fatalf("load reconciled project:read permission: %v", err)
+	}
+	if reconciledPermission.ID != projectRead.ID {
+		t.Fatalf("reconciled permission ID = %q, want existing %q", reconciledPermission.ID, projectRead.ID)
+	}
+	if reconciledPermission.Name != "查看产品" || reconciledPermission.Description != "查看当前租户中有权限访问的产品。" {
+		t.Fatalf("reconciled permission text = %q / %q", reconciledPermission.Name, reconciledPermission.Description)
+	}
+
+	var reconciledAdmin database.Role
+	if err := db.Where("tenant_id = ? AND code = ?", tenant.ID, "admin").First(&reconciledAdmin).Error; err != nil {
+		t.Fatalf("load reconciled admin role: %v", err)
+	}
+	if reconciledAdmin.ID != adminRole.ID || reconciledAdmin.Name != "管理员" || reconciledAdmin.Description == "" {
+		t.Fatalf("reconciled admin role = %#v", reconciledAdmin)
+	}
+
 	var customGrantCount int64
 	if err := db.Model(&database.RolePermission{}).Where("tenant_id = ? AND role_id = ?", tenant.ID, customRole.ID).Count(&customGrantCount).Error; err != nil {
 		t.Fatalf("count custom role grants: %v", err)
 	}
 	if customGrantCount != 1 {
 		t.Fatalf("custom role grant count = %d, want 1", customGrantCount)
+	}
+	var sellerProviderGrantCount int64
+	if err := db.Model(&database.RolePermission{}).Where("tenant_id = ? AND role_id = ? AND permission_id = ?", tenant.ID, sellerRole.ID, providerRead.ID).Count(&sellerProviderGrantCount).Error; err != nil {
+		t.Fatalf("count legacy seller provider grant: %v", err)
+	}
+	if sellerProviderGrantCount != 0 {
+		t.Fatalf("legacy seller provider grant count = %d, want 0", sellerProviderGrantCount)
 	}
 }
 

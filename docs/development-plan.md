@@ -159,11 +159,13 @@ The current `main` branch supports:
 - Frontend tenant user/role administration UI gated by `user:*` and `role:*` permissions, with password inputs kept transient and write requests sent through CSRF-protected backend APIs.
 - Project and project-member management foundations, including backend last-`OWNER` protection for member update/delete paths.
 - MinIO-backed reference/generated/edited image assets with backend authorization and backend-generated authorized JPEG thumbnails for new assets.
-- Admin Provider and model management with encrypted Provider credentials and SSRF-safe Provider URLs.
+- Admin Provider and model management with encrypted Provider credentials, SSRF-safe Provider URLs, Simplified Chinese management copy where practical, Provider timeout up to 600 seconds with explanatory help text, OpenAI `gpt-image-2` official quality presets plus ordered aspect-ratio choices, and Gemini Nano Banana 2 aspect-ratio plus independent 1K/2K/4K resolution templates.
 - Backend task creation, Redis queueing, Worker execution, Provider Adapter AI calls, output assets, usage records, API call logs, and SSE task updates.
 - Frontend workbench submission through backend task APIs and SSE only.
 - Frontend history reads backend-owned project history from `GET /projects/{projectId}/history`, with pagination, generated/edited filtering, stale-response protection, authorized detail/download, and backend `editSourceAssetId` re-edit.
 - Seller workspace project/asset workflow supports project edit, reference upload, asset filtering, asset metadata edit, favorite/delete/download/detail/use-as-reference, and project member list/add/update/remove entry points through backend APIs.
+- Seller workspace project selection is organized as top project tabs that show project name and brand, sort by project `sortOrder`, support drag/drop reorder, and open project editing/member management through a secondary modal.
+- The generation workspace uses a fixed left-side image-type menu, shows project reference thumbnails for quick reference selection, supports ad-hoc upload for the current task, and can quickly save those uploaded references into the project asset library.
 - Admin observability for usage records, operation logs, API call logs, and upload-policy settings.
 - Backend runtime-backed task defaults: tenant admins can store an enabled same-tenant Provider/model pair, task creation resolves it only when both IDs are omitted, and malformed persisted defaults fail closed without creation side effects.
 - Backend runtime-backed task concurrency policy: tenant admins can configure tenant/user/Provider/model limits within environment hard caps, and Worker Redis semaphore acquisition consumes those effective limits before Provider execution.

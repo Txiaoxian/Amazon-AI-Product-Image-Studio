@@ -70,10 +70,20 @@ Error:
 ## Authentication APIs
 
 - `POST /auth/init-admin`: initialize first administrator.
+- `POST /auth/captcha`: create a one-time captcha challenge.
+- `GET /auth/captcha/{captchaId}/image`: read the short-lived PNG captcha image.
 - `POST /auth/login`: login.
 - `POST /auth/logout`: logout.
 - `GET /me`: current user, tenant, roles, and permissions.
 - `PATCH /me/password`: change password.
+
+Login contract:
+
+- The frontend login form sends `email`, `password`, and optional `captchaId` / `captchaCode`; it does not ask users to enter `tenantId`.
+- `tenantId` remains an optional compatibility field for API/operator clients. A deployment with multiple active tenants should configure `AUTH_DEFAULT_TENANT_ID` for the tenant-specific login entry point.
+- Captcha challenges are short-lived, stored server-side in Redis, and consumed atomically on the first validation attempt.
+- An active tenant administrator may omit captcha fields. A non-admin user must submit a valid challenge when `AUTH_CAPTCHA_ENABLED=true`.
+- Invalid password, missing captcha, invalid captcha, and expired captcha use the same sanitized `401 INVALID_CREDENTIALS` response; captcha and role state must not be disclosed.
 
 ## Tenant and user APIs
 
@@ -86,6 +96,8 @@ Error:
 - `POST /users/{userId}/disable`
 - `POST /users/{userId}/enable`
 - `POST /users/{userId}/roles`
+- `GET /users/{userId}/ai-access`
+- `PUT /users/{userId}/ai-access`
 
 All user APIs require tenant scope and appropriate RBAC permissions.
 
@@ -112,6 +124,8 @@ P11 implementation status:
 - The backend rejects self-disable and any operation that would remove the last active admin in a tenant.
 - User creation, update, disable/enable, and role replacement write redacted operation logs.
 - The frontend user/role admin UI consumes these endpoints through the shared API client, sends CSRF headers on writes, gates data loading and controls by permissions, and keeps initial passwords as transient form input only.
+- `GET /users/{userId}/ai-access` and `PUT /users/{userId}/ai-access` are tenant-administrator-only. PUT transactionally replaces `modelIds`, rejects missing/cross-tenant/deleted models, and writes a sanitized operation log.
+- Ordinary users do not receive self-service Provider/model grant endpoints or management controls. They only select from their assigned enabled models in generation parameters.
 
 ## RBAC APIs
 
@@ -143,6 +157,7 @@ P20 role-management implementation status:
 - `PATCH /projects/{projectId}`
 - `DELETE /projects/{projectId}`
 - `GET /projects/{projectId}/members`
+- `GET /projects/{projectId}/member-candidates`
 - `POST /projects/{projectId}/members`
 - `PATCH /projects/{projectId}/members/{userId}`
 - `DELETE /projects/{projectId}/members/{userId}`
@@ -151,10 +166,11 @@ Project object APIs require tenant scope and project membership or admin permiss
 
 Project payload rules for P5:
 
-- Create/update fields: `name`, `brand`, `asin`, `site`, `notes`, `status`.
+- Create/update fields: `name`, `brand`, `asin`, `site`, `notes`, `status`, `sortOrder`.
 - `name` is required.
 - `status` values: `ACTIVE`, `ARCHIVED`.
-- Response records include `id`, `tenantId`, product fields, `status`, `createdBy`, `createdAt`, `updatedAt`.
+- `sortOrder` is an integer used by the seller workspace project tabs. Lists sort by `sortOrder ASC` with deterministic timestamp/ID tie-breakers.
+- Response records include `id`, `tenantId`, product fields, `status`, `sortOrder`, `createdBy`, `createdAt`, `updatedAt`.
 - Deleted projects are soft deleted and excluded from normal lists.
 
 Project member rules for P5:
@@ -164,12 +180,15 @@ Project member rules for P5:
 - Project object APIs must combine RBAC permission and project membership. For example, asset upload requires `asset:upload` and project `OWNER` or `EDITOR`.
 - A project must retain at least one `OWNER`. Updating or deleting the final `OWNER` returns `409 CONFLICT` and must not write a successful project-member operation log.
 - Owner transfer is supported by adding or promoting another `OWNER` before downgrading or removing the original `OWNER`.
+- `GET /projects/{projectId}/member-candidates` returns active same-tenant platform users that may be added to the project. It supports bounded search such as `q`, returns safe display fields only, and must not require callers to type raw user IDs.
+- Project member responses include safe user display fields such as `userName`, `userEmail`, and `userStatus` so the frontend can show names instead of opaque IDs.
 
 Current P5 implementation status:
 
 - Backend implements project CRUD, project member APIs, tenant-scoped object authorization, operation logs, and last-`OWNER` protection for member update/delete paths.
 - Frontend uses project APIs for project selection, project creation/editing, and seller workspace project-member management entry points.
 - Project member management is backend-ready for daily seller workflows; later frontend polish can add more granular member mutation error states without changing this contract.
+- Current seller workspace UI shows projects as top tabs with project name and brand, sorted by `sortOrder`. Dragging tabs updates project order through project update APIs. Project edit/member management is opened from a secondary management modal rather than inline raw-ID forms.
 
 ## Asset APIs
 
@@ -235,7 +254,7 @@ Task request fields for P7:
 - `prompt`: required text prompt.
 - `providerId`: Provider ID in the current tenant. Starting with P13, it may be omitted only together with `modelId`, in which case backend resolves tenant `taskDefaults`.
 - `modelId`: Model ID in the current tenant and owned by the Provider. Starting with P13, it may be omitted only together with `providerId`.
-- `imageType`: optional ecommerce image category such as `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, or `COMPARISON`.
+- `imageType`: optional ecommerce image category such as `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`.
 - `referenceAssetIds`: optional list of project asset IDs for generation/edit references.
 - `editSourceAssetId`: required for edit tasks when the selected model needs an edit source.
 - `parameters`: structured object containing only model-supported values such as size, quality, output format, output count, aspect ratio, and image type settings.
@@ -252,7 +271,7 @@ P7 task API requirements:
 
 - Task APIs require Cookie auth and CSRF for state-changing requests.
 - Project-scoped task APIs must check tenant, RBAC, and project membership or admin access.
-- Task creation must validate Provider/model enabled state, same-tenant ownership, model capabilities, reference asset ownership, and parameter values before enqueue.
+- Task creation must validate Provider/model enabled state, same-tenant ownership, model capabilities, reference asset ownership, and parameter values before enqueue. `IMAGE_GENERATION` with `referenceAssetIds` requires both generation and edit capability because the Worker maps reference-guided generation to the Provider image-edit operation.
 - The frontend must not provide or override `tenantId`, `createdBy`, `status`, `attempt`, `queuedAt`, or other server-owned fields.
 - Redis enqueue payload should contain task ID only; Worker reloads full state from MySQL.
 - P7 may add task API wrappers to the frontend, but P8 owns replacing the main generation workbench flow.
@@ -280,6 +299,7 @@ History query params for P10:
 - `pageNum`: default `1`, positive integer.
 - `pageSize`: default follows backend pagination defaults and must be capped by the same maximum page-size policy used by task/assets lists.
 - `kind`: optional `GENERATED` or `EDITED`; absent means both generated and edited output assets.
+- `imageType`: optional `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`; when present, only results created for that image type are returned.
 
 History response fields for P10:
 
@@ -311,6 +331,11 @@ History API requirements:
 - `POST /providers/{providerId}/enable`
 - `POST /providers/{providerId}/disable`
 
+Provider access boundary:
+
+- All Provider list/detail and mutation endpoints are tenant-administrator-only. A non-admin cannot gain Provider CRUD access merely through a custom `provider:*` permission.
+- Ordinary users do not need Provider endpoints; the assigned model response supplies the safe `providerName` needed by the generation selector.
+
 Provider APIs require `provider:read` or `provider:manage` as appropriate. Provider object APIs must filter by `tenant_id`; cross-tenant Provider IDs should return `404` or a non-revealing authorization failure.
 
 Provider request fields for P6:
@@ -319,7 +344,7 @@ Provider request fields for P6:
 - `name`: display name, required.
 - `baseUrl`: required for custom/OpenAI-compatible Providers; official Provider defaults may be supplied by backend config but still pass SSRF validation before use.
 - `apiKey`: accepted only on create or explicit rotation/update. If omitted on update, the existing encrypted key is retained.
-- `timeoutSeconds`: bounded positive integer.
+- `timeoutSeconds`: bounded positive integer. Current maximum is `600` seconds. The UI should explain that long timeouts are intended for slow image generation and are not a replacement for Worker/task timeout policy.
 - `concurrencyLimit`: bounded non-negative integer. `0` means use global/system default unless implementation chooses a stricter explicit default.
 - `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
 
@@ -368,6 +393,13 @@ P14 Provider lifecycle policy:
 - `POST /models/{modelId}/enable`
 - `POST /models/{modelId}/disable`
 
+Model access boundary:
+
+- Tenant administrators can list and manage all same-tenant models.
+- Non-admin model list/detail reads require the existing read capability and an explicit same-tenant row in `user_model_access_grants`; an unassigned detail is returned as not found.
+- Model create/update/delete/enable/disable operations are tenant-administrator-only even if a custom role contains `model:manage`.
+- Task creation rechecks the selected model grant in the same transaction before any task, event, audit-success row, or queue side effect is created.
+
 Model APIs require `model:read` or `model:manage` as appropriate. Model object APIs must filter by `tenant_id`, and `providerId` must belong to the same tenant.
 
 Model request fields for P6:
@@ -378,18 +410,22 @@ Model request fields for P6:
 - `supportsGenerate`, `supportsEdit`, `supportsMultiReference`, `supportsN`.
 - `maxOutputCount`: positive integer, constrained by `supportsN`.
 - `supportedSizes`, `supportedQualities`, `supportedOutputFormats`: arrays of strings, validated and stored as structured JSON.
+- `supportedQualities` accepts normalized values for two Provider-specific meanings. OpenAI `gpt-image-2` uses the official ordered values `auto`, `low`, `medium`, `high`; the frontend displays them as “自动、低质量、中等质量、高质量”, while the adapter sends the original protocol values unchanged. Gemini output resolution remains `1k`, `2k`, `4k`, stored in lowercase and converted to Provider-required uppercase at request time. Legacy `standard`/`hd` values remain readable for existing rows but are not offered by the `gpt-image-2` preset.
+- For OpenAI and OpenAI-compatible `gpt-image-2`, `supportedSizes` stores the platform's ordered aspect-ratio choices: `auto`, `1:1`, `1.62:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. At Provider-call time the backend adapter converts non-auto ratios into OpenAI-compliant `WIDTHxHEIGHT` values. Existing explicit pixel values remain accepted and pass through unchanged for backward compatibility.
+- Frontend model editing and generation use matching labels for those semantics: OpenAI-style `gpt-image-2` models show “图片比例 / 生成质量”; Gemini models show “画面比例 / 输出分辨率”. Presets are UI helpers only; the backend model row remains the trusted persisted capability source.
 - `pricing`: structured JSON with currency and unit prices; exact Provider billing interpretation can be refined before P7 usage accounting.
 - `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
 
 Model response fields for P6:
 
-- `id`, `tenantId`, `providerId`, `providerName`, `modelName`, `displayName`, capability fields, `pricing`, `status`, `createdAt`, `updatedAt`.
+- `id`, `tenantId`, `providerId`, `providerName`, `providerType`, `modelName`, `displayName`, capability fields, `pricing`, `status`, `createdAt`, `updatedAt`. `providerType` lets generation parameters use the same Provider-specific labels as model configuration without guessing from legacy capability values.
 
 Current P6 model backend implementation status:
 
 - Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
 - Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
 - Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
+- Current frontend Provider/model management uses Simplified Chinese labels where practical and exposes size/ratio and quality capabilities through preset checkboxes rather than free-form-only text entry.
 - Current P7 task execution uses stable `modelId` references. P18 nevertheless tightens admin/data integrity by rejecting duplicate `(tenant_id, provider_id, model_name)` values for non-deleted models in write paths.
 - P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first.
 - P14 tightens model write behavior: create/update/enable must reject disabled, deleted, or cross-tenant Providers; task defaults loaded from persisted settings must also fail closed when the referenced Provider/model is no longer enabled and same-tenant. P18 adds row-lock serialization and rejects duplicate same-Provider non-deleted `model_name` values in write paths.

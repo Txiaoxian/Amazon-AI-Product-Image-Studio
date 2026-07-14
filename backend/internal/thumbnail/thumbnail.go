@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"strings"
 
 	"golang.org/x/image/draw"
@@ -28,7 +29,11 @@ type Image struct {
 }
 
 func Generate(data []byte, mimeType string) (Image, error) {
-	source, err := decode(data, mimeType)
+	return GenerateReader(bytes.NewReader(data), mimeType)
+}
+
+func GenerateReader(reader io.Reader, mimeType string) (Image, error) {
+	source, err := decode(reader, mimeType)
 	if err != nil {
 		return Image{}, err
 	}
@@ -64,14 +69,14 @@ func URL(assetID string) string {
 	return "/api/v1/assets/" + assetID + "/thumbnail"
 }
 
-func decode(data []byte, mimeType string) (image.Image, error) {
+func decode(reader io.Reader, mimeType string) (image.Image, error) {
 	switch strings.ToLower(strings.TrimSpace(mimeType)) {
 	case "image/jpeg":
-		return jpeg.Decode(bytes.NewReader(data))
+		return jpeg.Decode(reader)
 	case "image/png":
-		return png.Decode(bytes.NewReader(data))
+		return png.Decode(reader)
 	case "image/webp":
-		return webp.Decode(bytes.NewReader(data))
+		return webp.Decode(reader)
 	default:
 		return nil, image.ErrFormat
 	}

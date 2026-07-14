@@ -48,6 +48,7 @@ func TestBaseMigrationTenantScopeColumns(t *testing.T) {
 		"image_assets",
 		"ai_providers",
 		"ai_models",
+		"user_model_access_grants",
 		"generation_tasks",
 		"task_events",
 		"task_outputs",
@@ -183,6 +184,25 @@ func TestAIModelsMigrationValidatesTenantScopeAndCapabilityStorage(t *testing.T)
 	} {
 		if !strings.Contains(statement, required) {
 			t.Fatalf("ai_models migration missing %q", required)
+		}
+	}
+}
+
+func TestUserModelAccessGrantMigrationUsesTenantScopedForeignKeys(t *testing.T) {
+	statement := findCreateTableStatement(t, "user_model_access_grants")
+	for _, required := range []string{
+		"tenant_id VARCHAR(36) NOT NULL",
+		"user_id VARCHAR(36) NOT NULL",
+		"model_id VARCHAR(36) NOT NULL",
+		"granted_by VARCHAR(36) NULL",
+		"UNIQUE KEY uk_user_model_access_tenant_user_model (tenant_id, user_id, model_id)",
+		"KEY idx_user_model_access_tenant_user (tenant_id, user_id)",
+		"KEY idx_user_model_access_tenant_model (tenant_id, model_id)",
+		"CONSTRAINT fk_user_model_access_user FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)",
+		"CONSTRAINT fk_user_model_access_model FOREIGN KEY (tenant_id, model_id) REFERENCES ai_models(tenant_id, id)",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Fatalf("user_model_access_grants migration missing %q", required)
 		}
 	}
 }

@@ -59,6 +59,7 @@ function historyListQuery(params: ListProjectHistoryParams): QueryParamRecord {
     pageNum: params.pageNum,
     pageSize: params.pageSize,
     kind: params.kind,
+    imageType: params.imageType,
   }
 }
 

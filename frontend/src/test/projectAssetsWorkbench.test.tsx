@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -33,6 +33,11 @@ const projectMemberSession = {
   permissions: [...authenticatedSession.permissions, 'project:member:manage'],
 }
 
+const projectDeleteSession = {
+  ...authenticatedSession,
+  permissions: [...authenticatedSession.permissions, 'project:delete'],
+}
+
 const project = {
   id: 'project_1',
   tenantId: 'tenant_1',
@@ -54,6 +59,13 @@ const secondProject = {
   asin: 'B000NEXT',
   createdAt: '2026-05-13T00:00:00Z',
   updatedAt: '2026-05-13T00:00:00Z',
+}
+
+const memberCandidate = {
+  userId: 'user_3',
+  userEmail: 'seller@example.com',
+  userName: 'Seller User',
+  userStatus: 'ACTIVE',
 }
 
 const asset = {
@@ -164,6 +176,11 @@ function page(records: unknown[], pageSize = 50) {
   }
 }
 
+async function openProductAssets(user = userEvent.setup()) {
+  await user.click(await screen.findByRole('button', { name: '产品素材' }))
+  await screen.findByRole('heading', { name: '产品素材库' })
+}
+
 describe('project asset workbench', () => {
   beforeEach(() => {
     Object.defineProperty(URL, 'createObjectURL', {
@@ -191,7 +208,10 @@ describe('project asset workbench', () => {
 
     expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '项目资产库' })).not.toBeInTheDocument()
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/me',
+      '/api/v1/auth/captcha',
+    ])
   })
 
   it('adds a project asset reference without downloading a legacy File payload', async () => {
@@ -217,9 +237,11 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: '项目资产库' })).toBeInTheDocument()
+    await openProductAssets(user)
+
+    expect(await screen.findByRole('heading', { name: '产品素材库' })).toBeInTheDocument()
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: '当前项目' })).toHaveValue('project_1')
+    expect(screen.getByRole('combobox', { name: '当前产品' })).toHaveValue('project_1')
 
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
 
@@ -260,12 +282,15 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
+    await openProductAssets(user)
+
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
     expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
 
-    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
-    expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('当前产品'), 'project_2')
+    await openProductAssets(user)
+    expect(await screen.findByText('暂无产品素材')).toBeInTheDocument()
     expect(screen.queryByAltText('reference.png')).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('提示词'), 'Fresh project B prompt')
@@ -327,12 +352,18 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: '项目资产库' })).toBeInTheDocument()
-    expect((await screen.findAllByText('暂无项目')).length).toBeGreaterThan(0)
-    await user.type(screen.getByLabelText('新项目名称'), 'Summer Launch')
-    await user.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '创建第一个产品' }))
+    expect(await screen.findByRole('dialog', { name: '新建产品' })).toBeInTheDocument()
+    await user.type(screen.getByLabelText('产品名称'), 'Summer Launch')
+    await user.click(screen.getByRole('button', { name: '创建产品' }))
 
-    expect((await screen.findAllByText('Summer Launch')).length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('当前产品')).toHaveValue('project_1')
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: '产品管理' })).not.toBeInTheDocument()
+    })
+
+    await openProductAssets(user)
 
     const file = new File(['png-bytes'], 'upload.png', { type: 'image/png' })
     await user.upload(screen.getByLabelText('上传参考图'), file)
@@ -367,15 +398,16 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('项目加载失败，请刷新项目列表后重试。')).toBeInTheDocument()
-    expect(await screen.findByText('暂无已选项目')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '上传参考图' })).toBeDisabled()
+    expect(await screen.findByText('产品加载失败，请刷新产品列表后重试。')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '产品列表加载失败' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新加载产品' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '上传参考图' })).not.toBeInTheDocument()
   })
 
   it.each([
-    [403, 'FORBIDDEN', '没有权限执行该项目资产操作。'],
-    [404, 'NOT_FOUND', '项目或资产不存在，可能已被删除或无权访问。'],
-    [422, 'VALIDATION_ERROR', '请求内容未通过校验，请检查项目名称或图片文件。'],
+    [403, 'FORBIDDEN', '没有权限执行该产品素材操作。'],
+    [404, 'NOT_FOUND', '产品或素材不存在，可能已被删除或无权访问。'],
+    [422, 'VALIDATION_ERROR', '请求内容未通过校验，请检查产品名称或图片文件。'],
     [409, 'CONFLICT', '操作冲突，请刷新后重试。'],
   ])('keeps project metadata unchanged when project update fails with %i', async (status, code, message) => {
     const user = userEvent.setup()
@@ -404,11 +436,11 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Hero image set')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '编辑项目 Summer Launch' }))
-    await user.clear(screen.getByLabelText('项目名称'))
-    await user.type(screen.getByLabelText('项目名称'), 'Renamed Launch')
-    await user.click(screen.getByRole('button', { name: '保存项目' }))
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    expect(await screen.findByRole('dialog', { name: '编辑产品' })).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('产品名称'))
+    await user.type(screen.getByLabelText('产品名称'), 'Renamed Launch')
+    await user.click(screen.getByRole('button', { name: '保存产品' }))
 
     expect((await screen.findAllByText(message)).length).toBeGreaterThan(0)
     expect(screen.getAllByText('Summer Launch').length).toBeGreaterThan(0)
@@ -416,6 +448,79 @@ describe('project asset workbench', () => {
 
     const updateCall = fetchImpl.mock.calls.find(([url, init]) => url === '/api/v1/projects/project_1' && init?.method === 'PATCH')
     expect((updateCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+  })
+
+  it('deletes the selected product after confirmation and switches to the next available product', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const fetchImpl = createProjectDeleteFetch(projectDeleteSession)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    const editor = await screen.findByRole('dialog', { name: '编辑产品' })
+    await user.click(within(editor).getByRole('button', { name: '删除产品' }))
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Summer Launch'))
+    expect(await screen.findByText('产品“Summer Launch”已删除。')).toBeInTheDocument()
+    expect(screen.getByLabelText('当前产品')).toHaveValue('project_2')
+    expect(within(screen.getByRole('tablist', { name: '产品列表' })).queryByRole('tab', { name: /Summer Launch/ })).not.toBeInTheDocument()
+
+    const deleteCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/projects/project_1' && init?.method === 'DELETE',
+    )
+    expect(deleteCall).toBeDefined()
+    expect((deleteCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+  })
+
+  it('keeps the product unchanged when product deletion is not confirmed', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const fetchImpl = createProjectDeleteFetch(projectDeleteSession)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    const editor = await screen.findByRole('dialog', { name: '编辑产品' })
+    await user.click(within(editor).getByRole('button', { name: '删除产品' }))
+
+    expect(fetchImpl.mock.calls.some(([url, init]) => url === '/api/v1/projects/project_1' && init?.method === 'DELETE')).toBe(false)
+    expect(screen.getByLabelText('当前产品')).toHaveValue('project_1')
+    expect(editor).toBeInTheDocument()
+  })
+
+  it('keeps the product visible and shows a safe message when product deletion is rejected', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const fetchImpl = createProjectDeleteFetch(
+      projectDeleteSession,
+      errorResponse(403, 'FORBIDDEN', 'Unsafe backend detail'),
+    )
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    const editor = await screen.findByRole('dialog', { name: '编辑产品' })
+    await user.click(within(editor).getByRole('button', { name: '删除产品' }))
+
+    expect((await screen.findAllByText('没有权限删除该产品。')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Unsafe backend detail')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('当前产品')).toHaveValue('project_1')
+    expect(editor).toBeInTheDocument()
+  })
+
+  it('hides product deletion from accounts without project delete permission', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', createProjectDeleteFetch(authenticatedSession))
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    const editor = await screen.findByRole('dialog', { name: '编辑产品' })
+    expect(within(editor).queryByRole('button', { name: '删除产品' })).not.toBeInTheDocument()
   })
 
   it('discards a late asset response after switching projects', async () => {
@@ -453,8 +558,11 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('option', { name: 'Winter Launch' })).toBeInTheDocument()
-    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
+    await openProductAssets(user)
+
+    await screen.findByLabelText('当前产品')
+    await user.selectOptions(screen.getByLabelText('当前产品'), 'project_2')
+    await openProductAssets(user)
     expect(await screen.findByText('winter.png')).toBeInTheDocument()
 
     firstProjectAssets.resolve(successResponse(page([asset])))
@@ -491,6 +599,8 @@ describe('project asset workbench', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+
+    await openProductAssets(user)
 
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('资产类型'), 'GENERATED')
@@ -529,12 +639,14 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
+    await openProductAssets(user)
+
     await user.click(await screen.findByRole('button', { name: '查看详情 reference.png' }))
     await user.clear(screen.getByLabelText('文件名'))
     await user.type(screen.getByLabelText('文件名'), 'renamed.png')
     await user.click(screen.getByRole('button', { name: '保存元数据' }))
 
-    expect((await screen.findAllByText('请求内容未通过校验，请检查项目名称或图片文件。')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('请求内容未通过校验，请检查产品名称或图片文件。')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('reference.png').length).toBeGreaterThan(0)
     expect(screen.queryByText('renamed.png')).not.toBeInTheDocument()
   })
@@ -572,6 +684,8 @@ describe('project asset workbench', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+
+    await openProductAssets(user)
 
     await user.click(await screen.findByRole('button', { name: '查看详情 reference.png' }))
     await user.clear(screen.getByLabelText('文件名'))
@@ -623,13 +737,15 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
+    await openProductAssets(user)
+
     await user.click(await screen.findByRole('button', { name: '查看详情 reference.png' }))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '资产详情' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '删除' }))
 
-    expect(await screen.findByText('项目资产已删除。')).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
+    expect(await screen.findByText('产品素材已删除。')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '资产详情' })).not.toBeInTheDocument())
+    expect(await screen.findByText('暂无产品素材')).toBeInTheDocument()
     expect(listCalls).toBe(2)
   })
 
@@ -670,16 +786,19 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('option', { name: 'Winter Launch' })).toBeInTheDocument()
+    await openProductAssets(user)
+
+    await screen.findByLabelText('当前产品')
     await user.upload(screen.getByLabelText('上传参考图'), new File(['png-bytes'], 'upload.png', { type: 'image/png' }))
-    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
-    expect(await screen.findByText('暂无项目资产')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('当前产品'), 'project_2')
+    await openProductAssets(user)
+    expect(await screen.findByText('暂无产品素材')).toBeInTheDocument()
 
     upload.resolve(successResponse(uploadedAsset, 201))
 
     await waitFor(() => {
       expect(screen.queryByText('upload.png')).not.toBeInTheDocument()
-      expect(screen.getByLabelText('当前项目')).toHaveValue('project_2')
+      expect(screen.getByLabelText('当前产品')).toHaveValue('project_2')
     })
   })
 
@@ -718,6 +837,8 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
+    await openProductAssets(user)
+
     expect(await screen.findByText('favorite.png')).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('收藏'), 'true')
     await user.click(screen.getByRole('button', { name: '筛选资产' }))
@@ -728,7 +849,7 @@ describe('project asset workbench', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '取消收藏 favorite.png' })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('暂无项目资产')).toBeInTheDocument()
+    expect(screen.getByText('暂无产品素材')).toBeInTheDocument()
   })
 
   it('removes an asset from a category-filtered list after category metadata changes', async () => {
@@ -766,6 +887,8 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
+    await openProductAssets(user)
+
     expect(await screen.findByText('category.png')).toBeInTheDocument()
     await user.type(screen.getByLabelText('筛选分类'), 'reference')
     await user.click(screen.getByRole('button', { name: '筛选资产' }))
@@ -778,7 +901,7 @@ describe('project asset workbench', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '查看详情 category.png' })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('暂无项目资产')).toBeInTheDocument()
+    expect(screen.getByText('暂无产品素材')).toBeInTheDocument()
   })
 
   it('loads and writes project members through real project member APIs', async () => {
@@ -811,6 +934,9 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
         return successResponse([member])
       }
+      if (url === '/api/v1/projects/project_1/member-candidates?pageNum=1&pageSize=100') {
+        return successResponse([memberCandidate])
+      }
       if (url === '/api/v1/projects/project_1/members' && init?.method === 'POST') {
         return successResponse(addedMember, 201)
       }
@@ -824,14 +950,14 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: '项目成员' }))
-    expect(await screen.findByText('user_2')).toBeInTheDocument()
-    await user.type(screen.getByLabelText('成员用户 ID'), 'user_3')
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    expect((await screen.findAllByText('user_2')).length).toBeGreaterThan(0)
+    await user.selectOptions(screen.getByLabelText('选择产品成员'), 'user_3')
     await user.selectOptions(screen.getByLabelText('成员角色'), 'EDITOR')
     await user.click(screen.getByRole('button', { name: '添加' }))
-    expect(await screen.findByText('user_3')).toBeInTheDocument()
-    await user.selectOptions(screen.getByLabelText('项目成员角色 user_2'), 'OWNER')
-    expect(await screen.findByText('项目成员已更新。')).toBeInTheDocument()
+    expect((await screen.findAllByText('user_3')).length).toBeGreaterThan(0)
+    await user.selectOptions(screen.getByLabelText('产品成员角色 user_2'), 'OWNER')
+    expect(await screen.findByText('产品成员已更新。')).toBeInTheDocument()
 
     const postCall = fetchImpl.mock.calls.find(([url, init]) => url === '/api/v1/projects/project_1/members' && init?.method === 'POST')
     const patchCall = fetchImpl.mock.calls.find(([url, init]) => url === '/api/v1/projects/project_1/members/user_2' && init?.method === 'PATCH')
@@ -841,8 +967,8 @@ describe('project asset workbench', () => {
 
   it.each([
     [401, 'AUTHENTICATION_REQUIRED', '登录状态已失效，请重新登录。'],
-    [403, 'FORBIDDEN', '没有权限管理项目成员。'],
-    [404, 'NOT_FOUND', '项目或成员不存在，可能已被删除或无权访问。'],
+    [403, 'FORBIDDEN', '没有权限管理产品成员。'],
+    [404, 'NOT_FOUND', '产品或成员不存在，可能已被删除或无权访问。'],
   ])('shows safe project member list errors for %i', async (status, code, message) => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -863,6 +989,9 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
         return errorResponse(status, code, 'Unsafe backend detail')
       }
+      if (url === '/api/v1/projects/project_1/member-candidates?pageNum=1&pageSize=100') {
+        return successResponse([memberCandidate])
+      }
 
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
@@ -870,13 +999,13 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: '项目成员' }))
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
     expect(await screen.findByText(message)).toBeInTheDocument()
   })
 
   it.each([
-    [409, 'CONFLICT', '项目成员操作冲突，请刷新后重试。'],
-    [422, 'VALIDATION_ERROR', '成员信息未通过校验，请检查用户 ID 和角色。'],
+    [409, 'CONFLICT', '产品成员操作冲突，请刷新后重试。'],
+    [422, 'VALIDATION_ERROR', '成员信息未通过校验，请选择有效用户和角色。'],
   ])('shows safe project member write errors for %i', async (status, code, message) => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -897,6 +1026,9 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/members' && init?.method === 'GET') {
         return successResponse([])
       }
+      if (url === '/api/v1/projects/project_1/member-candidates?pageNum=1&pageSize=100') {
+        return successResponse([memberCandidate])
+      }
       if (url === '/api/v1/projects/project_1/members' && init?.method === 'POST') {
         return errorResponse(status, code, 'Unsafe backend detail')
       }
@@ -907,8 +1039,8 @@ describe('project asset workbench', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: '项目成员' }))
-    await user.type(screen.getByLabelText('成员用户 ID'), 'user_2')
+    await user.click(await screen.findByRole('button', { name: '产品设置' }))
+    await user.selectOptions(screen.getByLabelText('选择产品成员'), 'user_3')
     await user.click(screen.getByRole('button', { name: '添加' }))
 
     expect(await screen.findByText(message)).toBeInTheDocument()
@@ -940,6 +1072,8 @@ describe('project asset workbench', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+
+    await openProductAssets(user)
 
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
@@ -978,4 +1112,37 @@ function deferredResponse() {
   })
 
   return { promise, resolve }
+}
+
+function createProjectDeleteFetch(session: typeof authenticatedSession, deleteResponse = successResponse({ ok: true })) {
+  return vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input)
+
+    if (url === '/api/v1/me') {
+      return successResponse(session)
+    }
+    if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+      return successResponse(page([model], 100))
+    }
+    if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+      return successResponse(page([project, secondProject]))
+    }
+    if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_2/assets?pageNum=1&pageSize=50') {
+      return successResponse(page([]))
+    }
+    if (url.startsWith('/api/v1/projects/project_1/history?') || url.startsWith('/api/v1/projects/project_2/history?')) {
+      return successResponse(page([]))
+    }
+    if (url.startsWith('/api/v1/projects/project_1/tasks?') || url.startsWith('/api/v1/projects/project_2/tasks?')) {
+      return successResponse(page([]))
+    }
+    if (url === '/api/v1/projects/project_1' && init?.method === 'DELETE') {
+      return deleteResponse
+    }
+
+    return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+  })
 }

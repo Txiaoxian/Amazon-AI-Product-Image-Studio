@@ -212,6 +212,11 @@ function page(records: unknown[], pageSize = 50) {
   }
 }
 
+async function openHistoryTab(user = userEvent.setup()) {
+  void user
+  await screen.findByRole('heading', { name: '已完成' })
+}
+
 describe('backend history asset source', () => {
   beforeEach(() => {
     FakeEventSource.instances.length = 0
@@ -229,14 +234,32 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+    await openHistoryTab()
 
     expect(await screen.findByRole('button', { name: '查看结果 hero.png' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看旧本地历史' })).not.toBeInTheDocument()
     expect(screen.queryByText('旧本地历史（兼容）')).not.toBeInTheDocument()
-    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10')
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&imageType=MAIN')
     expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/tasks?pageNum=1&pageSize=50')
     expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50')
     expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50')
+  })
+
+  it('reloads history with the selected image type instead of sharing one product-wide history', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = createHistoryFetch()
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+    await openHistoryTab(user)
+
+    await user.click(screen.getByRole('tab', { name: 'A+ 图片' }))
+
+    await waitFor(() => {
+      const urls = fetchImpl.mock.calls.map(([url]) => String(url))
+      expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&imageType=MAIN')
+      expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&imageType=A_PLUS')
+    })
   })
 
   it('does not request history when no project is selected', async () => {
@@ -247,7 +270,7 @@ describe('backend history asset source', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => url.includes('/history?'))).toBe(false)
   })
 
@@ -256,11 +279,13 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', createHistoryFetch())
 
     render(<App />)
+    await openHistoryTab(user)
 
     expect(await screen.findByRole('button', { name: '查看结果 hero.png' })).toBeInTheDocument()
-    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
+    await user.selectOptions(screen.getByLabelText('当前产品'), 'project_2')
+    await openHistoryTab(user)
 
-    expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
+    expect(await screen.findByText('当前图片类型暂无生成记录')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看结果 hero.png' })).not.toBeInTheDocument()
   })
 
@@ -276,9 +301,10 @@ describe('backend history asset source', () => {
 
     render(<App />)
 
-    await screen.findByRole('option', { name: 'Summer Launch' })
-    await user.selectOptions(screen.getByLabelText('当前项目'), 'project_2')
-    expect(await screen.findByText('当前项目暂无结果历史')).toBeInTheDocument()
+    await screen.findByLabelText('当前产品')
+    await user.selectOptions(screen.getByLabelText('当前产品'), 'project_2')
+    await openHistoryTab(user)
+    expect(await screen.findByText('当前图片类型暂无生成记录')).toBeInTheDocument()
 
     projectOneHistory.resolve(successResponse(page([{ asset: generatedAsset, task }])))
 
@@ -289,7 +315,7 @@ describe('backend history asset source', () => {
 
   it.each([
     [401, 'UNAUTHENTICATED', 'object_key=minio/internal', '登录状态已失效，请重新登录。'],
-    [403, 'FORBIDDEN', 'Authorization: Bearer secret', '没有权限读取该项目历史。'],
+    [403, 'FORBIDDEN', 'Authorization: Bearer secret', '没有权限读取该产品生成记录。'],
     [404, 'NOT_FOUND', 'minio://private-bucket/object.png', '无法读取该结果，可能已被删除或无权访问。'],
   ])('maps /history %s errors to non-leaky feedback', async (status, code, backendMessage, friendlyMessage) => {
     vi.stubGlobal(
@@ -300,6 +326,7 @@ describe('backend history asset source', () => {
     )
 
     render(<App />)
+    await openHistoryTab()
 
     expect(await screen.findByText(friendlyMessage)).toBeInTheDocument()
     expect(screen.queryByText(backendMessage)).not.toBeInTheDocument()
@@ -309,7 +336,7 @@ describe('backend history asset source', () => {
     const user = userEvent.setup()
     const fetchImpl = createHistoryFetch({
       listProjectOneHistory: (url) => {
-        if (url === '/api/v1/projects/project_1/history?pageNum=2&pageSize=10') {
+        if (url === '/api/v1/projects/project_1/history?pageNum=2&pageSize=10&imageType=MAIN') {
           return successResponse({
             records: [{ asset: editedAsset, task: editedTask }],
             total: 11,
@@ -317,7 +344,7 @@ describe('backend history asset source', () => {
             pageSize: 10,
           })
         }
-        if (url === '/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED') {
+        if (url === '/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED&imageType=MAIN') {
           return successResponse({
             records: [{ asset: editedAsset, task: editedTask }],
             total: 1,
@@ -337,6 +364,7 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+    await openHistoryTab(user)
 
     expect(await screen.findByRole('button', { name: '查看结果 hero.png' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一页历史记录' }))
@@ -346,8 +374,8 @@ describe('backend history asset source', () => {
     expect(await screen.findByRole('button', { name: '查看结果 edited.png' })).toBeInTheDocument()
 
     const urls = fetchImpl.mock.calls.map(([url]) => url)
-    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=2&pageSize=10')
-    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED')
+    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=2&pageSize=10&imageType=MAIN')
+    expect(urls).toContain('/api/v1/projects/project_1/history?pageNum=1&pageSize=10&kind=EDITED&imageType=MAIN')
     expect(urls).not.toContain('/api/v1/projects/project_1/assets?kind=GENERATED&pageNum=1&pageSize=50')
     expect(urls).not.toContain('/api/v1/projects/project_1/assets?kind=EDITED&pageNum=1&pageSize=50')
   })
@@ -382,6 +410,7 @@ describe('backend history asset source', () => {
     )
 
     render(<App />)
+    await openHistoryTab()
 
     const image = await screen.findByAltText('hero.png')
     expect(image).toHaveAttribute('src', '/api/v1/assets/asset_generated_1/download')
@@ -403,6 +432,7 @@ describe('backend history asset source', () => {
     )
 
     render(<App />)
+    await openHistoryTab(user)
 
     await user.click(await screen.findByRole('button', { name: '查看结果 hero.png' }))
 
@@ -418,6 +448,7 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+    await openHistoryTab(user)
 
     await user.click(await screen.findByRole('button', { name: '下载结果 hero.png' }))
 
@@ -444,6 +475,7 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+    await openHistoryTab(user)
 
     await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
     expect(await screen.findByText('已准备基于后端资产再次编辑。')).toBeInTheDocument()
@@ -506,6 +538,7 @@ describe('backend history asset source', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
+    await openHistoryTab(user)
 
     await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
     await waitFor(() => {

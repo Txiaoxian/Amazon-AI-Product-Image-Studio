@@ -27,7 +27,7 @@ const (
 	maxProviderNameRunes  = 255
 	maxProviderURLRunes   = 512
 	minTimeoutSeconds     = 1
-	maxTimeoutSeconds     = 300
+	maxTimeoutSeconds     = 600
 	maxConcurrencyLimit   = 1000
 	maxProbeMessageRunes  = 255
 	defaultRequestTimeout = 120

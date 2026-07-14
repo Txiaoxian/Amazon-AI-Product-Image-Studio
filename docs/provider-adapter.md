@@ -26,6 +26,12 @@ Provider records store:
 
 API keys must be encrypted at rest and never returned in full to the frontend.
 
+Provider timeout policy:
+
+- `timeout_seconds` is bounded by the backend Provider API and currently allows `1..600` seconds.
+- Ten-minute timeouts are for slow image-generation calls only. They do not replace task timeout, Worker lease, cancellation, retry, or SSE lifecycle controls.
+- The frontend must show this explanation in Simplified Chinese near the timeout field.
+
 Provider master-key rotation is an operator-only maintenance workflow. It must use a backend CLI with a safe dry-run default and an explicit apply confirmation. Rotation must re-encrypt all eligible active Provider credentials in one database transaction, leave active Provider credential hints and credential-update timestamps unchanged, roll back fully if any active row cannot be processed, crypto-erase credential material from soft-deleted Provider rows, and never print plaintext keys, encrypted payloads, hints, base URLs, or tenant/object details.
 
 Provider soft delete must crypto-erase stored credentials in the same write path. A deleted Provider record may remain as metadata/audit history, but `encrypted_api_key`, `api_key_hint`, and `api_key_updated_at` must be cleared before the delete succeeds. Historical soft-deleted rows created before this policy are scrubbed by the provider key rotation apply workflow.
@@ -89,9 +95,11 @@ P7 runtime boundary:
 Current P7 runtime result:
 
 - Real backend Provider Adapter execution is implemented and merged for OpenAI, Gemini, and OpenAI-compatible Providers.
+- Business-layer `IMAGE_GENERATION` tasks that include `referenceAssetIds` remain generation tasks in the public API, but the Worker maps them to the Provider edit operation so the actual image bytes are sent to `/images/edits`. OpenAI-compatible edit requests use the multipart `image[]` field for every reference.
 - Runtime execution validates the final outbound dial target with SSRF-safe transport before connecting, in addition to save/use-time URL validation.
 - Successful runtime execution writes generated/edited images to MinIO, creates assets and task outputs, records usage/API call logs, and emits output/usage/terminal task events.
 - Provider errors and runtime metadata are recursively redacted. Review fixes explicitly cover the decrypted Provider API key when it appears both as a value and as a nested JSON map key.
+- Known Provider quota failures are normalized to `PROVIDER_INSUFFICIENT_QUOTA`, omit account balances from persisted/user-facing messages, and are not retried automatically.
 - Unknown secrets that are not supplied to the redactor and do not match heuristic rules remain outside automatic detection; configured Provider API keys are supplied as known secrets in the active runtime path.
 
 Current P21 Provider attempt ledger result:
@@ -147,6 +155,33 @@ Models define:
 
 The frontend renders parameters from model capability responses, not hard-coded Provider constants.
 
+Frontend model management provides Provider-specific capability helpers instead of a cross-product of resolution and ratio values:
+
+- OpenAI and OpenAI-compatible `gpt-image-2` models expose a product-friendly aspect-ratio list independently from the official generation-quality values (`auto`, `low`, `medium`, `high`). The UI displays those quality values in Simplified Chinese but persists and submits the original protocol values in official order.
+- The OpenAI adapter converts the configured ratio to a canonical `WIDTHxHEIGHT` immediately before both generation and edit requests. The quality value is not used as a resolution tier and is passed through unchanged.
+- Gemini image models store aspect ratio separately from output resolution (`1k`, `2k`, `4k`). The adapter maps them to `generationConfig.imageConfig.aspectRatio` and uppercase `imageSize` respectively.
+
+Canonical `gpt-image-2` ratio mapping:
+
+| Capability value | Outbound OpenAI size |
+| --- | --- |
+| `auto` | `auto` |
+| `1:1` | `1024x1024` |
+| `1.62:1` | `1296x800` |
+| `2:3` | `1024x1536` |
+| `3:2` | `1536x1024` |
+| `3:4` | `1152x1536` |
+| `4:3` | `1536x1152` |
+| `4:5` | `1024x1280` |
+| `5:4` | `1280x1024` |
+| `9:16` | `864x1536` |
+| `16:9` | `1536x864` |
+| `21:9` | `1792x768` |
+
+These dimensions are multiples of 16 and stay within the official `gpt-image-2` aspect-ratio and resolution limits. Explicit pixel values from legacy model rows pass through unchanged. The conversion applies only to `gpt-image-2` and dated `gpt-image-2-*` snapshots, so other OpenAI-compatible model contracts are not silently rewritten.
+
+The model editor and task form must use matching human-readable labels for those semantics. Presets are convenience templates for administrator data entry; persisted model capability JSON remains authoritative, and runtime task validation continues to use backend model rows rather than frontend constants.
+
 ## Logging
 
 Every Provider call writes `api_call_logs` with:
@@ -161,6 +196,18 @@ Every Provider call writes `api_call_logs` with:
 - Redacted request and response metadata.
 
 Never log API keys, Authorization headers, Cookies, or image base64.
+
+## Large image response handling
+
+OpenAI-compatible relays may return large `b64_json` payloads and are not required to compress them. The worker decodes the `data` array one image at a time into local temporary files, validates from those files, and streams the originals into MinIO. It must not load the full JSON response and decoded image bytes into memory at the same time.
+
+- `PROVIDER_MAX_RESPONSE_SIZE_MB` limits the complete JSON response; default `1024`.
+- `PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB` limits one decoded image; default `512` and must not exceed the response limit.
+- These limits are independent of `UPLOAD_MAX_FILE_SIZE_MB`, which applies to user uploads.
+- Temporary files are removed after success, failure, cancellation, timeout, or retry handoff.
+- Response bodies, Base64 values, and temporary file paths must never be persisted in API call logs.
+
+See [ADR-001](decisions/001-stream-provider-image-responses.md) for the rationale and rejected alternatives.
 
 ## SSRF protection
 

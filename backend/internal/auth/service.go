@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -33,6 +34,8 @@ type Service struct {
 	log              *slog.Logger
 	now              func() time.Time
 	loginRateLimiter LoginRateLimiter
+	captchaStore     CaptchaStore
+	captchaGenerator CaptchaGenerator
 }
 
 type initAdminRequest struct {
@@ -43,9 +46,17 @@ type initAdminRequest struct {
 }
 
 type loginRequest struct {
-	TenantID string `json:"tenantId"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	TenantID    string `json:"tenantId"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	CaptchaID   string `json:"captchaId"`
+	CaptchaCode string `json:"captchaCode"`
+}
+
+type captchaResponse struct {
+	CaptchaID string `json:"captchaId"`
+	ImageURL  string `json:"imageUrl"`
+	ExpiresAt string `json:"expiresAt"`
 }
 
 type changePasswordRequest struct {
@@ -64,15 +75,28 @@ func WithLoginRateLimiter(limiter LoginRateLimiter) Option {
 	}
 }
 
+func WithCaptchaStore(store CaptchaStore) Option {
+	return func(service *Service) {
+		service.captchaStore = store
+	}
+}
+
+func WithCaptchaGenerator(generator CaptchaGenerator) Option {
+	return func(service *Service) {
+		service.captchaGenerator = generator
+	}
+}
+
 func NewService(db *gorm.DB, cfg config.Config, log *slog.Logger, options ...Option) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 
 	service := &Service{
-		db:  db,
-		cfg: cfg,
-		log: log,
+		db:               db,
+		cfg:              cfg,
+		log:              log,
+		captchaGenerator: generateCaptcha,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -83,6 +107,55 @@ func NewService(db *gorm.DB, cfg config.Config, log *slog.Logger, options ...Opt
 		}
 	}
 	return service
+}
+
+func (s *Service) CreateCaptcha(c *gin.Context) {
+	if s.captchaStore == nil || s.captchaGenerator == nil {
+		s.log.Error("captcha service unavailable", slog.String("request_id", httpx.RequestIDFromContext(c)))
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		return
+	}
+	code, imagePNG, err := s.captchaGenerator()
+	if err != nil {
+		s.log.Error("generate captcha failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		return
+	}
+	ttl := s.cfg.Auth.CaptchaTTL
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	captchaID := idgen.New()
+	if err := s.captchaStore.Put(c.Request.Context(), captchaID, CaptchaRecord{Digest: captchaDigest(code), ImagePNG: imagePNG}, ttl); err != nil {
+		s.log.Error("store captcha failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		return
+	}
+	c.Header("Cache-Control", "no-store, max-age=0")
+	httpx.JSON(c, http.StatusCreated, captchaResponse{
+		CaptchaID: captchaID,
+		ImageURL:  "/api/v1/auth/captcha/" + captchaID + "/image",
+		ExpiresAt: s.now().Add(ttl).UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (s *Service) CaptchaImage(c *gin.Context) {
+	if s.captchaStore == nil {
+		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+		return
+	}
+	imagePNG, err := s.captchaStore.Image(c.Request.Context(), c.Param("captchaId"))
+	if errors.Is(err, errCaptchaNotFound) {
+		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+		return
+	}
+	if err != nil {
+		s.log.Error("load captcha image failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		return
+	}
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.Data(http.StatusOK, "image/png", imagePNG)
 }
 
 func (s *Service) InitAdmin(c *gin.Context) {
@@ -134,10 +207,10 @@ func (s *Service) Login(c *gin.Context) {
 		return
 	}
 
-	session, err := s.login(c.Request.Context(), strings.TrimSpace(request.TenantID), email, request.Password, c.ClientIP(), c.Request.UserAgent())
+	session, err := s.login(c.Request.Context(), strings.TrimSpace(request.TenantID), email, request.Password, request.CaptchaID, request.CaptchaCode, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		if errors.Is(err, errTenantRequired) {
-			httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "tenantId is required when multiple tenants exist.", nil)
+			httpx.AbortWithError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password.", nil)
 			return
 		}
 		if errors.Is(err, errInvalidCredentials) {
@@ -336,7 +409,7 @@ func (s *Service) initialized(ctx context.Context, tx *gorm.DB) (bool, error) {
 	return adminCount > 0, nil
 }
 
-func (s *Service) login(ctx context.Context, tenantID string, email string, password string, ip string, userAgent string) (SessionResponse, error) {
+func (s *Service) login(ctx context.Context, tenantID string, email string, password string, captchaID string, captchaCode string, ip string, userAgent string) (SessionResponse, error) {
 	if s.db == nil {
 		return SessionResponse{}, database.ErrNilDB
 	}
@@ -373,6 +446,26 @@ func (s *Service) login(ctx context.Context, tenantID string, email string, pass
 			return SessionResponse{}, err
 		}
 		return SessionResponse{}, errInvalidCredentials
+	}
+
+	if s.cfg.Auth.CaptchaEnabled {
+		admin, err := s.userIsTenantAdmin(ctx, tenantRecord.ID, userRecord.ID)
+		if err != nil {
+			return SessionResponse{}, err
+		}
+		if !admin {
+			valid, err := s.verifyCaptcha(ctx, captchaID, captchaCode)
+			if err != nil {
+				return SessionResponse{}, err
+			}
+			if !valid {
+				_ = s.recordLoginFailure(ctx, tenantRecord.ID, ip, userAgent)
+				if err := s.recordLoginRateLimitFailure(ctx, identity); err != nil {
+					return SessionResponse{}, err
+				}
+				return SessionResponse{}, errInvalidCredentials
+			}
+		}
 	}
 
 	if err := s.resetLoginRateLimit(ctx, identity); err != nil {
@@ -484,6 +577,9 @@ func (s *Service) resetLoginRateLimit(ctx context.Context, identity LoginRateLim
 
 func (s *Service) resolveLoginTenant(ctx context.Context, tenantID string) (database.Tenant, error) {
 	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = strings.TrimSpace(s.cfg.Auth.DefaultTenantID)
+	}
 	if tenantID != "" {
 		var tenantRecord database.Tenant
 		err := s.db.WithContext(ctx).
@@ -511,6 +607,33 @@ func (s *Service) resolveLoginTenant(ctx context.Context, tenantID string) (data
 	}
 
 	return tenants[0], nil
+}
+
+func (s *Service) verifyCaptcha(ctx context.Context, captchaID string, captchaCode string) (bool, error) {
+	captchaID = strings.TrimSpace(captchaID)
+	captchaCode = strings.TrimSpace(captchaCode)
+	if captchaID == "" || captchaCode == "" || s.captchaStore == nil {
+		return false, nil
+	}
+	digest, err := s.captchaStore.ConsumeDigest(ctx, captchaID)
+	if errors.Is(err, errCaptchaNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	expected := []byte(digest)
+	actual := []byte(captchaDigest(captchaCode))
+	return subtle.ConstantTimeCompare(expected, actual) == 1, nil
+}
+
+func (s *Service) userIsTenantAdmin(ctx context.Context, tenantID string, userID string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Table("user_roles").
+		Joins("JOIN roles ON roles.tenant_id = user_roles.tenant_id AND roles.id = user_roles.role_id").
+		Where("user_roles.tenant_id = ? AND user_roles.user_id = ? AND roles.code = ? AND roles.status = ?", tenantID, userID, "admin", RoleStatusActive).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func (s *Service) currentSession(ctx context.Context, tenantID string, userID string, csrfToken string) (SessionResponse, error) {

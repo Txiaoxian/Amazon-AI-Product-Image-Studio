@@ -319,6 +319,62 @@ func TestUserAdminRoleAssignmentValidationAndRollback(t *testing.T) {
 	assertUserAdminOperationLogs(t, db, []string{"user.roles.replace"})
 }
 
+func TestUserAdminModelAccessAssignmentIsAdminOnlyAndTenantScoped(t *testing.T) {
+	router, db, adminSession := newProjectRouteTestRouter(t)
+	sellerRoleID := roleIDByCode(t, db, adminSession.tenantID, "seller")
+	userID := createManagedUser(t, router, adminSession, "model-access@example.com", "Model Access", "model-access-password-123", []string{sellerRoleID})
+	_, firstModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "access-first", "ENABLED", "ENABLED", true, false, false, false, 1)
+	_, secondModelID := seedTaskProviderModel(t, db, adminSession.tenantID, "access-second", "ENABLED", "ENABLED", true, false, false, false, 1)
+
+	replaceResponse := performJSON(router, http.MethodPut, "/api/v1/users/"+userID+"/ai-access", map[string]any{
+		"modelIds": []string{firstModelID, secondModelID},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if replaceResponse.Code != http.StatusOK {
+		t.Fatalf("replace model access status = %d, want %d: %s", replaceResponse.Code, http.StatusOK, replaceResponse.Body.String())
+	}
+	data := decodeData(t, replaceResponse)
+	if stringField(t, data, "userId") != userID {
+		t.Fatalf("model access user id = %#v, want %q", data["userId"], userID)
+	}
+	if count := db.Model(&database.UserModelAccessGrant{}).Where("tenant_id = ? AND user_id = ?", adminSession.tenantID, userID).Find(&[]database.UserModelAccessGrant{}).RowsAffected; count != 2 {
+		t.Fatalf("stored model grants = %d, want 2", count)
+	}
+
+	getResponse := performJSON(router, http.MethodGet, "/api/v1/users/"+userID+"/ai-access", nil, adminSession.cookies, nil)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("get model access status = %d, want %d: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+	}
+
+	ordinarySession := loginProjectRouteUser(t, router, adminSession.tenantID, "model-access@example.com", "model-access-password-123")
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		response := performJSON(router, method, "/api/v1/users/"+userID+"/ai-access", map[string]any{"modelIds": []string{firstModelID}}, ordinarySession.cookies, ordinarySession.csrfHeader())
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("ordinary user %s model access status = %d, want %d", method, response.Code, http.StatusForbidden)
+		}
+	}
+
+	seedOtherTenantTask(t, db)
+	crossTenantResponse := performJSON(router, http.MethodPut, "/api/v1/users/"+userID+"/ai-access", map[string]any{
+		"modelIds": []string{"model-tenant-b"},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if crossTenantResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cross-tenant model grant status = %d, want %d", crossTenantResponse.Code, http.StatusUnprocessableEntity)
+	}
+	var remaining int64
+	if err := db.Model(&database.UserModelAccessGrant{}).Where("tenant_id = ? AND user_id = ?", adminSession.tenantID, userID).Count(&remaining).Error; err != nil {
+		t.Fatalf("count grants after invalid replacement: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("grants after invalid replacement = %d, want rollback to 2", remaining)
+	}
+	duplicateResponse := performJSON(router, http.MethodPut, "/api/v1/users/"+userID+"/ai-access", map[string]any{
+		"modelIds": []string{firstModelID, firstModelID},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if duplicateResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate model grant status = %d, want %d", duplicateResponse.Code, http.StatusUnprocessableEntity)
+	}
+}
+
 func TestUserAdminRolesPermissionsAndUserEndpointsRequireRBAC(t *testing.T) {
 	router, db, adminSession := newProjectRouteTestRouter(t)
 	adminRolesResponse := performJSON(router, http.MethodGet, "/api/v1/roles", nil, adminSession.cookies, nil)

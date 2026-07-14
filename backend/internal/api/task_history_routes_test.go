@@ -122,6 +122,11 @@ func TestTaskHistoryRoutesKindFilterAndPaginationAreDeterministic(t *testing.T) 
 	seedTaskHistoryRecord(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-a", "asset-a", assetpkg.KindGenerated, sameTime, false)
 	seedTaskHistoryRecord(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-c", "asset-c", assetpkg.KindEdited, sameTime, false)
 	seedTaskHistoryRecord(t, db, adminSession.tenantID, projectID, adminSession.userID, "task-b", "asset-b", assetpkg.KindGenerated, sameTime, false)
+	if err := db.Model(&database.GenerationTask{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, "task-c").
+		Update("image_type", "A_PLUS").Error; err != nil {
+		t.Fatalf("set task-c image type: %v", err)
+	}
 
 	pageOne := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
 	if pageOne.Code != http.StatusOK {
@@ -155,6 +160,15 @@ func TestTaskHistoryRoutesKindFilterAndPaginationAreDeterministic(t *testing.T) 
 	editedRecords := recordsField(t, decodeData(t, editedOnly))
 	assertHistoryRecord(t, editedRecords[0].(map[string]any), "asset-c", assetpkg.KindEdited, "task-c")
 
+	aPlusOnly := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?imageType=A_PLUS", nil, adminSession.cookies, nil)
+	if aPlusOnly.Code != http.StatusOK {
+		t.Fatalf("A+ history status = %d, want %d: %s", aPlusOnly.Code, http.StatusOK, aPlusOnly.Body.String())
+	}
+	aPlusData := decodeData(t, aPlusOnly)
+	assertPageMeta(t, aPlusData, 1, 1, 20)
+	aPlusRecords := recordsField(t, aPlusData)
+	assertHistoryRecord(t, aPlusRecords[0].(map[string]any), "asset-c", assetpkg.KindEdited, "task-c")
+
 	capped := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?pageSize=1000", nil, adminSession.cookies, nil)
 	if capped.Code != http.StatusOK {
 		t.Fatalf("capped history status = %d, want %d: %s", capped.Code, http.StatusOK, capped.Body.String())
@@ -165,6 +179,10 @@ func TestTaskHistoryRoutesKindFilterAndPaginationAreDeterministic(t *testing.T) 
 func TestTaskHistoryRoutesRejectInvalidQuery(t *testing.T) {
 	router, _, _, adminSession := newTaskRouteTestRouter(t)
 	projectID := createTaskTestProject(t, router, adminSession, "History Invalid Query Project")
+	promotion := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?imageType=PROMOTION", nil, adminSession.cookies, nil)
+	if promotion.Code != http.StatusOK {
+		t.Fatalf("promotion history status = %d, want %d: %s", promotion.Code, http.StatusOK, promotion.Body.String())
+	}
 
 	for _, path := range []string{
 		"/api/v1/projects/" + projectID + "/history?pageNum=0",
@@ -172,6 +190,7 @@ func TestTaskHistoryRoutesRejectInvalidQuery(t *testing.T) {
 		"/api/v1/projects/" + projectID + "/history?pageSize=0",
 		"/api/v1/projects/" + projectID + "/history?pageSize=abc",
 		"/api/v1/projects/" + projectID + "/history?kind=REFERENCE",
+		"/api/v1/projects/" + projectID + "/history?imageType=UNKNOWN",
 	} {
 		response := performJSON(router, http.MethodGet, path, nil, adminSession.cookies, nil)
 		if response.Code != http.StatusUnprocessableEntity {

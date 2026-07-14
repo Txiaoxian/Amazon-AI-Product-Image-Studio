@@ -156,8 +156,8 @@ func TestProviderRoutesEnforceRBACAndTenantScope(t *testing.T) {
 	sellerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "seller-provider@example.com", "seller-provider-password-123")
 
 	readResponse := performJSON(router, http.MethodGet, "/api/v1/providers/"+providerID, nil, sellerSession.cookies, nil)
-	if readResponse.Code != http.StatusOK {
-		t.Fatalf("seller read provider status = %d, want %d: %s", readResponse.Code, http.StatusOK, readResponse.Body.String())
+	if readResponse.Code != http.StatusForbidden {
+		t.Fatalf("seller read provider status = %d, want %d: %s", readResponse.Code, http.StatusForbidden, readResponse.Body.String())
 	}
 	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/providers/"+providerID, map[string]string{"name": "Blocked"}, sellerSession.cookies, sellerSession.csrfHeader())
 	if updateResponse.Code != http.StatusForbidden {

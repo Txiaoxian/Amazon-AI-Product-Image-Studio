@@ -1,9 +1,12 @@
 package task
 
 type GeneratedImageOutput struct {
-	Data     []byte
-	MIMEType string
-	Metadata map[string]any
+	Data      []byte
+	FilePath  string
+	SizeBytes int64
+	Temporary bool
+	MIMEType  string
+	Metadata  map[string]any
 }
 
 type UsageResult struct {

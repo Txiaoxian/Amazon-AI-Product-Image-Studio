@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
+  Layers3,
   Pencil,
   Plus,
   Power,
@@ -13,8 +14,11 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { isApiClientError } from '../../api/client'
+import { modelApi as defaultModelApi, type ModelApi } from '../../api/models'
 import { userAdminApi as defaultUserAdminApi, type UserAdminApi } from '../../api/userAdmin'
-import type { UserId, UserStatus } from '../../types/platform'
+import { permissionCopy } from '../../lib/permissionCatalog'
+import { loadAllModelsForAccess } from '../../lib/userModelAccess'
+import type { Model, UserId, UserStatus } from '../../types/platform'
 import type {
   CurrentTenantAdminResponse,
   UserAdminPermission,
@@ -23,7 +27,9 @@ import type {
   UserAdminUser,
 } from '../../types/userAdmin'
 import { Button } from '../ui/Button'
+import { EditorDrawer } from '../ui/EditorDrawer'
 import { Modal } from '../ui/Modal'
+import { UserModelAccessEditor } from './UserModelAccessEditor'
 
 type IdentityAdminTab = 'users' | 'roles'
 
@@ -38,7 +44,9 @@ interface UserRoleAdminPanelProps {
   canReadRoles: boolean
   canManageRoles: boolean
   canManageTenant: boolean
+  canManageModelAccess?: boolean
   onClose: () => void
+  modelApi?: ModelApi
   userAdminApi?: UserAdminApi
 }
 
@@ -88,13 +96,16 @@ export function UserRoleAdminPanel({
   canReadRoles,
   canManageRoles,
   canManageTenant,
+  canManageModelAccess = false,
   onClose,
+  modelApi = defaultModelApi,
   userAdminApi = defaultUserAdminApi,
 }: UserRoleAdminPanelProps) {
   const panelSeqRef = useRef(0)
   const usersRequestSeqRef = useRef(0)
   const rolesRequestSeqRef = useRef(0)
   const tenantRequestSeqRef = useRef(0)
+  const modelAccessRequestSeqRef = useRef(0)
   const availableTabs = useMemo(
     () => getAvailableTabs({ canCreateUsers, canDisableUsers, canManageRoles, canReadRoles, canReadUsers, canUpdateUsers }),
     [canCreateUsers, canDisableUsers, canManageRoles, canReadRoles, canReadUsers, canUpdateUsers],
@@ -124,6 +135,12 @@ export function UserRoleAdminPanel({
   const [roleEditUserId, setRoleEditUserId] = useState<string | null>(null)
   const [roleDraftIds, setRoleDraftIds] = useState<string[]>([])
   const [isSavingRoles, setSavingRoles] = useState(false)
+  const [modelAccessUserId, setModelAccessUserId] = useState<string | null>(null)
+  const [availableModels, setAvailableModels] = useState<Model[]>([])
+  const [modelAccessDraftIds, setModelAccessDraftIds] = useState<string[]>([])
+  const [isLoadingModelAccess, setLoadingModelAccess] = useState(false)
+  const [isSavingModelAccess, setSavingModelAccess] = useState(false)
+  const [modelAccessError, setModelAccessError] = useState<string | null>(null)
   const [isEditingTenant, setEditingTenant] = useState(false)
   const [tenantNameDraft, setTenantNameDraft] = useState('')
   const [isSavingTenant, setSavingTenant] = useState(false)
@@ -145,6 +162,12 @@ export function UserRoleAdminPanel({
     setEditDisplayName('')
     setRoleEditUserId(null)
     setRoleDraftIds([])
+    setModelAccessUserId(null)
+    setAvailableModels([])
+    setModelAccessDraftIds([])
+    setLoadingModelAccess(false)
+    setSavingModelAccess(false)
+    setModelAccessError(null)
     setCurrentTenant(null)
     setEditingTenant(false)
     setTenantNameDraft('')
@@ -163,6 +186,7 @@ export function UserRoleAdminPanel({
       usersRequestSeqRef.current += 1
       rolesRequestSeqRef.current += 1
       tenantRequestSeqRef.current += 1
+      modelAccessRequestSeqRef.current += 1
       resetTransientState()
       return
     }
@@ -293,6 +317,7 @@ export function UserRoleAdminPanel({
     usersRequestSeqRef.current += 1
     rolesRequestSeqRef.current += 1
     tenantRequestSeqRef.current += 1
+    modelAccessRequestSeqRef.current += 1
     setLoadingTenant(false)
     setCreateDraft(emptyCreateDraft())
     onClose()
@@ -442,6 +467,72 @@ export function UserRoleAdminPanel({
     }
   }
 
+  const startModelAccessEdit = async (user: UserAdminUser) => {
+    if (!canManageModelAccess) {
+      return
+    }
+    const panelSeq = panelSeqRef.current
+    const requestSeq = modelAccessRequestSeqRef.current + 1
+    modelAccessRequestSeqRef.current = requestSeq
+    setModelAccessUserId(user.id)
+    setAvailableModels([])
+    setModelAccessDraftIds([])
+    setModelAccessError(null)
+    setLoadingModelAccess(true)
+    try {
+      const [models, access] = await Promise.all([
+        loadAllModelsForAccess(modelApi),
+        userAdminApi.getUserModelAccess(user.id),
+      ])
+      if (modelAccessRequestSeqRef.current !== requestSeq || panelSeqRef.current !== panelSeq || !isOpen) {
+        return
+      }
+      setAvailableModels(models)
+      setModelAccessDraftIds(access.modelIds)
+    } catch (error) {
+      if (modelAccessRequestSeqRef.current === requestSeq && panelSeqRef.current === panelSeq) {
+        setModelAccessError(formatAdminError(error))
+      }
+    } finally {
+      if (modelAccessRequestSeqRef.current === requestSeq && panelSeqRef.current === panelSeq) {
+        setLoadingModelAccess(false)
+      }
+    }
+  }
+
+  const cancelModelAccessEdit = () => {
+    modelAccessRequestSeqRef.current += 1
+    setModelAccessUserId(null)
+    setAvailableModels([])
+    setModelAccessDraftIds([])
+    setModelAccessError(null)
+    setLoadingModelAccess(false)
+  }
+
+  const saveUserModelAccess = async () => {
+    if (!csrfToken || !modelAccessUserId) {
+      setModelAccessError('登录状态缺少 CSRF 凭据，请重新登录。')
+      return
+    }
+    if (!canManageModelAccess) {
+      setModelAccessError('只有管理员可以分配中转站和模型。')
+      return
+    }
+
+    setSavingModelAccess(true)
+    setModelAccessError(null)
+    setNotice(null)
+    try {
+      await userAdminApi.replaceUserModelAccess(modelAccessUserId, { modelIds: modelAccessDraftIds }, csrfToken)
+      setNotice('用户可用模型已更新。')
+      cancelModelAccessEdit()
+    } catch (error) {
+      setModelAccessError(formatAdminError(error))
+    } finally {
+      setSavingModelAccess(false)
+    }
+  }
+
   const createCustomRole = async () => {
     if (roleMutation) {
       return
@@ -557,9 +648,15 @@ export function UserRoleAdminPanel({
   }
 
   const totalPages = Math.max(1, Math.ceil(usersPage.total / usersPage.pageSize))
+  const displayNameUser = usersPage.records.find((user) => user.id === editingUserId) ?? null
+  const roleEditingUser = usersPage.records.find((user) => user.id === roleEditUserId) ?? null
+  const modelAccessUser = usersPage.records.find((user) => user.id === modelAccessUserId) ?? null
+  const editingRole = roles.find((role) => role.id === editingRoleId) ?? null
+  const permissionEditingRole = roles.find((role) => role.id === permissionEditRoleId) ?? null
 
   return (
-    <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={handleClose} title="用户与角色管理">
+    <>
+      <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={handleClose} title="用户与角色管理">
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="inline-flex rounded-md border border-ink-200 bg-ink-50 p-1">
@@ -667,38 +764,32 @@ export function UserRoleAdminPanel({
                         actionId={userActionId}
                         canDisableUsers={canDisableUsers}
                         canManageRoles={canManageRoles}
+                        canManageModelAccess={canManageModelAccess}
                         canReadRoles={canReadRoles}
                         canUpdateUsers={canUpdateUsers}
                         currentUserId={currentUserId}
-                        editDisplayName={editDisplayName}
-                        editingUserId={editingUserId}
-                        isSavingRoles={isSavingRoles}
-                        isUpdatingUser={isUpdatingUser}
                         key={user.id}
-                        onCancelEdit={() => {
-                          setEditingUserId(null)
-                          setEditDisplayName('')
-                        }}
                         onEditDisplayName={(selected) => {
+                          setRoleEditUserId(null)
+                          cancelModelAccessEdit()
                           setEditingUserId(selected.id)
                           setEditDisplayName(selected.displayName)
                         }}
-                        onRoleDraftChange={setRoleDraftIds}
-                        onSaveDisplayName={() => void saveUserDisplayName()}
-                        onSaveRoles={() => void saveUserRoles()}
                         onStatusAction={(selected) => void runStatusAction(selected)}
-                        roleDraftIds={roleDraftIds}
-                        roleEditUserId={roleEditUserId}
-                        roles={roles}
-                        setEditDisplayName={setEditDisplayName}
                         user={user}
                         onStartRoleEdit={(selected) => {
+                          setEditingUserId(null)
+                          setEditDisplayName('')
+                          cancelModelAccessEdit()
                           setRoleEditUserId(selected.id)
                           setRoleDraftIds(selected.roles.map((role) => role.id))
                         }}
-                        onCancelRoleEdit={() => {
+                        onStartModelAccessEdit={(selected) => {
+                          setEditingUserId(null)
+                          setEditDisplayName('')
                           setRoleEditUserId(null)
                           setRoleDraftIds([])
+                          void startModelAccessEdit(selected)
                         }}
                       />
                     ))}
@@ -744,28 +835,17 @@ export function UserRoleAdminPanel({
             canManageRoles={canManageRoles}
             createDraft={createRoleDraft}
             deleteConfirmRoleId={deleteConfirmRoleId}
-            editDraft={editRoleDraft}
-            editingRoleId={editingRoleId}
             error={rolesError}
             isLoading={isLoadingRoles}
             mutationId={roleMutation}
             onCancelDelete={() => setDeleteConfirmRoleId(null)}
-            onCancelEdit={() => {
-              setEditingRoleId(null)
-              setEditRoleDraft(null)
-            }}
-            onCancelPermissions={() => {
-              setPermissionEditRoleId(null)
-              setPermissionDraftIds([])
-            }}
             onConfirmDelete={(roleId) => void deleteCustomRole(roleId)}
             onCreateDraftChange={setCreateRoleDraft}
             onCreateRole={() => void createCustomRole()}
-            onEditDraftChange={setEditRoleDraft}
             onRequestDelete={setDeleteConfirmRoleId}
-            onSaveEdit={() => void saveCustomRole()}
-            onSavePermissions={() => void saveRolePermissions()}
             onStartEdit={(role) => {
+              setPermissionEditRoleId(null)
+              setPermissionDraftIds([])
               setEditingRoleId(role.id)
               setEditRoleDraft({
                 name: role.name,
@@ -774,20 +854,188 @@ export function UserRoleAdminPanel({
               })
             }}
             onStartPermissions={(role) => {
+              setEditingRoleId(null)
+              setEditRoleDraft(null)
               setPermissionEditRoleId(role.id)
               setPermissionDraftIds((role.permissions ?? []).map((permission) => String(permission.id)))
             }}
-            onPermissionDraftChange={setPermissionDraftIds}
-            permissionDraftIds={permissionDraftIds}
-            permissionEditRoleId={permissionEditRoleId}
             permissions={permissions}
             roles={roles}
           />
         ) : null}
-      </div>
-    </Modal>
-  )
+        </div>
+      </Modal>
 
+      <EditorDrawer
+        isOpen={isOpen && Boolean(displayNameUser)}
+        onClose={() => {
+          setEditingUserId(null)
+          setEditDisplayName('')
+        }}
+        title="编辑用户"
+      >
+        {displayNameUser ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveUserDisplayName()
+            }}
+          >
+            <div>
+              <p className="text-sm font-semibold text-ink-900">{displayNameUser.displayName}</p>
+              <p className="mt-1 text-xs text-ink-500">{displayNameUser.email}</p>
+            </div>
+            <Field label="显示名">
+              <input
+                aria-label={`新的显示名 ${displayNameUser.email}`}
+                autoFocus
+                className="field-input"
+                onChange={(event) => setEditDisplayName(event.target.value)}
+                required
+                value={editDisplayName}
+              />
+            </Field>
+            <DrawerActions>
+              <Button disabled={isUpdatingUser} icon={isUpdatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
+                保存
+              </Button>
+              <Button disabled={isUpdatingUser} onClick={() => {
+                setEditingUserId(null)
+                setEditDisplayName('')
+              }}>
+                取消
+              </Button>
+            </DrawerActions>
+          </form>
+        ) : null}
+      </EditorDrawer>
+
+      <EditorDrawer
+        isOpen={isOpen && Boolean(roleEditingUser)}
+        onClose={() => {
+          setRoleEditUserId(null)
+          setRoleDraftIds([])
+        }}
+        title="分配用户角色"
+      >
+        {roleEditingUser ? (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-ink-900">{roleEditingUser.displayName}</p>
+              <p className="mt-1 text-xs text-ink-500">{roleEditingUser.email}</p>
+            </div>
+            <RoleCheckboxes label={`角色分配 ${roleEditingUser.email}`} onChange={setRoleDraftIds} roleIds={roleDraftIds} roles={roles} />
+            <DrawerActions>
+              <Button disabled={isSavingRoles} icon={isSavingRoles ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} onClick={() => void saveUserRoles()} variant="primary">
+                保存角色
+              </Button>
+              <Button disabled={isSavingRoles} onClick={() => {
+                setRoleEditUserId(null)
+                setRoleDraftIds([])
+              }}>
+                取消
+              </Button>
+            </DrawerActions>
+          </div>
+        ) : null}
+      </EditorDrawer>
+
+      <EditorDrawer isOpen={isOpen && Boolean(modelAccessUser)} onClose={cancelModelAccessEdit} title="分配可用模型" widthClass="max-w-2xl">
+        {modelAccessUser ? (
+          <UserModelAccessEditor
+            error={modelAccessError}
+            isLoading={isLoadingModelAccess}
+            isSaving={isSavingModelAccess}
+            modelIds={modelAccessDraftIds}
+            models={availableModels}
+            onCancel={cancelModelAccessEdit}
+            onChange={setModelAccessDraftIds}
+            onSave={() => void saveUserModelAccess()}
+            userEmail={modelAccessUser.email}
+          />
+        ) : null}
+      </EditorDrawer>
+
+      <EditorDrawer
+        isOpen={isOpen && Boolean(editingRole && editRoleDraft)}
+        onClose={() => {
+          setEditingRoleId(null)
+          setEditRoleDraft(null)
+        }}
+        title="编辑角色"
+      >
+        {editingRole && editRoleDraft ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveCustomRole()
+            }}
+          >
+            <div>
+              <p className="text-sm font-semibold text-ink-900">{editingRole.name}</p>
+              <p className="mt-1 text-xs text-ink-500">角色代码：{editingRole.code}</p>
+            </div>
+            <Field label="编辑角色名称">
+              <input className="field-input" onChange={(event) => setEditRoleDraft({ ...editRoleDraft, name: event.target.value })} required value={editRoleDraft.name} />
+            </Field>
+            <Field label="编辑角色说明">
+              <input className="field-input" onChange={(event) => setEditRoleDraft({ ...editRoleDraft, description: event.target.value })} value={editRoleDraft.description} />
+            </Field>
+            <Field label="编辑角色状态">
+              <select className="field-input" onChange={(event) => setEditRoleDraft({ ...editRoleDraft, status: event.target.value as UserAdminRoleStatus })} value={editRoleDraft.status}>
+                <option value="ACTIVE">启用</option>
+                <option value="DISABLED">禁用</option>
+              </select>
+            </Field>
+            <DrawerActions>
+              <Button disabled={Boolean(roleMutation)} icon={roleMutation === editingRole.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
+                保存角色
+              </Button>
+              <Button disabled={Boolean(roleMutation)} onClick={() => {
+                setEditingRoleId(null)
+                setEditRoleDraft(null)
+              }}>
+                取消
+              </Button>
+            </DrawerActions>
+          </form>
+        ) : null}
+      </EditorDrawer>
+
+      <EditorDrawer
+        isOpen={isOpen && Boolean(permissionEditingRole)}
+        onClose={() => {
+          setPermissionEditRoleId(null)
+          setPermissionDraftIds([])
+        }}
+        title="配置角色权限"
+        widthClass="max-w-2xl"
+      >
+        {permissionEditingRole ? (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-ink-900">{permissionEditingRole.name}</p>
+              <p className="mt-1 text-xs text-ink-500">为该角色选择可用权限，修改将在保存后生效。</p>
+            </div>
+            <PermissionCheckboxes onChange={setPermissionDraftIds} permissionIds={permissionDraftIds} permissions={permissions} />
+            <DrawerActions>
+              <Button disabled={Boolean(roleMutation)} icon={roleMutation === permissionEditingRole.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} onClick={() => void saveRolePermissions()} variant="primary">
+                保存权限
+              </Button>
+              <Button disabled={Boolean(roleMutation)} onClick={() => {
+                setPermissionEditRoleId(null)
+                setPermissionDraftIds([])
+              }}>
+                取消
+              </Button>
+            </DrawerActions>
+          </div>
+        ) : null}
+      </EditorDrawer>
+    </>
+  )
 }
 
 interface CreateUserFormProps {
@@ -867,57 +1115,34 @@ function CreateUserForm({ canManageRoles, draft, error, isSaving, onDraftChange,
 interface UserListItemProps {
   user: UserAdminUser
   currentUserId: UserId | string
-  roles: UserAdminRole[]
   canUpdateUsers: boolean
   canDisableUsers: boolean
   canReadRoles: boolean
   canManageRoles: boolean
+  canManageModelAccess: boolean
   actionId: string | null
-  editingUserId: string | null
-  editDisplayName: string
-  isUpdatingUser: boolean
-  roleEditUserId: string | null
-  roleDraftIds: string[]
-  isSavingRoles: boolean
-  setEditDisplayName: (value: string) => void
   onEditDisplayName: (user: UserAdminUser) => void
-  onCancelEdit: () => void
-  onSaveDisplayName: () => void
   onStatusAction: (user: UserAdminUser) => void
   onStartRoleEdit: (user: UserAdminUser) => void
-  onCancelRoleEdit: () => void
-  onRoleDraftChange: (roleIds: string[]) => void
-  onSaveRoles: () => void
+  onStartModelAccessEdit: (user: UserAdminUser) => void
 }
 
 function UserListItem({
   actionId,
   canDisableUsers,
   canManageRoles,
+  canManageModelAccess,
   canReadRoles,
   canUpdateUsers,
   currentUserId,
-  editDisplayName,
-  editingUserId,
-  isSavingRoles,
-  isUpdatingUser,
-  onCancelEdit,
-  onCancelRoleEdit,
   onEditDisplayName,
-  onRoleDraftChange,
-  onSaveDisplayName,
-  onSaveRoles,
+  onStartModelAccessEdit,
   onStartRoleEdit,
   onStatusAction,
-  roleDraftIds,
-  roleEditUserId,
-  roles,
-  setEditDisplayName,
   user,
 }: UserListItemProps) {
   const isCurrentUser = user.id === currentUserId
-  const isEditingDisplayName = editingUserId === user.id
-  const isEditingRoles = roleEditUserId === user.id
+  const isAdminUser = user.roles.some((role) => role.code === 'admin')
   const isPending = actionId === user.id
   const statusActionLabel = user.status === 'ACTIVE' ? '禁用' : '启用'
 
@@ -958,6 +1183,17 @@ function UserListItem({
               <ShieldCheck className="h-4 w-4" />
             </button>
           ) : null}
+          {canManageModelAccess && !isAdminUser ? (
+            <button
+              aria-label={`分配可用模型 ${user.email}`}
+              className="icon-button h-8 w-8"
+              onClick={() => onStartModelAccessEdit(user)}
+              title="分配可用中转站与模型"
+              type="button"
+            >
+              <Layers3 className="h-4 w-4" />
+            </button>
+          ) : null}
           {canDisableUsers ? (
             <button
               aria-label={`${statusActionLabel}用户 ${user.email}`}
@@ -983,43 +1219,6 @@ function UserListItem({
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           安全保护：不能禁用当前登录用户。
         </p>
-      ) : null}
-
-      {isEditingDisplayName ? (
-        <form
-          className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onSaveDisplayName()
-          }}
-        >
-          <input
-            aria-label={`新的显示名 ${user.email}`}
-            className="field-input"
-            onChange={(event) => setEditDisplayName(event.target.value)}
-            value={editDisplayName}
-          />
-          <Button disabled={isUpdatingUser} icon={isUpdatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
-            保存
-          </Button>
-          <Button disabled={isUpdatingUser} onClick={onCancelEdit}>
-            取消
-          </Button>
-        </form>
-      ) : null}
-
-      {isEditingRoles ? (
-        <div className="mt-3 space-y-3 rounded-md border border-ink-200 bg-ink-50 p-3">
-          <RoleCheckboxes label={`角色分配 ${user.email}`} onChange={onRoleDraftChange} roleIds={roleDraftIds} roles={roles} />
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={isSavingRoles} icon={isSavingRoles ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} onClick={onSaveRoles} variant="primary">
-              保存角色
-            </Button>
-            <Button disabled={isSavingRoles} onClick={onCancelRoleEdit}>
-              取消
-            </Button>
-          </div>
-        </div>
       ) : null}
     </article>
   )
@@ -1110,22 +1309,12 @@ interface RolePermissionViewProps {
   error: string | null
   canManageRoles: boolean
   createDraft: CreateRoleDraft
-  editingRoleId: string | null
-  editDraft: EditRoleDraft | null
-  permissionEditRoleId: string | null
-  permissionDraftIds: string[]
   deleteConfirmRoleId: string | null
   mutationId: string | null
   onCreateDraftChange: (draft: CreateRoleDraft | ((current: CreateRoleDraft) => CreateRoleDraft)) => void
   onCreateRole: () => void
   onStartEdit: (role: UserAdminRole) => void
-  onEditDraftChange: (draft: EditRoleDraft) => void
-  onCancelEdit: () => void
-  onSaveEdit: () => void
   onStartPermissions: (role: UserAdminRole) => void
-  onPermissionDraftChange: (permissionIds: string[]) => void
-  onCancelPermissions: () => void
-  onSavePermissions: () => void
   onRequestDelete: (roleId: string) => void
   onCancelDelete: () => void
   onConfirmDelete: (roleId: string) => void
@@ -1135,26 +1324,16 @@ function RolePermissionView({
   canManageRoles,
   createDraft,
   deleteConfirmRoleId,
-  editDraft,
-  editingRoleId,
   error,
   isLoading,
   mutationId,
   onCancelDelete,
-  onCancelEdit,
-  onCancelPermissions,
   onConfirmDelete,
   onCreateDraftChange,
   onCreateRole,
-  onEditDraftChange,
-  onPermissionDraftChange,
   onRequestDelete,
-  onSaveEdit,
-  onSavePermissions,
   onStartEdit,
   onStartPermissions,
-  permissionDraftIds,
-  permissionEditRoleId,
   permissions,
   roles,
 }: RolePermissionViewProps) {
@@ -1204,10 +1383,7 @@ function RolePermissionView({
       <div className="grid gap-3 lg:grid-cols-2">
         {roles.map((role) => {
           const isBuiltIn = isBuiltInRole(role)
-          const isEditing = editingRoleId === role.id && editDraft
-          const isEditingPermissions = permissionEditRoleId === role.id
           const isConfirmingDelete = deleteConfirmRoleId === role.id
-          const isMutating = mutationId === role.id
 
           return (
             <article className="rounded-lg border border-ink-200 bg-white p-3" key={role.id}>
@@ -1241,47 +1417,6 @@ function RolePermissionView({
                 )}
               </div>
 
-              {isEditing ? (
-                <form
-                  className="mt-3 space-y-2 rounded-md border border-ink-200 bg-ink-50 p-3"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    onSaveEdit()
-                  }}
-                >
-                  <Field label="编辑角色名称">
-                    <input className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, name: event.target.value })} required value={editDraft.name} />
-                  </Field>
-                  <Field label="编辑角色说明">
-                    <input className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, description: event.target.value })} value={editDraft.description} />
-                  </Field>
-                  <Field label="编辑角色状态">
-                    <select className="field-input" onChange={(event) => onEditDraftChange({ ...editDraft, status: event.target.value as UserAdminRoleStatus })} value={editDraft.status}>
-                      <option value="ACTIVE">启用</option>
-                      <option value="DISABLED">禁用</option>
-                    </select>
-                  </Field>
-                  <div className="flex flex-wrap gap-2">
-                    <Button disabled={Boolean(mutationId)} icon={isMutating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} type="submit" variant="primary">
-                      保存角色
-                    </Button>
-                    <Button disabled={Boolean(mutationId)} onClick={onCancelEdit}>取消</Button>
-                  </div>
-                </form>
-              ) : null}
-
-              {isEditingPermissions ? (
-                <div className="mt-3 space-y-2 rounded-md border border-ink-200 bg-ink-50 p-3">
-                  <PermissionCheckboxes onChange={onPermissionDraftChange} permissionIds={permissionDraftIds} permissions={permissions} />
-                  <div className="flex flex-wrap gap-2">
-                    <Button disabled={Boolean(mutationId)} icon={isMutating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} onClick={onSavePermissions} variant="primary">
-                      保存权限
-                    </Button>
-                    <Button disabled={Boolean(mutationId)} onClick={onCancelPermissions}>取消</Button>
-                  </div>
-                </div>
-              ) : null}
-
               {isConfirmingDelete ? (
                 <div className="mt-3 space-y-2 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
                   <p>确认删除此自定义角色？</p>
@@ -1303,8 +1438,9 @@ function RolePermissionView({
         <div className="grid gap-2 md:grid-cols-2">
           {permissions.map((permission) => (
             <div className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2" key={String(permission.code)}>
-              <p className="text-xs font-semibold text-ink-800">{String(permission.code)}</p>
-              <p className="text-xs text-ink-500">{permission.description || permission.name}</p>
+              <p className="text-sm font-semibold text-ink-800">{permissionCopy(permission).name}</p>
+              <p className="mt-1 text-xs leading-5 text-ink-500">{permissionCopy(permission).description}</p>
+              <code className="mt-1 inline-block rounded bg-white px-1.5 py-0.5 text-[11px] text-ink-500">{String(permission.code)}</code>
             </div>
           ))}
         </div>
@@ -1329,6 +1465,7 @@ function PermissionCheckboxes({
       <div className="mt-2 grid gap-2">
         {permissions.map((permission) => {
           const id = String(permission.id)
+          const copy = permissionCopy(permission)
           return (
             <label className="flex items-center gap-2 text-sm text-ink-700" key={id}>
               <input
@@ -1343,7 +1480,10 @@ function PermissionCheckboxes({
                 }}
                 type="checkbox"
               />
-              <span>{String(permission.code)}</span>
+              <span className="min-w-0">
+                <span className="block font-medium text-ink-800">{copy.name}</span>
+                <span className="block text-xs text-ink-500">{String(permission.code)} · {copy.description}</span>
+              </span>
             </label>
           )
         })}
@@ -1400,6 +1540,14 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
   )
 }
 
+function DrawerActions({ children }: { children: ReactNode }) {
+  return (
+    <div className="sticky bottom-0 -mx-5 mt-6 flex flex-wrap gap-2 border-t border-ink-200 bg-white px-5 py-4">
+      {children}
+    </div>
+  )
+}
+
 function StatusMessage({ message, tone }: { message: string | null; tone: 'error' | 'success' }) {
   if (!message) {
     return null
@@ -1439,9 +1587,10 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function PermissionPill({ permission }: { permission: UserAdminPermission }) {
+  const copy = permissionCopy(permission)
   return (
-    <span className="rounded-md bg-amazon-50 px-2 py-1 text-xs font-semibold text-amazon-700" title={permission.description || permission.name}>
-      {String(permission.code)}
+    <span className="rounded-md bg-amazon-50 px-2 py-1 text-xs font-semibold text-amazon-700" title={`${String(permission.code)}：${copy.description}`}>
+      {copy.name}
     </span>
   )
 }

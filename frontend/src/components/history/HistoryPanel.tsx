@@ -3,6 +3,7 @@ import type { BackendHistoryItem, HistoryKind } from '../../types/history'
 import { HistoryItem } from './HistoryItem'
 
 interface HistoryPanelProps {
+  embedded?: boolean
   items: BackendHistoryItem[]
   error: string
   isLoading: boolean
@@ -20,6 +21,7 @@ interface HistoryPanelProps {
 }
 
 export function HistoryPanel({
+  embedded = false,
   items,
   error,
   isLoading,
@@ -40,10 +42,10 @@ export function HistoryPanel({
   const canGoNext = pageNum < totalPages && !isLoading
 
   return (
-    <aside className="panel flex min-h-0 flex-col">
+    <section className={`${embedded ? 'flex min-h-0 flex-col bg-white' : 'panel flex min-h-0 flex-col'}`}>
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-ink-900">历史记录</h2>
+          <h2 className="text-sm font-semibold text-ink-900">{embedded ? '已完成' : '历史记录'}</h2>
           <p className="text-xs text-ink-400">{total} 条结果</p>
         </div>
         <button
@@ -119,8 +121,8 @@ export function HistoryPanel({
 
         {!isLoading && items.length === 0 ? (
           <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-10 text-center">
-            <p className="text-sm font-medium text-ink-700">当前项目暂无结果历史</p>
-            <p className="mt-1 text-xs text-ink-400">生成或编辑成功后会显示后端资产结果。</p>
+            <p className="text-sm font-medium text-ink-700">当前图片类型暂无生成记录</p>
+            <p className="mt-1 text-xs text-ink-400">切换左侧类型可查看对应结果。</p>
           </div>
         ) : null}
 
@@ -142,7 +144,7 @@ export function HistoryPanel({
           ))}
         </div>
       </div>
-    </aside>
+    </section>
   )
 }
 

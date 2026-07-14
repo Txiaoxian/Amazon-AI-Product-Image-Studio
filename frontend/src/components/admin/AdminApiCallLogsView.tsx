@@ -1,6 +1,7 @@
 import { AlertTriangle, FileClock, Loader2 } from 'lucide-react'
 import type { ApiCallLog } from '../../types/admin'
 import { Button } from '../ui/Button'
+import { Modal } from '../ui/Modal'
 
 interface ApiCallLogPageView {
   records: ApiCallLog[]
@@ -17,6 +18,7 @@ interface AdminApiCallLogsViewProps {
   isLoading: boolean
   error: string | null
   detailError: string | null
+  onCloseDetail: () => void
   onPageChange: (pageNum: number) => void
   onLoadDetail: (id: ApiCallLog['id']) => void
 }
@@ -31,6 +33,7 @@ export function AdminApiCallLogsView({
   isLoading,
   error,
   detailError,
+  onCloseDetail,
   onPageChange,
   onLoadDetail,
 }: AdminApiCallLogsViewProps) {
@@ -60,6 +63,7 @@ export function AdminApiCallLogsView({
             <tbody className="divide-y divide-ink-100 bg-white">
               {page.records.map((record) => {
                 const isLoadingDetail = loadingDetailId === record.id
+                const errorGuidance = getApiCallErrorGuidance(record)
                 return (
                   <tr key={record.id}>
                     <td className="max-w-[200px] px-3 py-2 align-top">
@@ -76,11 +80,10 @@ export function AdminApiCallLogsView({
                     </td>
                     <td className="max-w-[260px] px-3 py-2 align-top text-xs text-ink-600">
                       <p className="truncate">{record.errorCode || '无'}</p>
-                      <p className="truncate">{record.errorMessage || '无错误信息'}</p>
+                      <p className="truncate">{errorGuidance?.summary || '无错误信息'}</p>
                     </td>
                     <td className="px-3 py-2 align-top">
                       <Button
-                        disabled={isLoadingDetail}
                         icon={isLoadingDetail ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
                         onClick={() => onLoadDetail(record.id)}
                         variant="secondary"
@@ -96,22 +99,30 @@ export function AdminApiCallLogsView({
         </div>
       ) : null}
       <PaginationControls isLoading={isLoading} label="API 调用日志分页" onPageChange={onPageChange} page={page} />
-      <StatusMessage message={detailError} />
-      {loadingDetailId ? <LoadingState text={`正在加载 API 调用详情：${loadingDetailId}...`} /> : null}
-      {currentDetail ? <ApiCallDetail detail={currentDetail} /> : null}
+      <Modal
+        isOpen={selectedDetailId !== null}
+        maxWidthClass="max-w-6xl"
+        onClose={onCloseDetail}
+        title={`API 调用详情：${selectedDetailId ?? ''}`}
+      >
+        <StatusMessage message={detailError} />
+        {loadingDetailId ? <LoadingState text={`正在加载 API 调用详情：${loadingDetailId}...`} /> : null}
+        {currentDetail ? <ApiCallDetail detail={currentDetail} /> : null}
+      </Modal>
     </section>
   )
 }
 
 function ApiCallDetail({ detail }: { detail: ApiCallLog }) {
+  const errorGuidance = getApiCallErrorGuidance(detail)
+
   return (
-    <article className="rounded-lg border border-ink-200 bg-ink-50 p-3">
+    <article>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-ink-900">API 调用详情：{detail.id}</h3>
-          <p className="mt-1 text-xs text-ink-500">{detail.requestId} · {formatDateTime(detail.createdAt)}</p>
+          <p className="text-xs text-ink-500">请求标识：{detail.requestId || '未返回'} · {formatDateTime(detail.createdAt)}</p>
         </div>
-        <span className={statusPillClassName(detail.status)}>{detail.status}</span>
+        <span className={statusPillClassName(detail.status)}>{statusLabel(detail.status)}</span>
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-600 md:grid-cols-4">
         <Metric label="任务" value={detail.taskId} />
@@ -119,13 +130,103 @@ function ApiCallDetail({ detail }: { detail: ApiCallLog }) {
         <Metric label="耗时" value={`${detail.durationMs}ms`} />
         <Metric label="错误码" value={detail.errorCode || '无'} />
       </dl>
-      {detail.errorMessage ? <p className="mt-3 rounded-md bg-white px-3 py-2 text-xs leading-6 text-ink-600">{detail.errorMessage}</p> : null}
+      {errorGuidance ? (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+          <p className="font-semibold">{errorGuidance.summary}</p>
+          <p className="mt-1 leading-6 text-amber-900">{errorGuidance.action}</p>
+        </div>
+      ) : null}
+      {detail.errorMessage ? (
+        <div className="mt-3 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2">
+          <p className="text-xs font-semibold text-ink-500">原始错误（已脱敏）</p>
+          <p className="mt-1 break-words text-xs leading-6 text-ink-700">{detail.errorMessage}</p>
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <BoundedMetadataBlock title="Redacted request" value={detail.redactedRequest} />
-        <BoundedMetadataBlock title="Redacted response" value={detail.redactedResponse} />
+        <BoundedMetadataBlock title="脱敏请求" value={detail.redactedRequest} />
+        <BoundedMetadataBlock title="脱敏响应" value={detail.redactedResponse} />
       </div>
     </article>
   )
+}
+
+interface ApiCallErrorGuidance {
+  summary: string
+  action: string
+}
+
+function getApiCallErrorGuidance(record: Pick<ApiCallLog, 'errorCode' | 'errorMessage' | 'status'>): ApiCallErrorGuidance | null {
+  if (record.status === 'SUCCESS' && !record.errorCode) {
+    return null
+  }
+
+  switch (record.errorCode) {
+    case 'PROVIDER_TRANSPORT_ERROR': {
+      const errorMessage = record.errorMessage.toLowerCase()
+      if (errorMessage.includes('unexpected eof')) {
+        return {
+          summary: '中转站在返回响应前提前断开了连接。',
+          action: '建议稍后重试或切换中转站；若持续出现，请中转站检查上游连接和网关超时。',
+        }
+      }
+      if (errorMessage.includes('deadline exceeded') || errorMessage.includes('timeout')) {
+        return {
+          summary: '中转站在超时时间内未返回响应。',
+          action: '建议提高中转站超时时间，并降低并发后重试。',
+        }
+      }
+      return {
+        summary: '平台与中转站之间的连接异常。',
+        action: '建议检查中转站网络状态后重试；若持续出现，请切换到可用线路。',
+      }
+    }
+    case 'PROVIDER_RESPONSE_TOO_LARGE':
+      return {
+        summary: '中转站已返回成功响应，但响应数据超过平台配置的安全接收上限。',
+        action: '平台会流式接收大图片。若仍出现此错误，请管理员核对返回内容，并按服务器磁盘与并发容量调整 Provider 响应和单图上限。',
+      }
+    case 'PROVIDER_INSUFFICIENT_QUOTA':
+      return {
+        summary: '中转站账户余额或可用额度不足。',
+        action: '请补充额度，或切换到可用的中转站和模型后重试。',
+      }
+    case 'PROVIDER_RESPONSE_INVALID':
+      return {
+        summary: '中转站返回的数据格式无法解析。',
+        action: '请检查中转站是否兼容当前图片接口，并在脱敏响应中确认返回字段。',
+      }
+    case 'PROVIDER_IMAGE_FETCH_FAILED':
+      return {
+        summary: '平台无法安全下载中转站返回的图片。',
+        action: '请检查图片地址是否可访问且符合安全策略，或让中转站直接返回图片数据。',
+      }
+    case 'PROVIDER_REQUEST_INVALID':
+      return {
+        summary: '发送给中转站的请求参数无效。',
+        action: '请核对模型能力、图片比例、质量和参考图参数后重试。',
+      }
+    case 'PROVIDER_URL_INVALID':
+    case 'PROVIDER_BASE_URL_INVALID':
+      return {
+        summary: '中转站地址未通过安全校验。',
+        action: '请管理员检查中转站 Base URL，确保使用允许访问的 HTTPS 公网地址。',
+      }
+    case 'PROVIDER_CREDENTIAL_UNAVAILABLE':
+      return {
+        summary: '中转站凭据当前不可用。',
+        action: '请管理员重新保存并测试中转站 API Key。',
+      }
+    case 'PROVIDER_HTTP_ERROR':
+      return {
+        summary: '中转站返回了失败的 HTTP 响应。',
+        action: '请结合 HTTP 状态和脱敏响应，检查额度、模型名称及中转站服务状态。',
+      }
+    default:
+      return {
+        summary: '本次中转站调用失败。',
+        action: '请打开详情查看错误码和脱敏诊断信息，再根据中转站状态决定重试或切换线路。',
+      }
+  }
 }
 
 function PaginationControls({
@@ -224,6 +325,10 @@ function statusPillClassName(status: ApiCallLog['status']): string {
   return `rounded-md px-2 py-1 text-xs font-semibold ${
     status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
   }`
+}
+
+function statusLabel(status: ApiCallLog['status']): string {
+  return status === 'SUCCESS' ? '成功' : '失败'
 }
 
 function formatRedactedJson(value: unknown, maxLength: number): string {

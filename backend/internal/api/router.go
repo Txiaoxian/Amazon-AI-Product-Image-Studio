@@ -26,21 +26,23 @@ import (
 )
 
 type RouterOptions struct {
-	Config              config.Config
-	Logger              *slog.Logger
-	HealthChecks        []health.DependencyChecker
-	Database            *gorm.DB
-	ObjectStore         storage.ObjectStore
-	ProviderOpts        []provider.Option
-	AuditReadRedactor   *redaction.Redactor
-	TaskEnqueuer        queue.TaskEnqueuer
-	QueueDepthInspector queue.QueueDepthInspector
-	SSEBroker           *sse.Broker
-	SSEHeartbeat        time.Duration
-	SSEMaxReplayEvents  int
-	LifecycleContext    context.Context
-	TaskEventSubscriber queue.TaskEventSubscriber
-	AuthLoginLimiter    auth.LoginRateLimiter
+	Config               config.Config
+	Logger               *slog.Logger
+	HealthChecks         []health.DependencyChecker
+	Database             *gorm.DB
+	ObjectStore          storage.ObjectStore
+	ProviderOpts         []provider.Option
+	AuditReadRedactor    *redaction.Redactor
+	TaskEnqueuer         queue.TaskEnqueuer
+	QueueDepthInspector  queue.QueueDepthInspector
+	SSEBroker            *sse.Broker
+	SSEHeartbeat         time.Duration
+	SSEMaxReplayEvents   int
+	LifecycleContext     context.Context
+	TaskEventSubscriber  queue.TaskEventSubscriber
+	AuthLoginLimiter     auth.LoginRateLimiter
+	AuthCaptchaStore     auth.CaptchaStore
+	AuthCaptchaGenerator auth.CaptchaGenerator
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -101,7 +103,22 @@ func authService(options RouterOptions) *auth.Service {
 	if loginLimiter == nil && !strings.EqualFold(strings.TrimSpace(options.Config.AppEnv), "test") {
 		loginLimiter = auth.NewRedisLoginRateLimiter(options.Config.Queue, options.Config.Auth)
 	}
-	return auth.NewService(options.Database, options.Config, options.Logger, auth.WithLoginRateLimiter(loginLimiter))
+	captchaStore := options.AuthCaptchaStore
+	if captchaStore == nil {
+		if strings.EqualFold(strings.TrimSpace(options.Config.AppEnv), "test") {
+			captchaStore = auth.NewMemoryCaptchaStore()
+		} else {
+			captchaStore = auth.NewRedisCaptchaStore(options.Config.Queue)
+		}
+	}
+	authOptions := []auth.Option{
+		auth.WithLoginRateLimiter(loginLimiter),
+		auth.WithCaptchaStore(captchaStore),
+	}
+	if options.AuthCaptchaGenerator != nil {
+		authOptions = append(authOptions, auth.WithCaptchaGenerator(options.AuthCaptchaGenerator))
+	}
+	return auth.NewService(options.Database, options.Config, options.Logger, authOptions...)
 }
 
 func RegisterRoutes(router *gin.Engine, authService *auth.Service, projectService *project.Service, assetService *asset.Service, providerService *provider.Service, modelService *model.Service, taskService *task.Service, sseService *sse.Service, adminAuditUsageService *adminAuditUsageService, adminDiagnosticsService *adminDiagnosticsService, settingsService *settings.Service, userAdminService *useradmin.Service, healthChecks ...health.DependencyChecker) {
@@ -116,6 +133,8 @@ func registerV1Routes(v1 *gin.RouterGroup, healthHandler gin.HandlerFunc, authSe
 	v1.GET("/healthz", healthHandler)
 
 	v1.POST("/auth/init-admin", authService.InitAdmin)
+	v1.POST("/auth/captcha", authService.CreateCaptcha)
+	v1.GET("/auth/captcha/:captchaId/image", authService.CaptchaImage)
 	v1.POST("/auth/login", authService.Login)
 
 	protected := v1.Group("")

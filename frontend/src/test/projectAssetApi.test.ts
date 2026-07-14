@@ -185,6 +185,22 @@ describe('project and asset API wrappers', () => {
     })
   })
 
+  it('calls project soft delete with CSRF protection', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }))
+    const projectApi = createProjectApi(createApiClient({ fetchImpl }))
+
+    await expect(projectApi.delete('project_1', 'csrf_memory_only')).resolves.toEqual({ ok: true })
+
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/v1/projects/project_1')
+    expect(fetchImpl.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        credentials: 'include',
+        method: 'DELETE',
+      }),
+    )
+    expect((fetchImpl.mock.calls[0][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+  })
+
   it('calls project member list and write endpoints through the project API', async () => {
     const member = {
       id: 'member_1',
@@ -319,5 +335,14 @@ describe('project and asset API wrappers', () => {
 })
 
 async function readBlobText(blob: Blob): Promise<string> {
-  return blob.text()
+  if (typeof blob.text === 'function') {
+    return blob.text()
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('Failed to read Blob.')))
+    reader.readAsText(blob)
+  })
 }

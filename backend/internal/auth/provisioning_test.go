@@ -133,11 +133,11 @@ func TestProvisionTenantAllowsSameAdminEmailInDifferentNewTenants(t *testing.T) 
 	}
 
 	service := NewService(db, config.Config{}, nil)
-	firstSession, err := service.login(context.Background(), first.TenantID, input.AdminEmail, firstPassword, "", "")
+	firstSession, err := service.login(context.Background(), first.TenantID, input.AdminEmail, firstPassword, "", "", "", "")
 	if err != nil {
 		t.Fatalf("login first provisioned tenant: %v", err)
 	}
-	secondSession, err := service.login(context.Background(), second.TenantID, input.AdminEmail, input.AdminPassword, "", "")
+	secondSession, err := service.login(context.Background(), second.TenantID, input.AdminEmail, input.AdminPassword, "", "", "", "")
 	if err != nil {
 		t.Fatalf("login second provisioned tenant: %v", err)
 	}

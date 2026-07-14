@@ -19,15 +19,16 @@ const (
 	PermissionRoleManage     = "role:manage"
 	PermissionSettingsManage = "system:settings:manage"
 
-	maxPageSize          = 100
-	defaultPageNum       = 1
-	defaultPageSize      = 20
-	maxDisplayNameRunes  = 255
-	maxTenantNameRunes   = 255
-	maxRoleNameRunes     = 255
-	maxDescriptionRunes  = 2000
-	maxQueryRunes        = 128
-	maxRoleIDsPerRequest = 100
+	maxPageSize           = 100
+	defaultPageNum        = 1
+	defaultPageSize       = 20
+	maxDisplayNameRunes   = 255
+	maxTenantNameRunes    = 255
+	maxRoleNameRunes      = 255
+	maxDescriptionRunes   = 2000
+	maxQueryRunes         = 128
+	maxRoleIDsPerRequest  = 100
+	maxModelIDsPerRequest = 500
 )
 
 var (
@@ -109,6 +110,15 @@ type UpdateInput struct {
 
 type RolesInput struct {
 	RoleIDs []string
+}
+
+type ModelAccessInput struct {
+	ModelIDs []string
+}
+
+type ModelAccessResponse struct {
+	UserID   string   `json:"userId"`
+	ModelIDs []string `json:"modelIds"`
 }
 
 type CreateRoleInput struct {

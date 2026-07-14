@@ -111,14 +111,28 @@ func providerHTTPError(status int, body []byte, redactor *Redactor) ProviderErro
 		redactor = NewRedactor()
 	}
 	message := fmt.Sprintf("Provider returned HTTP %d.", status)
+	providerCode := ""
 	if len(body) > 0 {
 		var parsed map[string]any
 		if err := json.Unmarshal(body, &parsed); err == nil {
-			if errorValue, ok := parsed["error"]; ok {
-				message = fmt.Sprint(redactor.RedactValue(errorValue))
-			} else if messageValue, ok := parsed["message"]; ok {
-				message = fmt.Sprint(redactor.RedactValue(messageValue))
+			if errorValue, ok := parsed["error"].(map[string]any); ok {
+				providerCode = stringValue(errorValue["code"])
+				if providerMessage := stringValue(errorValue["message"]); providerMessage != "" {
+					message = providerMessage
+				}
+			} else if errorValue, ok := parsed["error"].(string); ok && strings.TrimSpace(errorValue) != "" {
+				message = errorValue
+			} else if messageValue := stringValue(parsed["message"]); messageValue != "" {
+				message = messageValue
 			}
+		}
+	}
+	if isInsufficientQuotaCode(providerCode) {
+		return ProviderError{
+			Code:       "PROVIDER_INSUFFICIENT_QUOTA",
+			Message:    "Provider account quota is insufficient.",
+			HTTPStatus: statusCodePointer(status),
+			Retryable:  false,
 		}
 	}
 	message = redactor.SanitizeErrorMessage(message)
@@ -127,5 +141,22 @@ func providerHTTPError(status int, body []byte, redactor *Redactor) ProviderErro
 		Message:    message,
 		HTTPStatus: statusCodePointer(status),
 		Retryable:  status == 429 || status >= 500,
+	}
+}
+
+func stringValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func isInsufficientQuotaCode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "insufficient_user_quota", "insufficient_quota", "billing_hard_limit_reached":
+		return true
+	default:
+		return false
 	}
 }

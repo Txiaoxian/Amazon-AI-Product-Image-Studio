@@ -67,6 +67,7 @@ type WorkerProcessorOptions struct {
 	Store                         storage.ObjectStore
 	StorageConfig                 config.StorageConfig
 	UploadConfig                  config.UploadConfig
+	GeneratedOutputMaxBytes       int64
 	Now                           func() time.Time
 }
 
@@ -106,17 +107,18 @@ type Executor interface {
 type StubExecutor struct{}
 
 type WorkerProcessor struct {
-	db        *gorm.DB
-	repo      Repository
-	log       *slog.Logger
-	options   WorkerProcessorOptions
-	publisher EventPublisher
-	limiter   queue.ConcurrencyLimiter
-	executor  Executor
-	store     storage.ObjectStore
-	storage   config.StorageConfig
-	upload    config.UploadConfig
-	now       func() time.Time
+	db                      *gorm.DB
+	repo                    Repository
+	log                     *slog.Logger
+	options                 WorkerProcessorOptions
+	publisher               EventPublisher
+	limiter                 queue.ConcurrencyLimiter
+	executor                Executor
+	store                   storage.ObjectStore
+	storage                 config.StorageConfig
+	upload                  config.UploadConfig
+	generatedOutputMaxBytes int64
+	now                     func() time.Time
 
 	reconciliationMu     sync.Mutex
 	reconciliationCursor string
@@ -187,18 +189,23 @@ func NewWorkerProcessor(db *gorm.DB, log *slog.Logger, options WorkerProcessorOp
 			return time.Now().UTC()
 		}
 	}
+	generatedOutputMaxBytes := options.GeneratedOutputMaxBytes
+	if generatedOutputMaxBytes <= 0 {
+		generatedOutputMaxBytes = config.NormalizeUploadConfig(options.UploadConfig).MaxFileSizeBytes
+	}
 	return &WorkerProcessor{
-		db:        db,
-		repo:      NewRepository(db),
-		log:       log,
-		options:   options,
-		publisher: options.EventPublisher,
-		limiter:   options.Limiter,
-		executor:  options.Executor,
-		store:     options.Store,
-		storage:   config.NormalizeStorageConfig(options.StorageConfig),
-		upload:    config.NormalizeUploadConfig(options.UploadConfig),
-		now:       now,
+		db:                      db,
+		repo:                    NewRepository(db),
+		log:                     log,
+		options:                 options,
+		publisher:               options.EventPublisher,
+		limiter:                 options.Limiter,
+		executor:                options.Executor,
+		store:                   options.Store,
+		storage:                 config.NormalizeStorageConfig(options.StorageConfig),
+		upload:                  config.NormalizeUploadConfig(options.UploadConfig),
+		generatedOutputMaxBytes: generatedOutputMaxBytes,
+		now:                     now,
 	}
 }
 
@@ -413,6 +420,7 @@ func (p *WorkerProcessor) Process(ctx context.Context, claim queue.TaskClaim) (P
 
 	stopRenewal := p.startConcurrencyLeaseRenewal(execCtx, cancel, lease)
 	result := p.executor.Execute(execCtx, snapshot)
+	defer cleanupTemporaryGeneratedOutputs(result.Outputs)
 	if err := stopRenewal(); err != nil {
 		if failErr := p.failRunningTask(ctx, scope, running.ID, ExecutionResult{ErrorCode: "CONCURRENCY_LEASE_LOST", ErrorMessage: "Task concurrency lease was lost."}); failErr != nil {
 			return ProcessResult{Action: claimActionRetry, RetryDelay: p.options.RetryBackoff}, failErr

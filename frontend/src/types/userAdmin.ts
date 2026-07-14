@@ -70,6 +70,15 @@ export interface ReplaceUserRolesRequest {
   roleIds: Array<RoleId | string>
 }
 
+export interface UserModelAccess {
+  userId: UserId | string
+  modelIds: string[]
+}
+
+export interface ReplaceUserModelAccessRequest {
+  modelIds: string[]
+}
+
 export interface UpdateCurrentTenantRequest {
   name: string
 }

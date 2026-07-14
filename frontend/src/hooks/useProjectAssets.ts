@@ -4,13 +4,14 @@ import { isApiClientError } from '../api/client'
 import {
   projectApi as defaultProjectApi,
   type CreateProjectRequest,
+  type ListProjectMemberCandidatesParams,
   type ProjectApi,
   type ProjectMemberRequest,
   type UpdateProjectMemberRequest,
   type UpdateProjectRequest,
 } from '../api/projects'
 import { validateImageFile } from '../lib/file'
-import type { Asset, AssetId, AssetKind, Project, ProjectId, ProjectMember, UserId } from '../types/platform'
+import type { Asset, AssetId, AssetKind, Project, ProjectId, ProjectMember, ProjectMemberCandidate, UserId } from '../types/platform'
 import type { AssetReferenceInput } from '../types/workbench'
 
 type RemoteStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -46,6 +47,7 @@ export function useProjectAssets({
   const [error, setError] = useState<string | null>(null)
   const [projectMemberError, setProjectMemberError] = useState<string | null>(null)
   const [isCreatingProject, setCreatingProject] = useState(false)
+  const [isDeletingProject, setDeletingProject] = useState(false)
   const [isUpdatingProject, setUpdatingProject] = useState(false)
   const [isUpdatingAsset, setUpdatingAsset] = useState(false)
   const [isSavingProjectMember, setSavingProjectMember] = useState(false)
@@ -54,6 +56,8 @@ export function useProjectAssets({
   const [projectMemberActionUserId, setProjectMemberActionUserId] = useState<UserId | string | null>(null)
   const [assetFilters, setAssetFilters] = useState<AssetFilters>({})
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [projectMemberCandidates, setProjectMemberCandidates] = useState<ProjectMemberCandidate[]>([])
+  const [projectMemberCandidateStatus, setProjectMemberCandidateStatus] = useState<RemoteStatus>('idle')
   const assetRequestVersionRef = useRef(0)
   const projectMemberRequestVersionRef = useRef(0)
   const selectedProjectIdRef = useRef<ProjectId | null>(null)
@@ -70,7 +74,9 @@ export function useProjectAssets({
   useEffect(() => {
     projectMemberRequestVersionRef.current += 1
     setProjectMembers([])
+    setProjectMemberCandidates([])
     setProjectMemberStatus('idle')
+    setProjectMemberCandidateStatus('idle')
     setProjectMemberError(null)
   }, [selectedProjectId])
 
@@ -80,18 +86,19 @@ export function useProjectAssets({
 
     try {
       const page = await projectApi.list({ status: 'ACTIVE', pageNum: 1, pageSize: 50 })
-      setProjects(page.records)
+      const records = sortProjects(page.records)
+      setProjects(records)
       setSelectedProjectId((current) => {
-        if (current && page.records.some((project) => project.id === current)) {
+        if (current && records.some((project) => project.id === current)) {
           return current
         }
 
-        return page.records[0]?.id ?? null
+        return records[0]?.id ?? null
       })
       setProjectStatus('success')
     } catch (requestError) {
       setProjectStatus('error')
-      setError(getProjectAssetErrorMessage(requestError, '无法加载项目列表，请稍后重试。'))
+      setError(getProjectAssetErrorMessage(requestError, '产品加载失败，请刷新产品列表后重试。'))
     }
   }, [projectApi])
 
@@ -121,7 +128,7 @@ export function useProjectAssets({
           return
         }
         setAssetStatus('error')
-        setError(getProjectAssetErrorMessage(requestError, '无法加载项目资产，请稍后重试。'))
+        setError(getProjectAssetErrorMessage(requestError, '无法加载产品素材，请稍后重试。'))
       }
     },
     [assetApi, assetFilters, selectedProjectId],
@@ -139,7 +146,7 @@ export function useProjectAssets({
     async (request: CreateProjectRequest): Promise<Project | null> => {
       const name = request.name.trim()
       if (!name) {
-        setError('请输入项目名称。')
+        setError('请输入产品名称。')
         return null
       }
       if (!csrfToken) {
@@ -152,13 +159,13 @@ export function useProjectAssets({
 
       try {
         const project = await projectApi.create({ ...request, name }, csrfToken)
-        setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)])
+        setProjects((current) => sortProjects([project, ...current.filter((item) => item.id !== project.id)]))
         setSelectedProjectId(project.id)
         setAssets([])
         setAssetStatus('idle')
         return project
       } catch (requestError) {
-        setError(getProjectAssetErrorMessage(requestError, '项目创建失败，请稍后重试。'))
+        setError(getProjectAssetErrorMessage(requestError, '产品创建失败，请稍后重试。'))
         return null
       } finally {
         setCreatingProject(false)
@@ -190,7 +197,7 @@ export function useProjectAssets({
 
       const payload = normalizeProjectUpdateRequest(request)
       if (payload.name !== undefined && payload.name.length === 0) {
-        setError('请输入项目名称。')
+        setError('请输入产品名称。')
         return null
       }
 
@@ -199,16 +206,61 @@ export function useProjectAssets({
 
       try {
         const updated = await projectApi.update(projectId, payload, csrfToken)
-        setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)))
+        setProjects((current) => {
+          if (updated.status !== 'ACTIVE') {
+            const nextProjects = sortProjects(current.filter((project) => project.id !== updated.id))
+            if (selectedProjectIdRef.current === updated.id) {
+              const nextSelectedProjectId = nextProjects[0]?.id ?? null
+              selectedProjectIdRef.current = nextSelectedProjectId
+              setSelectedProjectId(nextSelectedProjectId)
+            }
+            return nextProjects
+          }
+          return sortProjects(current.map((project) => (project.id === updated.id ? updated : project)))
+        })
         return updated
       } catch (requestError) {
-        setError(getProjectAssetErrorMessage(requestError, '项目更新失败，请稍后重试。'))
+        setError(getProjectAssetErrorMessage(requestError, '产品更新失败，请稍后重试。'))
         return null
       } finally {
         setUpdatingProject(false)
       }
     },
     [csrfToken, projectApi],
+  )
+
+  const deleteProject = useCallback(
+    async (projectId: ProjectId): Promise<boolean> => {
+      if (!csrfToken) {
+        setError('缺少安全校验信息，请刷新页面后重试。')
+        return false
+      }
+
+      setDeletingProject(true)
+      setError(null)
+
+      try {
+        await projectApi.delete(projectId, csrfToken)
+        const remainingProjects = sortProjects(projects.filter((project) => project.id !== projectId))
+        setProjects(remainingProjects)
+
+        if (selectedProjectIdRef.current === projectId) {
+          const nextProjectId = remainingProjects[0]?.id ?? null
+          selectedProjectIdRef.current = nextProjectId
+          assetRequestVersionRef.current += 1
+          setSelectedProjectId(nextProjectId)
+          setAssets([])
+          setAssetStatus(nextProjectId ? 'loading' : 'idle')
+        }
+        return true
+      } catch (requestError) {
+        setError(getProjectDeleteErrorMessage(requestError))
+        return false
+      } finally {
+        setDeletingProject(false)
+      }
+    },
+    [csrfToken, projectApi, projects],
   )
 
   const refreshProjectMembers = useCallback(
@@ -231,14 +283,43 @@ export function useProjectAssets({
         if (requestVersion !== projectMemberRequestVersionRef.current || selectedProjectIdRef.current !== projectId) {
           return
         }
-        setProjectMembers(members)
+        setProjectMembers(sortMembers(members))
         setProjectMemberStatus('success')
       } catch (requestError) {
         if (requestVersion !== projectMemberRequestVersionRef.current || selectedProjectIdRef.current !== projectId) {
           return
         }
         setProjectMemberStatus('error')
-        setProjectMemberError(getProjectMemberErrorMessage(requestError, '无法加载项目成员，请稍后重试。'))
+        setProjectMemberError(getProjectMemberErrorMessage(requestError, '无法加载产品成员，请稍后重试。'))
+      }
+    },
+    [projectApi, selectedProjectId],
+  )
+
+  const refreshProjectMemberCandidates = useCallback(
+    async (projectId: ProjectId | null = selectedProjectId, params: ListProjectMemberCandidatesParams = {}) => {
+      if (!projectId) {
+        setProjectMemberCandidates([])
+        setProjectMemberCandidateStatus('idle')
+        return
+      }
+
+      setProjectMemberCandidateStatus('loading')
+      setProjectMemberError(null)
+
+      try {
+        const candidates = await projectApi.listMemberCandidates(projectId, { pageNum: 1, pageSize: 100, ...params })
+        if (selectedProjectIdRef.current !== projectId) {
+          return
+        }
+        setProjectMemberCandidates(candidates)
+        setProjectMemberCandidateStatus('success')
+      } catch (requestError) {
+        if (selectedProjectIdRef.current !== projectId) {
+          return
+        }
+        setProjectMemberCandidateStatus('error')
+        setProjectMemberError(getProjectMemberErrorMessage(requestError, '无法加载可添加用户，请稍后重试。'))
       }
     },
     [projectApi, selectedProjectId],
@@ -253,7 +334,7 @@ export function useProjectAssets({
 
       const userId = String(request.userId).trim()
       if (!userId) {
-        setProjectMemberError('请输入成员用户 ID。')
+        setProjectMemberError('请选择要添加的成员。')
         return null
       }
 
@@ -264,12 +345,12 @@ export function useProjectAssets({
       try {
         const member = await projectApi.addMember(projectId, { ...request, userId }, csrfToken)
         if (selectedProjectIdRef.current === projectId) {
-          setProjectMembers((current) => [member, ...current.filter((item) => item.userId !== member.userId)])
+          setProjectMembers((current) => sortMembers([member, ...current.filter((item) => item.userId !== member.userId)]))
           setProjectMemberStatus('success')
         }
         return member
       } catch (requestError) {
-        setProjectMemberError(getProjectMemberErrorMessage(requestError, '项目成员添加失败，请稍后重试。'))
+        setProjectMemberError(getProjectMemberErrorMessage(requestError, '产品成员添加失败，请稍后重试。'))
         return null
       } finally {
         setSavingProjectMember(false)
@@ -298,7 +379,7 @@ export function useProjectAssets({
         }
         return member
       } catch (requestError) {
-        setProjectMemberError(getProjectMemberErrorMessage(requestError, '项目成员更新失败，请稍后重试。'))
+        setProjectMemberError(getProjectMemberErrorMessage(requestError, '产品成员更新失败，请稍后重试。'))
         return null
       } finally {
         setSavingProjectMember(false)
@@ -327,7 +408,7 @@ export function useProjectAssets({
         }
         return true
       } catch (requestError) {
-        setProjectMemberError(getProjectMemberErrorMessage(requestError, '项目成员移除失败，请稍后重试。'))
+        setProjectMemberError(getProjectMemberErrorMessage(requestError, '产品成员移除失败，请稍后重试。'))
         return false
       } finally {
         setSavingProjectMember(false)
@@ -337,10 +418,51 @@ export function useProjectAssets({
     [csrfToken, projectApi],
   )
 
+  const reorderProjects = useCallback(
+    async (orderedProjectIds: Array<ProjectId | string>): Promise<boolean> => {
+      if (!csrfToken) {
+        setError('缺少安全校验信息，请刷新页面后重试。')
+        return false
+      }
+      const idSet = new Set(orderedProjectIds.map(String))
+      if (idSet.size !== projects.length || projects.some((project) => !idSet.has(String(project.id)))) {
+        setError('产品排序数据不完整，请刷新产品列表后重试。')
+        return false
+      }
+
+      const previousProjects = projects
+      const optimisticProjects = orderedProjectIds
+        .map((projectId, index) => {
+          const project = projects.find((candidate) => String(candidate.id) === String(projectId))
+          return project ? { ...project, sortOrder: (index + 1) * 10 } : null
+        })
+        .filter((project): project is Project => Boolean(project))
+
+      setProjects(optimisticProjects)
+      setUpdatingProject(true)
+      setError(null)
+
+      try {
+        const updatedProjects = await Promise.all(
+          optimisticProjects.map((project) => projectApi.update(project.id, { sortOrder: project.sortOrder }, csrfToken)),
+        )
+        setProjects(sortProjects(updatedProjects))
+        return true
+      } catch (requestError) {
+        setProjects(previousProjects)
+        setError(getProjectAssetErrorMessage(requestError, '产品排序保存失败，请刷新后重试。'))
+        return false
+      } finally {
+        setUpdatingProject(false)
+      }
+    },
+    [csrfToken, projectApi, projects],
+  )
+
   const uploadReferences = useCallback(
     async (files: File[] | FileList): Promise<UploadReferenceResult> => {
       if (!selectedProjectId) {
-        setError('请先选择项目。')
+        setError('请先选择产品。')
         return { assets: [], skipped: 0 }
       }
       if (!csrfToken) {
@@ -526,15 +648,19 @@ export function useProjectAssets({
     createProject,
     createReferenceFromAsset,
     deleteAsset,
+    deleteProject,
     downloadAsset,
     error,
     isCreatingProject,
+    isDeletingProject,
     isLoadingAssets: assetStatus === 'loading',
     isLoadingProjects: projectStatus === 'loading',
     isSavingProjectMember,
     isUpdatingAsset,
     isUpdatingProject,
     isUploadingAsset,
+    projectMemberCandidates,
+    projectMemberCandidateStatus,
     projectMemberActionUserId,
     projectMemberError,
     projectMembers,
@@ -543,8 +669,10 @@ export function useProjectAssets({
     projects,
     refreshAssets,
     refreshProjectMembers,
+    refreshProjectMemberCandidates,
     refreshProjects,
     removeProjectMember,
+    reorderProjects,
     selectProject,
     selectedProject,
     selectedProjectId,
@@ -581,7 +709,28 @@ function normalizeProjectUpdateRequest(request: UpdateProjectRequest): UpdatePro
     notes: request.notes?.trim(),
     site: request.site?.trim(),
     status: request.status,
+    sortOrder: request.sortOrder,
   }
+}
+
+function sortProjects(projects: Project[]): Project[] {
+  return [...projects].sort((left, right) => {
+    if (left.sortOrder !== right.sortOrder) {
+      return left.sortOrder - right.sortOrder
+    }
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt < right.createdAt ? -1 : 1
+    }
+    return String(left.id).localeCompare(String(right.id), 'zh-CN')
+  })
+}
+
+function sortMembers(members: ProjectMember[]): ProjectMember[] {
+  return [...members].sort((left, right) => {
+    const leftName = left.userName || left.userEmail || String(left.userId)
+    const rightName = right.userName || right.userEmail || String(right.userId)
+    return leftName.localeCompare(rightName, 'zh-CN')
+  })
 }
 
 function normalizeAssetUpdateRequest(request: UpdateAssetRequest): UpdateAssetRequest {
@@ -620,22 +769,22 @@ function getProjectAssetErrorMessage(error: unknown, fallback: string): string {
   }
 
   if (error.status === 403) {
-    return '没有权限执行该项目资产操作。'
+    return '没有权限执行该产品素材操作。'
   }
 
   if (error.status === 404) {
-    return '项目或资产不存在，可能已被删除或无权访问。'
+    return '产品或素材不存在，可能已被删除或无权访问。'
   }
 
   if (error.status === 422) {
-    return '请求内容未通过校验，请检查项目名称或图片文件。'
+    return '请求内容未通过校验，请检查产品名称或图片文件。'
   }
 
   if (error.status === 409) {
     return '操作冲突，请刷新后重试。'
   }
 
-  return error.message || fallback
+  return fallback
 }
 
 function getProjectMemberErrorMessage(error: unknown, fallback: string): string {
@@ -648,20 +797,39 @@ function getProjectMemberErrorMessage(error: unknown, fallback: string): string 
   }
 
   if (error.status === 403) {
-    return '没有权限管理项目成员。'
+    return '没有权限管理产品成员。'
   }
 
   if (error.status === 404) {
-    return '项目或成员不存在，可能已被删除或无权访问。'
+    return '产品或成员不存在，可能已被删除或无权访问。'
   }
 
   if (error.status === 409) {
-    return '项目成员操作冲突，请刷新后重试。'
+    return '产品成员操作冲突，请刷新后重试。'
   }
 
   if (error.status === 422) {
-    return '成员信息未通过校验，请检查用户 ID 和角色。'
+    return '成员信息未通过校验，请选择有效用户和角色。'
   }
 
-  return error.message || fallback
+  return fallback
+}
+
+function getProjectDeleteErrorMessage(error: unknown): string {
+  if (!isApiClientError(error)) {
+    return '产品删除失败，请稍后重试。'
+  }
+  if (error.status === 401) {
+    return '登录状态已失效，请重新登录。'
+  }
+  if (error.status === 403) {
+    return '没有权限删除该产品。'
+  }
+  if (error.status === 404) {
+    return '产品不存在，可能已被删除或无权访问。'
+  }
+  if (error.status === 409) {
+    return '产品当前无法删除，请刷新后重试。'
+  }
+  return '产品删除失败，请稍后重试。'
 }

@@ -74,6 +74,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.LoginRateLimitWindow != 10*time.Minute {
 		t.Fatalf("Auth.LoginRateLimitWindow = %s, want 10m", cfg.Auth.LoginRateLimitWindow)
 	}
+	if !cfg.Auth.CaptchaEnabled {
+		t.Fatal("Auth.CaptchaEnabled default = false, want true")
+	}
+	if cfg.Auth.CaptchaTTL != 2*time.Minute {
+		t.Fatalf("Auth.CaptchaTTL = %s, want 2m", cfg.Auth.CaptchaTTL)
+	}
+	if cfg.Auth.DefaultTenantID != "" {
+		t.Fatalf("Auth.DefaultTenantID = %q, want empty", cfg.Auth.DefaultTenantID)
+	}
 	if cfg.Auth.Cookie.Name != "studio_auth" {
 		t.Fatalf("Auth.Cookie.Name = %q, want studio_auth", cfg.Auth.Cookie.Name)
 	}
@@ -121,6 +130,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Provider.MaxRetries != 2 {
 		t.Fatalf("Provider.MaxRetries = %d, want 2", cfg.Provider.MaxRetries)
+	}
+	if cfg.Provider.MaxResponseSizeBytes != 1024*1024*1024 || cfg.Provider.MaxOutputImageBytes != 512*1024*1024 {
+		t.Fatalf("Provider response/output limits = %d/%d", cfg.Provider.MaxResponseSizeBytes, cfg.Provider.MaxOutputImageBytes)
 	}
 	if cfg.Queue.RedisAddr != "127.0.0.1:6379" {
 		t.Fatalf("Queue.RedisAddr = %q, want 127.0.0.1:6379", cfg.Queue.RedisAddr)
@@ -213,6 +225,8 @@ func TestLoadOverrides(t *testing.T) {
 		"API_KEY_ENCRYPTION_KEY_ID":                "test-key-v1",
 		"PROVIDER_TIMEOUT_SECONDS":                 "45",
 		"PROVIDER_MAX_RETRIES":                     "5",
+		"PROVIDER_MAX_RESPONSE_SIZE_MB":            "768",
+		"PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB":        "384",
 		"REDIS_ADDR":                               "redis.example.com:6380",
 		"REDIS_PASSWORD":                           "local-redis-password",
 		"REDIS_DB":                                 "2",
@@ -385,6 +399,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Provider.MaxRetries != 5 {
 		t.Fatalf("Provider.MaxRetries = %d, want 5", cfg.Provider.MaxRetries)
+	}
+	if cfg.Provider.MaxResponseSizeBytes != 768*1024*1024 || cfg.Provider.MaxOutputImageBytes != 384*1024*1024 {
+		t.Fatalf("Provider response/output limit overrides = %d/%d", cfg.Provider.MaxResponseSizeBytes, cfg.Provider.MaxOutputImageBytes)
 	}
 	if cfg.Queue.RedisAddr != "redis.example.com:6380" {
 		t.Fatalf("Queue.RedisAddr = %q, want redis.example.com:6380", cfg.Queue.RedisAddr)
@@ -576,6 +593,23 @@ func TestLoadAllowsPlaceholderSecretsOutsideProduction(t *testing.T) {
 	}
 	if cfg.Provider.APIKeyEncryptionKey != defaultAPIKeyEncryptionKey {
 		t.Fatal("Provider.APIKeyEncryptionKey default was not preserved outside production")
+	}
+}
+
+func TestLoadRejectsUnsafeProviderResponseLimits(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values map[string]string
+	}{
+		{name: "output exceeds response", values: map[string]string{"PROVIDER_MAX_RESPONSE_SIZE_MB": "128", "PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB": "256"}},
+		{name: "response exceeds hard cap", values: map[string]string{"PROVIDER_MAX_RESPONSE_SIZE_MB": "8193"}},
+		{name: "output exceeds hard cap", values: map[string]string{"PROVIDER_MAX_RESPONSE_SIZE_MB": "8192", "PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB": "4097"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := loadFromValues(test.values); err == nil {
+				t.Fatal("load returned nil error for unsafe Provider response limits")
+			}
+		})
 	}
 }
 

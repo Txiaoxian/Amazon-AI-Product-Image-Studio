@@ -187,6 +187,88 @@ func TestAuthLifecycleCookieCSRFAndAudit(t *testing.T) {
 	assertOperationLogs(t, db)
 }
 
+func TestAuthCaptchaIsOneTimeForOrdinaryUsersAndOptionalForAdministrators(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newAuthRouteTestDB(t)
+	cfg := authRouteTestConfig("test")
+	cfg.Auth.CaptchaEnabled = true
+	cfg.Auth.CaptchaTTL = 2 * time.Minute
+	router := NewRouter(RouterOptions{
+		Config:           cfg,
+		Logger:           slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Database:         db,
+		AuthCaptchaStore: authpkg.NewMemoryCaptchaStore(),
+		AuthCaptchaGenerator: func() (string, []byte, error) {
+			return "1234", []byte("\x89PNG\r\n\x1a\nfixture"), nil
+		},
+	})
+
+	initResponse := performJSON(router, http.MethodPost, "/api/v1/auth/init-admin", map[string]string{
+		"tenantName":  "Studio Tenant",
+		"email":       "admin@example.com",
+		"displayName": "Admin",
+		"password":    "initial-password-123",
+	}, nil, nil)
+	if initResponse.Code != http.StatusCreated {
+		t.Fatalf("init admin status = %d, want %d: %s", initResponse.Code, http.StatusCreated, initResponse.Body.String())
+	}
+	tenantID := nestedString(t, decodeData(t, initResponse), "tenant", "id")
+	seedActiveUser(t, db, tenantID, "captcha-seller", "seller@example.com", "Seller", "seller-password-123")
+	assignRole(t, db, tenantID, "captcha-seller", "seller")
+
+	adminLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": "admin@example.com", "password": "initial-password-123",
+	}, nil, nil)
+	if adminLogin.Code != http.StatusOK {
+		t.Fatalf("administrator login without captcha status = %d, want %d: %s", adminLogin.Code, http.StatusOK, adminLogin.Body.String())
+	}
+
+	ordinaryWithoutCaptcha := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": "seller@example.com", "password": "seller-password-123",
+	}, nil, nil)
+	if ordinaryWithoutCaptcha.Code != http.StatusUnauthorized {
+		t.Fatalf("ordinary login without captcha status = %d, want %d", ordinaryWithoutCaptcha.Code, http.StatusUnauthorized)
+	}
+
+	newCaptcha := func() map[string]any {
+		response := performJSON(router, http.MethodPost, "/api/v1/auth/captcha", nil, nil, nil)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create captcha status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+		}
+		data := decodeData(t, response)
+		imageResponse := performJSON(router, http.MethodGet, stringField(t, data, "imageUrl"), nil, nil, nil)
+		if imageResponse.Code != http.StatusOK || imageResponse.Header().Get("Content-Type") != "image/png" {
+			t.Fatalf("captcha image response = %d %q", imageResponse.Code, imageResponse.Header().Get("Content-Type"))
+		}
+		return data
+	}
+
+	firstCaptcha := newCaptcha()
+	wrongCaptcha := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": "seller@example.com", "password": "seller-password-123",
+		"captchaId": stringField(t, firstCaptcha, "captchaId"), "captchaCode": "0000",
+	}, nil, nil)
+	if wrongCaptcha.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong captcha status = %d, want %d", wrongCaptcha.Code, http.StatusUnauthorized)
+	}
+	reusedCaptcha := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": "seller@example.com", "password": "seller-password-123",
+		"captchaId": stringField(t, firstCaptcha, "captchaId"), "captchaCode": "1234",
+	}, nil, nil)
+	if reusedCaptcha.Code != http.StatusUnauthorized {
+		t.Fatalf("reused captcha status = %d, want %d", reusedCaptcha.Code, http.StatusUnauthorized)
+	}
+
+	secondCaptcha := newCaptcha()
+	ordinaryLogin := performJSON(router, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": "seller@example.com", "password": "seller-password-123",
+		"captchaId": stringField(t, secondCaptcha, "captchaId"), "captchaCode": "1234",
+	}, nil, nil)
+	if ordinaryLogin.Code != http.StatusOK {
+		t.Fatalf("ordinary login with captcha status = %d, want %d: %s", ordinaryLogin.Code, http.StatusOK, ordinaryLogin.Body.String())
+	}
+}
+
 func TestProductionAuthCookieIsSecure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newAuthRouteTestDB(t)
@@ -384,6 +466,7 @@ var authRouteTestSchema = []string{
 		site TEXT NOT NULL,
 		notes TEXT NULL,
 		status TEXT NOT NULL,
+		sort_order INTEGER NOT NULL DEFAULT 0,
 		created_by TEXT NOT NULL,
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL,
@@ -460,6 +543,16 @@ var authRouteTestSchema = []string{
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL,
 		deleted_at TIMESTAMP NULL
+	)`,
+	`CREATE TABLE user_model_access_grants (
+		id TEXT PRIMARY KEY,
+		tenant_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		model_id TEXT NOT NULL,
+		granted_by TEXT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		UNIQUE (tenant_id, user_id, model_id)
 	)`,
 	`CREATE TABLE generation_tasks (
 		id TEXT PRIMARY KEY,

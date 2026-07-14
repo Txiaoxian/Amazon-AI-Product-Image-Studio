@@ -72,6 +72,7 @@ type Response struct {
 	TenantID               string   `json:"tenantId"`
 	ProviderID             string   `json:"providerId"`
 	ProviderName           string   `json:"providerName"`
+	ProviderType           string   `json:"providerType"`
 	ModelName              string   `json:"modelName"`
 	DisplayName            string   `json:"displayName"`
 	SupportsGenerate       bool     `json:"supportsGenerate"`
@@ -120,7 +121,7 @@ type UpdateInput struct {
 	Status                     *string
 }
 
-func responseFromRecord(record database.AIModel, providerName string) (Response, error) {
+func responseFromRecord(record database.AIModel, providerName string, providerType string) (Response, error) {
 	sizes, err := decodeStringList(record.SupportedSizesJSON)
 	if err != nil {
 		return Response{}, err
@@ -143,6 +144,7 @@ func responseFromRecord(record database.AIModel, providerName string) (Response,
 		TenantID:               record.TenantID,
 		ProviderID:             record.ProviderID,
 		ProviderName:           providerName,
+		ProviderType:           providerType,
 		ModelName:              record.ModelName,
 		DisplayName:            record.DisplayName,
 		SupportsGenerate:       record.SupportsGenerate,

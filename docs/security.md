@@ -14,6 +14,8 @@ The current `main` branch has completed P15 release hardening, P16 production-la
 Remaining security and hardening risks:
 
 - Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, failed lifecycle writes do not record successful operation logs, and P18 write-path serialization rejects duplicate same-tenant same-Provider non-deleted `model_name` values without a destructive migration.
+- Provider/model administration is tenant-admin-only. Ordinary users can discover and use only explicitly assigned models, and task creation rechecks the assignment before durable or queue side effects.
+- Ordinary-user login uses a short-lived one-time captcha stored in Redis. Captcha validation consumes the record atomically, administrator bypass is decided server-side only after password verification, and all credential/captcha failures use the same sanitized response.
 - Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
 - Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, `storageQuota` is backed by reference upload and Worker output persistence checks, and `logRetention` is backed by Worker database-log cleanup. Frontend settings may expose only settings with merged backend consumers; it must not expose manual cleanup triggers, raw MinIO listing, or any field without a runtime consumer.
 
@@ -116,6 +118,13 @@ Cookie requirements:
 - Reasonable expiration.
 
 Frontend JavaScript must not read authentication tokens.
+
+## User-facing language and error handling
+
+- Platform-owned UI text, configuration explanations, validation messages, and non-technical errors should use Simplified Chinese whenever practical.
+- Frontend code must not show raw backend stack traces, raw Provider responses, raw infrastructure errors, Authorization/Cookie/JWT values, Provider API keys, MinIO object identifiers, or image base64 in user-visible text.
+- Backend route handlers should return sanitized messages. If a third-party Provider or infrastructure component returns English text, the platform should wrap or map it to a concise Chinese explanation while keeping detailed redacted diagnostics in authorized logs only.
+- Technical identifiers that are required for precision, such as enum values, MIME types, model IDs, request field names, and Provider type codes, may remain unchanged.
 
 ## Authorization
 

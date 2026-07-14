@@ -4,6 +4,8 @@
 
 Build a multi-user platform for Amazon sellers to generate, edit, organize, and audit AI product images.
 
+The product is primarily used by Chinese-speaking operators in this repository context. User-facing UI copy, configuration help text, validation feedback, and platform-owned error messages should use Simplified Chinese whenever practical. Technical identifiers such as API field names, enum values, model IDs, MIME types, and Provider type codes may remain in their canonical form.
+
 ## Users and tenants
 
 - The platform supports multiple tenants or teams.
@@ -24,6 +26,7 @@ Each Amazon product should map to a project. A project stores:
 - Marketplace/site.
 - Notes.
 - Members and permissions.
+- Sort order and active/archive status.
 - Reference images.
 - Generated images.
 - Edited images.
@@ -36,7 +39,11 @@ The workbench must support:
 
 - Project selection.
 - Reference image upload or selection from asset library.
+- Project tabs at the top of the workspace, showing project name and brand in project sort order.
 - Prompt input.
+- Each image type provides several built-in recommended prompts. A recommendation is copied into the editor and remains fully editable before submission.
+- User-saved prompt templates are isolated by image type. Switching between main, A+, scene, detail, dimension, selling-point, promotion, and comparison images must not mix saved templates.
+- Recommended prompts that contain dimensions, specifications, performance claims, promotions, or comparisons must require user-supplied facts and must not instruct the model to invent missing data.
 - Provider selection.
 - Model selection.
 - Dynamic parameters based on model capabilities.
@@ -98,6 +105,8 @@ Admins manage models and capabilities:
 - Supported sizes.
 - Supported quality values.
 - Supported output formats.
+
+Model size/aspect-ratio and quality configuration should be manageable through reusable preset choices rather than requiring admins to type every supported value manually. OpenAI `gpt-image-2` presets use official quality values (`auto`, `low`, `medium`, `high`) and the platform's ordered product aspect ratios; Gemini Nano Banana 2 presets keep aspect ratio independent from `1K`, `2K`, and `4K` output resolution.
 - Pricing config.
 - Enable/disable state.
 

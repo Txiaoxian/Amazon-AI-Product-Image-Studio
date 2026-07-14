@@ -1,4 +1,4 @@
-export const APP_NAME = 'Amazon AI Product Image Studio'
+export const APP_NAME = '亚马逊 AI 图片工作室'
 
 export const STORAGE_LIMIT_OPTIONS = [
   { label: '200MB', value: 200 * 1024 * 1024 },

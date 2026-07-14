@@ -29,21 +29,23 @@ type Service struct {
 }
 
 type projectCreateRequest struct {
-	Name   string `json:"name"`
-	Brand  string `json:"brand"`
-	ASIN   string `json:"asin"`
-	Site   string `json:"site"`
-	Notes  string `json:"notes"`
-	Status string `json:"status"`
+	Name      string `json:"name"`
+	Brand     string `json:"brand"`
+	ASIN      string `json:"asin"`
+	Site      string `json:"site"`
+	Notes     string `json:"notes"`
+	Status    string `json:"status"`
+	SortOrder *int   `json:"sortOrder"`
 }
 
 type projectUpdateRequest struct {
-	Name   *string `json:"name"`
-	Brand  *string `json:"brand"`
-	ASIN   *string `json:"asin"`
-	Site   *string `json:"site"`
-	Notes  *string `json:"notes"`
-	Status *string `json:"status"`
+	Name      *string `json:"name"`
+	Brand     *string `json:"brand"`
+	ASIN      *string `json:"asin"`
+	Site      *string `json:"site"`
+	Notes     *string `json:"notes"`
+	Status    *string `json:"status"`
+	SortOrder *int    `json:"sortOrder"`
 }
 
 type memberRequest struct {
@@ -74,6 +76,7 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.DELETE("/projects/:projectId", s.DeleteProject)
 
 	group.GET("/projects/:projectId/members", s.ListMembers)
+	group.GET("/projects/:projectId/member-candidates", s.ListMemberCandidates)
 	group.POST("/projects/:projectId/members", s.AddMember)
 	group.PATCH("/projects/:projectId/members/:userId", s.UpdateMember)
 	group.DELETE("/projects/:projectId/members/:userId", s.RemoveMember)
@@ -82,13 +85,13 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 func (s *Service) ListProjects(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
 	query, err := parseListQuery(c)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "请求参数无效。", nil)
 		return
 	}
 
@@ -104,19 +107,19 @@ func (s *Service) ListProjects(c *gin.Context) {
 func (s *Service) CreateProject(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
 	var request projectCreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "请求体无效。", nil)
 		return
 	}
 
 	input, err := normalizeCreateRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "项目信息无效。", nil)
 		return
 	}
 
@@ -132,7 +135,7 @@ func (s *Service) CreateProject(c *gin.Context) {
 func (s *Service) GetProject(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
@@ -148,19 +151,19 @@ func (s *Service) GetProject(c *gin.Context) {
 func (s *Service) UpdateProject(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
 	var request projectUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "请求体无效。", nil)
 		return
 	}
 
 	input, err := normalizeUpdateRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "项目信息无效。", nil)
 		return
 	}
 
@@ -176,7 +179,7 @@ func (s *Service) UpdateProject(c *gin.Context) {
 func (s *Service) DeleteProject(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
@@ -191,7 +194,7 @@ func (s *Service) DeleteProject(c *gin.Context) {
 func (s *Service) ListMembers(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
@@ -204,21 +207,43 @@ func (s *Service) ListMembers(c *gin.Context) {
 	httpx.JSON(c, http.StatusOK, response)
 }
 
+func (s *Service) ListMemberCandidates(c *gin.Context) {
+	principal, ok := auth.PrincipalFromGin(c)
+	if !ok {
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
+		return
+	}
+
+	query, err := parseCandidateListQuery(c)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "请求参数无效。", nil)
+		return
+	}
+
+	response, err := s.listMemberCandidates(c.Request.Context(), principal, c.Param("projectId"), query)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+
+	httpx.JSON(c, http.StatusOK, response)
+}
+
 func (s *Service) AddMember(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
 	var request memberRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "请求体无效。", nil)
 		return
 	}
 	input, err := normalizeMemberRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "成员信息无效。", nil)
 		return
 	}
 
@@ -234,19 +259,19 @@ func (s *Service) AddMember(c *gin.Context) {
 func (s *Service) UpdateMember(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
 	var request memberRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "请求体无效。", nil)
 		return
 	}
 	request.UserID = c.Param("userId")
 	input, err := normalizeMemberRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "成员信息无效。", nil)
 		return
 	}
 
@@ -262,7 +287,7 @@ func (s *Service) UpdateMember(c *gin.Context) {
 func (s *Service) RemoveMember(c *gin.Context) {
 	principal, ok := auth.PrincipalFromGin(c)
 	if !ok {
-		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Authentication is required.", nil)
+		httpx.AbortWithError(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "需要先登录。", nil)
 		return
 	}
 
@@ -321,6 +346,16 @@ func (s *Service) createProject(ctx context.Context, principal auth.Principal, i
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := s.now()
 		repo := s.repo.withDB(tx)
+		sortOrder := 0
+		if input.SortOrder != nil {
+			sortOrder = *input.SortOrder
+		} else {
+			nextSortOrder, err := repo.NextSortOrder(ctx, scope)
+			if err != nil {
+				return err
+			}
+			sortOrder = nextSortOrder
+		}
 		record = database.Project{
 			ID:        idgen.New(),
 			TenantID:  scope.ID(),
@@ -330,6 +365,7 @@ func (s *Service) createProject(ctx context.Context, principal auth.Principal, i
 			Site:      input.Site,
 			Notes:     input.Notes,
 			Status:    input.Status,
+			SortOrder: sortOrder,
 			CreatedBy: principal.UserID,
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -360,11 +396,12 @@ func (s *Service) createProject(ctx context.Context, principal auth.Principal, i
 			IP:           ip,
 			UserAgent:    userAgent,
 			Metadata: map[string]any{
-				"name":   record.Name,
-				"status": record.Status,
-				"brand":  record.Brand,
-				"asin":   record.ASIN,
-				"site":   record.Site,
+				"name":      record.Name,
+				"status":    record.Status,
+				"sortOrder": record.SortOrder,
+				"brand":     record.Brand,
+				"asin":      record.ASIN,
+				"site":      record.Site,
 			},
 		})
 	})
@@ -401,7 +438,7 @@ func (s *Service) updateProject(ctx context.Context, principal auth.Principal, p
 		}
 
 		updates := map[string]any{"updated_at": s.now()}
-		changedFields := make([]string, 0, 6)
+		changedFields := make([]string, 0, 7)
 		addUpdate := func(column string, value string) {
 			updates[column] = value
 			changedFields = append(changedFields, column)
@@ -423,6 +460,10 @@ func (s *Service) updateProject(ctx context.Context, principal auth.Principal, p
 		}
 		if input.Status != nil {
 			addUpdate("status", *input.Status)
+		}
+		if input.SortOrder != nil {
+			updates["sort_order"] = *input.SortOrder
+			changedFields = append(changedFields, "sort_order")
 		}
 		if len(changedFields) == 0 {
 			return ErrValidation
@@ -515,6 +556,32 @@ func (s *Service) listMembers(ctx context.Context, principal auth.Principal, pro
 	return response, nil
 }
 
+func (s *Service) listMemberCandidates(ctx context.Context, principal auth.Principal, projectID string, query CandidateListQuery) ([]MemberCandidateResponse, error) {
+	if _, err := s.authorizer.Authorize(ctx, principal, projectID, PermissionMemberManage, rolesForPermission(PermissionMemberManage)...); err != nil {
+		return nil, err
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	users, err := s.repo.ListMemberCandidates(ctx, scope, projectID, query)
+	if err != nil {
+		return nil, err
+	}
+
+	response := make([]MemberCandidateResponse, 0, len(users))
+	for _, user := range users {
+		response = append(response, MemberCandidateResponse{
+			UserID:    user.ID,
+			UserEmail: user.Email,
+			UserName:  user.DisplayName,
+			Status:    user.Status,
+		})
+	}
+	return response, nil
+}
+
 func (s *Service) addMember(ctx context.Context, principal auth.Principal, projectID string, input MemberInput, ip string, userAgent string) (MemberResponse, error) {
 	if s.db == nil {
 		return MemberResponse{}, database.ErrNilDB
@@ -525,6 +592,7 @@ func (s *Service) addMember(ctx context.Context, principal auth.Principal, proje
 	}
 
 	var created database.ProjectMember
+	var targetUser database.User
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		authorizer := s.authorizer.withDB(tx)
 		record, err := authorizer.Authorize(ctx, principal, projectID, PermissionMemberManage, rolesForPermission(PermissionMemberManage)...)
@@ -532,7 +600,8 @@ func (s *Service) addMember(ctx context.Context, principal auth.Principal, proje
 			return err
 		}
 		repo := s.repo.withDB(tx)
-		if err := ensureTargetUser(ctx, repo, scope, input.UserID); err != nil {
+		targetUser, err = ensureTargetUser(ctx, repo, scope, input.UserID)
+		if err != nil {
 			return err
 		}
 		if _, err := repo.FindMember(ctx, scope, record.ID, input.UserID); err == nil {
@@ -574,7 +643,7 @@ func (s *Service) addMember(ctx context.Context, principal auth.Principal, proje
 		return MemberResponse{}, err
 	}
 
-	return memberResponse(created), nil
+	return memberResponseFromRecord(created, targetUser), nil
 }
 
 func (s *Service) updateMember(ctx context.Context, principal auth.Principal, projectID string, input MemberInput, ip string, userAgent string) (MemberResponse, error) {
@@ -587,6 +656,7 @@ func (s *Service) updateMember(ctx context.Context, principal auth.Principal, pr
 	}
 
 	var updated database.ProjectMember
+	var targetUser database.User
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		authorizer := s.authorizer.withDB(tx)
 		record, err := authorizer.Authorize(ctx, principal, projectID, PermissionMemberManage, rolesForPermission(PermissionMemberManage)...)
@@ -595,6 +665,10 @@ func (s *Service) updateMember(ctx context.Context, principal auth.Principal, pr
 		}
 		repo := s.repo.withDB(tx)
 		current, err := repo.FindMember(ctx, scope, record.ID, input.UserID)
+		if err != nil {
+			return err
+		}
+		targetUser, err = repo.FindUser(ctx, scope, input.UserID)
 		if err != nil {
 			return err
 		}
@@ -629,7 +703,7 @@ func (s *Service) updateMember(ctx context.Context, principal auth.Principal, pr
 		return MemberResponse{}, err
 	}
 
-	return memberResponse(updated), nil
+	return memberResponseFromRecord(updated, targetUser), nil
 }
 
 func (s *Service) removeMember(ctx context.Context, principal auth.Principal, projectID string, userID string, ip string, userAgent string) error {
@@ -700,15 +774,12 @@ func ensureAnotherOwnerRemains(ctx context.Context, repo Repository, scope tenan
 	return nil
 }
 
-func ensureTargetUser(ctx context.Context, repo Repository, scope tenant.Scope, userID string) error {
-	exists, err := repo.ActiveUserExists(ctx, scope, userID)
+func ensureTargetUser(ctx context.Context, repo Repository, scope tenant.Scope, userID string) (database.User, error) {
+	user, err := repo.FindActiveUser(ctx, scope, userID)
 	if err != nil {
-		return err
+		return database.User{}, err
 	}
-	if !exists {
-		return ErrValidation
-	}
-	return nil
+	return user, nil
 }
 
 func parseListQuery(c *gin.Context) (ListQuery, error) {
@@ -724,6 +795,19 @@ func parseListQuery(c *gin.Context) (ListQuery, error) {
 	}
 
 	return ListQuery{PageNum: pageNum, PageSize: pageSize, Status: status}, nil
+}
+
+func parseCandidateListQuery(c *gin.Context) (CandidateListQuery, error) {
+	pageNum := parsePositiveInt(c.Query("pageNum"), 1)
+	pageSize := parsePositiveInt(c.Query("pageSize"), 50)
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	q, err := cleanOptional(c.Query("q"), 128)
+	if err != nil {
+		return CandidateListQuery{}, err
+	}
+	return CandidateListQuery{PageNum: pageNum, PageSize: pageSize, Q: q}, nil
 }
 
 func parsePositiveInt(raw string, fallback int) int {
@@ -762,7 +846,11 @@ func normalizeCreateRequest(request projectCreateRequest) (CreateInput, error) {
 	if err != nil {
 		return CreateInput{}, err
 	}
-	return CreateInput{Name: name, Brand: brand, ASIN: asin, Site: site, Notes: notes, Status: status}, nil
+	sortOrder, err := normalizeSortOrderPointer(request.SortOrder)
+	if err != nil {
+		return CreateInput{}, err
+	}
+	return CreateInput{Name: name, Brand: brand, ASIN: asin, Site: site, Notes: notes, Status: status, SortOrder: sortOrder}, nil
 }
 
 func normalizeUpdateRequest(request projectUpdateRequest) (UpdateInput, error) {
@@ -809,7 +897,32 @@ func normalizeUpdateRequest(request projectUpdateRequest) (UpdateInput, error) {
 		}
 		input.Status = &value
 	}
+	if request.SortOrder != nil {
+		value, err := normalizeSortOrder(*request.SortOrder)
+		if err != nil {
+			return UpdateInput{}, err
+		}
+		input.SortOrder = &value
+	}
 	return input, nil
+}
+
+func normalizeSortOrderPointer(value *int) (*int, error) {
+	if value == nil {
+		return nil, nil
+	}
+	normalized, err := normalizeSortOrder(*value)
+	if err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func normalizeSortOrder(value int) (int, error) {
+	if value < 0 || value > 1000000 {
+		return 0, ErrValidation
+	}
+	return value, nil
 }
 
 func normalizeMemberRequest(request memberRequest) (MemberInput, error) {
@@ -846,15 +959,15 @@ func cleanOptional(value string, max int) (string, error) {
 func (s *Service) respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrValidation):
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "请求内容无效。", nil)
 	case errors.Is(err, ErrForbidden):
-		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
+		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "当前账号没有权限执行此操作。", nil)
 	case errors.Is(err, ErrNotFound):
-		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "资源不存在或已不可见。", nil)
 	case errors.Is(err, ErrConflict):
-		httpx.AbortWithError(c, http.StatusConflict, "CONFLICT", "Resource already exists.", nil)
+		httpx.AbortWithError(c, http.StatusConflict, "CONFLICT", "资源状态冲突，请刷新后重试。", nil)
 	default:
 		s.log.Error("project request failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
-		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "服务暂时不可用，请稍后重试。", nil)
 	}
 }

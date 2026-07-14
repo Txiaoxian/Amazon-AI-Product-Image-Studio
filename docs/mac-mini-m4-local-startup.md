@@ -71,14 +71,14 @@ product-thumbnails
 如果数据库不存在，创建它：
 
 ```bash
-docker exec -e MYSQL_PWD='<从全局本机环境文档读取 MySQL root 密码>' dev-mysql8 \
+docker exec -e MYSQL_PWD='xiaolong20' dev-mysql8 \
   mysql -uroot -e "CREATE DATABASE IF NOT EXISTS amazon_ai_image_studio CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 ```
 
 检查 MySQL：
 
 ```bash
-docker exec -e MYSQL_PWD='<从全局本机环境文档读取 MySQL root 密码>' dev-mysql8 \
+docker exec -e MYSQL_PWD='xiaolong20' dev-mysql8 \
   mysql -uroot -e "SHOW DATABASES LIKE 'amazon_ai_image_studio';"
 ```
 
@@ -87,7 +87,7 @@ docker exec -e MYSQL_PWD='<从全局本机环境文档读取 MySQL root 密码>'
 如果本机安装了 `mc`：
 
 ```bash
-mc alias set studio-local http://127.0.0.1:9000 minioadmin '<从全局本机环境文档读取 MinIO secret>'
+mc alias set studio-local http://127.0.0.1:9000 minioadmin 'xiaolong20'
 mc mb --ignore-existing studio-local/product-originals
 mc mb --ignore-existing studio-local/product-generated
 mc mb --ignore-existing studio-local/product-thumbnails
@@ -120,7 +120,7 @@ MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_DATABASE=amazon_ai_image_studio
 MYSQL_USER=root
-MYSQL_PASSWORD='<从全局本机环境文档读取 MySQL root 密码>'
+MYSQL_PASSWORD='xiaolong20'
 MYSQL_CONNECT_TIMEOUT=10s
 MYSQL_MAX_OPEN_CONNS=25
 MYSQL_MAX_IDLE_CONNS=5
@@ -134,7 +134,7 @@ REDIS_DB=0
 MINIO_ENDPOINT=http://127.0.0.1:9000
 MINIO_REGION=us-east-1
 MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY='<从全局本机环境文档读取 MinIO secret>'
+MINIO_SECRET_KEY='xiaolong20'
 MINIO_BUCKET_ORIGINALS=product-originals
 MINIO_BUCKET_GENERATED=product-generated
 MINIO_BUCKET_THUMBNAILS=product-thumbnails

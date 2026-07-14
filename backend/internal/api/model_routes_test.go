@@ -31,6 +31,9 @@ func TestModelRoutesCRUDEnableDisableDeleteAndAudit(t *testing.T) {
 	if stringField(t, createData, "providerName") != "Studio Provider" {
 		t.Fatalf("created model providerName = %q", stringField(t, createData, "providerName"))
 	}
+	if stringField(t, createData, "providerType") != provider.TypeOpenAICompatible {
+		t.Fatalf("created model providerType = %q, want %q", stringField(t, createData, "providerType"), provider.TypeOpenAICompatible)
+	}
 	if maxOutputCount, ok := createData["maxOutputCount"].(float64); !ok || maxOutputCount != 4 {
 		t.Fatalf("created maxOutputCount = %#v, want 4", createData["maxOutputCount"])
 	}
@@ -65,6 +68,8 @@ func TestModelRoutesCRUDEnableDisableDeleteAndAudit(t *testing.T) {
 		"displayName":            "GPT Image Capability Updated",
 		"supportsN":              false,
 		"maxOutputCount":         1,
+		"supportedSizes":         []string{"auto", "1024x1024", "1024x4096", "1664x1024", "1792x1024", "2048x2048", "2048x8192", "3328x2048", "3584x2016", "4096x4096", "4096x8192", "6636x4096", "7168x4032"},
+		"supportedQualities":     []string{"auto", "1k", "2k", "4k"},
 		"supportedOutputFormats": []string{"webp"},
 		"pricing": map[string]any{
 			"currency": "USD",
@@ -82,6 +87,10 @@ func TestModelRoutesCRUDEnableDisableDeleteAndAudit(t *testing.T) {
 	}
 	if supportsN, ok := updateData["supportsN"].(bool); !ok || supportsN {
 		t.Fatalf("updated supportsN = %#v, want false", updateData["supportsN"])
+	}
+	qualities, ok := updateData["supportedQualities"].([]any)
+	if !ok || len(qualities) != 4 || qualities[1] != "1k" || qualities[3] != "4k" {
+		t.Fatalf("updated supportedQualities = %#v, want auto/1k/2k/4k", updateData["supportedQualities"])
 	}
 
 	disableResponse := performJSON(router, http.MethodPost, "/api/v1/models/"+modelID+"/disable", nil, adminSession.cookies, adminSession.csrfHeader())
@@ -132,8 +141,20 @@ func TestModelRoutesEnforceRBACProviderTenantAndModelTenant(t *testing.T) {
 	sellerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "seller-model@example.com", "seller-model-password-123")
 
 	readResponse := performJSON(router, http.MethodGet, "/api/v1/models/"+modelID, nil, sellerSession.cookies, nil)
+	if readResponse.Code != http.StatusNotFound {
+		t.Fatalf("unassigned seller read model status = %d, want %d: %s", readResponse.Code, http.StatusNotFound, readResponse.Body.String())
+	}
+	grantModelAccess(t, db, adminSession.tenantID, "seller-model", modelID, adminSession.userID)
+	listResponse := performJSON(router, http.MethodGet, "/api/v1/models?status=ENABLED&capability=generate", nil, sellerSession.cookies, nil)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("assigned seller list models status = %d, want %d: %s", listResponse.Code, http.StatusOK, listResponse.Body.String())
+	}
+	if total, ok := decodeData(t, listResponse)["total"].(float64); !ok || total != 1 {
+		t.Fatalf("assigned seller model list total = %#v, want 1", decodeData(t, listResponse)["total"])
+	}
+	readResponse = performJSON(router, http.MethodGet, "/api/v1/models/"+modelID, nil, sellerSession.cookies, nil)
 	if readResponse.Code != http.StatusOK {
-		t.Fatalf("seller read model status = %d, want %d: %s", readResponse.Code, http.StatusOK, readResponse.Body.String())
+		t.Fatalf("assigned seller read model status = %d, want %d: %s", readResponse.Code, http.StatusOK, readResponse.Body.String())
 	}
 	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/models/"+modelID, map[string]string{"displayName": "Blocked"}, sellerSession.cookies, sellerSession.csrfHeader())
 	if updateResponse.Code != http.StatusForbidden {
@@ -142,14 +163,15 @@ func TestModelRoutesEnforceRBACProviderTenantAndModelTenant(t *testing.T) {
 
 	seedActiveUser(t, db, adminSession.tenantID, "model-manager", "model-manager@example.com", "Model Manager", "model-manager-password-123")
 	assignModelManageOnlyRole(t, db, adminSession.tenantID, "model-manager")
+	grantModelAccess(t, db, adminSession.tenantID, "model-manager", modelID, adminSession.userID)
 	managerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "model-manager@example.com", "model-manager-password-123")
 	managerReadResponse := performJSON(router, http.MethodGet, "/api/v1/models/"+modelID, nil, managerSession.cookies, nil)
 	if managerReadResponse.Code != http.StatusOK {
 		t.Fatalf("model:manage user read model status = %d, want %d: %s", managerReadResponse.Code, http.StatusOK, managerReadResponse.Body.String())
 	}
 	managerUpdateResponse := performJSON(router, http.MethodPatch, "/api/v1/models/"+modelID, map[string]string{"displayName": "Manager Updated"}, managerSession.cookies, managerSession.csrfHeader())
-	if managerUpdateResponse.Code != http.StatusOK {
-		t.Fatalf("model:manage user update model status = %d, want %d: %s", managerUpdateResponse.Code, http.StatusOK, managerUpdateResponse.Body.String())
+	if managerUpdateResponse.Code != http.StatusForbidden {
+		t.Fatalf("non-admin model:manage user update model status = %d, want %d: %s", managerUpdateResponse.Code, http.StatusForbidden, managerUpdateResponse.Body.String())
 	}
 
 	seedActiveUser(t, db, adminSession.tenantID, "viewer-model", "viewer-model@example.com", "Viewer Model", "viewer-model-password-123")
@@ -169,6 +191,22 @@ func TestModelRoutesEnforceRBACProviderTenantAndModelTenant(t *testing.T) {
 	crossTenantProviderResponse := performJSON(router, http.MethodPost, "/api/v1/models", crossTenantProviderCreate, adminSession.cookies, adminSession.csrfHeader())
 	if crossTenantProviderResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("cross-tenant provider binding status = %d, want %d: %s", crossTenantProviderResponse.Code, http.StatusUnprocessableEntity, crossTenantProviderResponse.Body.String())
+	}
+}
+
+func grantModelAccess(t *testing.T, db *gorm.DB, tenantID string, userID string, modelID string, grantedBy string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := db.Create(&database.UserModelAccessGrant{
+		ID:        "grant-" + userID + "-" + modelID,
+		TenantID:  tenantID,
+		UserID:    userID,
+		ModelID:   modelID,
+		GrantedBy: &grantedBy,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("grant model %s to user %s: %v", modelID, userID, err)
 	}
 }
 

@@ -37,25 +37,32 @@ func (r Repository) base(ctx context.Context, scope tenant.Scope) (*gorm.DB, err
 	return r.db.WithContext(ctx), nil
 }
 
-func (r Repository) ListModels(ctx context.Context, scope tenant.Scope, options ListOptions) ([]database.AIModel, int64, error) {
+func (r Repository) ListModels(ctx context.Context, scope tenant.Scope, options ListOptions, accessibleUserID string) ([]database.AIModel, int64, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	query := db.Model(&database.AIModel{}).
-		Where("tenant_id = ? AND deleted_at IS NULL", scope.ID())
+		Where("ai_models.tenant_id = ? AND ai_models.deleted_at IS NULL", scope.ID())
+	accessibleUserID = strings.TrimSpace(accessibleUserID)
+	if accessibleUserID != "" {
+		query = query.Joins(
+			"JOIN user_model_access_grants ON user_model_access_grants.tenant_id = ai_models.tenant_id AND user_model_access_grants.model_id = ai_models.id AND user_model_access_grants.user_id = ?",
+			accessibleUserID,
+		)
+	}
 	if options.ProviderID != "" {
-		query = query.Where("provider_id = ?", options.ProviderID)
+		query = query.Where("ai_models.provider_id = ?", options.ProviderID)
 	}
 	if options.Status != "" {
-		query = query.Where("status = ?", options.Status)
+		query = query.Where("ai_models.status = ?", options.Status)
 	}
 	switch options.Capability {
 	case capabilityGenerateFilter:
-		query = query.Where("supports_generate = ?", true)
+		query = query.Where("ai_models.supports_generate = ?", true)
 	case capabilityEditFilter:
-		query = query.Where("supports_edit = ?", true)
+		query = query.Where("ai_models.supports_edit = ?", true)
 	}
 
 	var total int64
@@ -66,7 +73,7 @@ func (r Repository) ListModels(ctx context.Context, scope tenant.Scope, options 
 	var records []database.AIModel
 	offset := (options.PageNum - 1) * options.PageSize
 	if err := query.
-		Order("created_at DESC, id DESC").
+		Order("ai_models.created_at DESC, ai_models.id DESC").
 		Limit(options.PageSize).
 		Offset(offset).
 		Find(&records).Error; err != nil {
@@ -74,6 +81,25 @@ func (r Repository) ListModels(ctx context.Context, scope tenant.Scope, options 
 	}
 
 	return records, total, nil
+}
+
+func (r Repository) UserCanAccessModel(ctx context.Context, scope tenant.Scope, userID string, modelID string) (bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	userID = strings.TrimSpace(userID)
+	modelID = strings.TrimSpace(modelID)
+	if userID == "" || modelID == "" {
+		return false, ErrValidation
+	}
+	var count int64
+	if err := db.Model(&database.UserModelAccessGrant{}).
+		Where("tenant_id = ? AND user_id = ? AND model_id = ?", scope.ID(), userID, modelID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID string) (database.AIModel, error) {
@@ -186,7 +212,12 @@ func (r Repository) ActiveModelNameExists(ctx context.Context, scope tenant.Scop
 	return count > 0, nil
 }
 
-func (r Repository) ProviderNames(ctx context.Context, scope tenant.Scope, providerIDs []string) (map[string]string, error) {
+type ProviderSummary struct {
+	Name string
+	Type string
+}
+
+func (r Repository) ProviderSummaries(ctx context.Context, scope tenant.Scope, providerIDs []string) (map[string]ProviderSummary, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -203,7 +234,7 @@ func (r Repository) ProviderNames(ctx context.Context, scope tenant.Scope, provi
 		uniqueIDs = append(uniqueIDs, providerID)
 	}
 	if len(uniqueIDs) == 0 {
-		return map[string]string{}, nil
+		return map[string]ProviderSummary{}, nil
 	}
 
 	var providers []database.AIProvider
@@ -213,9 +244,9 @@ func (r Repository) ProviderNames(ctx context.Context, scope tenant.Scope, provi
 		return nil, err
 	}
 
-	names := make(map[string]string, len(providers))
+	summaries := make(map[string]ProviderSummary, len(providers))
 	for _, provider := range providers {
-		names[provider.ID] = provider.Name
+		summaries[provider.ID] = ProviderSummary{Name: provider.Name, Type: provider.Type}
 	}
-	return names, nil
+	return summaries, nil
 }

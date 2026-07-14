@@ -1,5 +1,5 @@
 import type { ApiPage, QueryParamRecord } from '../types/api'
-import type { Project, ProjectId, ProjectMember, ProjectMemberRole, ProjectStatus, UserId } from '../types/platform'
+import type { Project, ProjectId, ProjectMember, ProjectMemberCandidate, ProjectMemberRole, ProjectStatus, UserId } from '../types/platform'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface ListProjectsParams {
@@ -15,6 +15,7 @@ export interface CreateProjectRequest {
   site?: string
   notes?: string
   status?: ProjectStatus
+  sortOrder?: number
 }
 
 export interface UpdateProjectRequest {
@@ -24,6 +25,13 @@ export interface UpdateProjectRequest {
   site?: string
   notes?: string
   status?: ProjectStatus
+  sortOrder?: number
+}
+
+export interface ListProjectMemberCandidatesParams {
+  q?: string
+  pageNum?: number
+  pageSize?: number
 }
 
 export interface ProjectMemberRequest {
@@ -42,6 +50,7 @@ export interface ProjectApi {
   update(projectId: ProjectId | string, request: UpdateProjectRequest, csrfToken: string): Promise<Project>
   delete(projectId: ProjectId | string, csrfToken: string): Promise<{ ok: boolean }>
   listMembers(projectId: ProjectId | string): Promise<ProjectMember[]>
+  listMemberCandidates(projectId: ProjectId | string, params?: ListProjectMemberCandidatesParams): Promise<ProjectMemberCandidate[]>
   addMember(projectId: ProjectId | string, request: ProjectMemberRequest, csrfToken: string): Promise<ProjectMember>
   updateMember(
     projectId: ProjectId | string,
@@ -69,6 +78,10 @@ export function createProjectApi(client: ApiClient = apiClient): ProjectApi {
         headers: csrfHeaders(csrfToken),
       }),
     listMembers: (projectId) => client.get<ProjectMember[]>(`/projects/${encodeURIComponent(projectId)}/members`),
+    listMemberCandidates: (projectId, params = {}) =>
+      client.get<ProjectMemberCandidate[]>(`/projects/${encodeURIComponent(projectId)}/member-candidates`, {
+        query: memberCandidateQuery(params),
+      }),
     addMember: (projectId, request, csrfToken) =>
       client.post<ProjectMember>(`/projects/${encodeURIComponent(projectId)}/members`, request, {
         headers: csrfHeaders(csrfToken),
@@ -87,6 +100,14 @@ export function createProjectApi(client: ApiClient = apiClient): ProjectApi {
 function projectListQuery(params: ListProjectsParams): QueryParamRecord {
   return {
     status: params.status,
+    pageNum: params.pageNum,
+    pageSize: params.pageSize,
+  }
+}
+
+function memberCandidateQuery(params: ListProjectMemberCandidatesParams): QueryParamRecord {
+  return {
+    q: params.q,
     pageNum: params.pageNum,
     pageSize: params.pageSize,
   }

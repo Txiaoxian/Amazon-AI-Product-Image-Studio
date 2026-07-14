@@ -104,6 +104,9 @@ func (r Repository) ListHistoryPairs(ctx context.Context, scope tenant.Scope, pr
 		Where("image_assets.project_id = ? AND generation_tasks.project_id = ?", projectID, projectID).
 		Where("image_assets.deleted_at IS NULL").
 		Where("image_assets.kind IN ?", kinds)
+	if options.ImageType != "" {
+		query = query.Where("generation_tasks.image_type = ?", options.ImageType)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -522,6 +525,25 @@ func (r Repository) FindModel(ctx context.Context, scope tenant.Scope, modelID s
 		return database.AIModel{}, ErrValidation
 	}
 	return record, err
+}
+
+func (r Repository) UserCanAccessModel(ctx context.Context, scope tenant.Scope, userID string, modelID string) (bool, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	userID = strings.TrimSpace(userID)
+	modelID = strings.TrimSpace(modelID)
+	if userID == "" || modelID == "" {
+		return false, ErrValidation
+	}
+	var count int64
+	if err := db.Model(&database.UserModelAccessGrant{}).
+		Where("tenant_id = ? AND user_id = ? AND model_id = ?", scope.ID(), userID, modelID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r Repository) FindInputAssets(ctx context.Context, scope tenant.Scope, projectID string, assetIDs []string) (map[string]database.ImageAsset, error) {

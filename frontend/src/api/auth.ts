@@ -1,8 +1,9 @@
-import type { AuthMutationResponse, AuthSession, ChangePasswordRequest, InitAdminRequest, LoginRequest } from '../types/auth'
+import type { AuthMutationResponse, AuthSession, CaptchaChallenge, ChangePasswordRequest, InitAdminRequest, LoginRequest } from '../types/auth'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface AuthApi {
   initAdmin(request: InitAdminRequest): Promise<AuthSession>
+  createCaptcha(): Promise<CaptchaChallenge>
   login(request: LoginRequest): Promise<AuthSession>
   logout(csrfToken: string): Promise<AuthMutationResponse>
   me(): Promise<AuthSession>
@@ -12,6 +13,7 @@ export interface AuthApi {
 export function createAuthApi(client: ApiClient = apiClient): AuthApi {
   return {
     initAdmin: (request) => client.post<AuthSession>('/auth/init-admin', request),
+    createCaptcha: () => client.post<CaptchaChallenge>('/auth/captcha'),
     login: (request) => client.post<AuthSession>('/auth/login', request),
     logout: (csrfToken) =>
       client.post<AuthMutationResponse>('/auth/logout', undefined, {

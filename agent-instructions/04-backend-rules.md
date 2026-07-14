@@ -38,6 +38,8 @@ Explicit migrations currently live in `backend/internal/database/migrations.go`;
 - Use consistent response and error shapes documented in `docs/api-contract.md`.
 - Validate request bodies and query params at route boundaries.
 - Never expose internal stack traces or raw third-party error payloads to clients.
+- Prefer Simplified Chinese for human-readable API validation and error messages returned to the platform frontend when practical. Keep machine-readable error codes stable and in English-style uppercase identifiers.
+- Do not pass raw Provider, database, or internal runtime error messages through to users; return a Simplified Chinese summary and keep detailed sanitized context in logs/audit records.
 
 ## Database
 

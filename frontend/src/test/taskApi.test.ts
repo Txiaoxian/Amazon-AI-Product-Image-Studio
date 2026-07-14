@@ -71,7 +71,7 @@ describe('task API wrappers', () => {
       records: [task],
       total: 1,
     })
-    await expect(taskApi.listHistory('project_1', { kind: 'EDITED', pageNum: 2, pageSize: 10 })).resolves.toMatchObject({
+    await expect(taskApi.listHistory('project_1', { imageType: 'A_PLUS', kind: 'EDITED', pageNum: 2, pageSize: 10 })).resolves.toMatchObject({
       records: [{ asset: { id: 'asset_1' }, task }],
       total: 1,
       pageNum: 2,
@@ -103,7 +103,7 @@ describe('task API wrappers', () => {
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/projects/project_1/tasks?status=QUEUED&type=IMAGE_GENERATION&pageNum=1&pageSize=20',
-      '/api/v1/projects/project_1/history?pageNum=2&pageSize=10&kind=EDITED',
+      '/api/v1/projects/project_1/history?pageNum=2&pageSize=10&kind=EDITED&imageType=A_PLUS',
       '/api/v1/projects/project_1/tasks',
       '/api/v1/tasks/task_1',
       '/api/v1/tasks/task_1/cancel',

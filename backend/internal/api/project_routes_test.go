@@ -64,6 +64,22 @@ func TestProjectRoutesCRUDMembersSoftDeleteAndAudit(t *testing.T) {
 	if len(decodeDataArray(t, listMembersResponse)) != 2 {
 		t.Fatalf("member list should include owner and added member: %s", listMembersResponse.Body.String())
 	}
+	seedActiveUser(t, db, adminSession.tenantID, "candidate-user", "candidate@example.com", "Candidate User", "candidate-password-123")
+	candidatesResponse := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/member-candidates", nil, adminSession.cookies, nil)
+	if candidatesResponse.Code != http.StatusOK {
+		t.Fatalf("list member candidates status = %d, want %d: %s", candidatesResponse.Code, http.StatusOK, candidatesResponse.Body.String())
+	}
+	candidates := decodeDataArray(t, candidatesResponse)
+	if len(candidates) != 1 {
+		t.Fatalf("candidate list length = %d, want 1: %s", len(candidates), candidatesResponse.Body.String())
+	}
+	candidate, ok := candidates[0].(map[string]any)
+	if !ok {
+		t.Fatalf("candidate response type = %T, want object", candidates[0])
+	}
+	if stringField(t, candidate, "userId") != "candidate-user" || stringField(t, candidate, "userName") != "Candidate User" {
+		t.Fatalf("candidate display fields not returned as expected: %#v", candidate)
+	}
 
 	updateMemberResponse := performJSON(router, http.MethodPatch, "/api/v1/projects/"+projectID+"/members/member-user", map[string]string{
 		"role": "VIEWER",

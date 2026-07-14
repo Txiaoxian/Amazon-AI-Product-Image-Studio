@@ -156,16 +156,18 @@ Current P5 project/asset role mapping:
 
 P6 Provider/model role mapping:
 
-- Provider list/detail require `provider:read` or tenant admin access.
-- Provider create/update/delete/enable/disable/test require `provider:manage` or tenant admin access.
-- Model list/detail require `model:read` or tenant admin access.
-- Model create/update/delete/enable/disable require `model:manage` or tenant admin access.
-- Provider and model object APIs must still filter by `tenant_id`; RBAC alone is not sufficient.
-- Sellers and viewers should not receive Provider/model management permissions by default.
+- Provider list/detail/create/update/delete/enable/disable/test are tenant-administrator-only. Custom `provider:*` grants do not turn an ordinary user into a Provider administrator.
+- Model create/update/delete/enable/disable are tenant-administrator-only. Custom `model:manage` does not grant non-admin CRUD access.
+- Non-admin model list/detail requires the model read capability plus an explicit `(tenant_id, user_id, model_id)` assignment. Unassigned models are excluded from lists and hidden by not-found detail responses.
+- `GET /users/{userId}/ai-access` and `PUT /users/{userId}/ai-access` are tenant-administrator-only and replace model assignments transactionally.
+- Assigning a model implicitly assigns use of its owning Provider; ordinary users do not manage or directly select a Provider independently.
+- The frontend must hide Provider/model management and assignment pages from ordinary users. Their only model interaction is selecting an assigned enabled model in generation parameters.
+- Provider/model/grant object APIs must still filter by `tenant_id`; role checks alone are never sufficient.
 
 P7 task role mapping:
 
 - Task create requires `task:create` plus project `OWNER` or `EDITOR`, unless tenant admin.
+- A non-admin task creator must also have an explicit grant for the selected model. The backend rechecks this before creating task state or enqueueing work.
 - Task list/detail requires `task:read` plus project visibility, unless tenant admin.
 - Task cancel requires `task:cancel` plus project `OWNER` or `EDITOR`, unless tenant admin.
 - Task retry requires `task:retry` plus project `OWNER` or `EDITOR`, unless tenant admin.

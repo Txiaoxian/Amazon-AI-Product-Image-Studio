@@ -1,6 +1,11 @@
 import { RefreshCw, Sparkles } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { IMAGE_COUNT_OPTIONS } from '../../lib/constants'
+import {
+  labelForQualityPreset,
+  labelForSizePreset,
+  parameterLabelsForCapabilities,
+} from '../../lib/modelCapabilityPresets'
 import type { Model } from '../../types/platform'
 import {
   DEFAULT_WORKBENCH_IMAGE_TYPE,
@@ -27,41 +32,69 @@ export interface BackendControlPanelDraft {
 }
 
 interface BackendControlPanelProps {
+  availableReferences?: WorkbenchReferenceInput[]
   draft?: BackendControlPanelDraft | null
   isGenerating: boolean
   modelStatus: WorkbenchModelStatus
   models: Model[]
+  imageType?: WorkbenchImageType
+  prompt?: string
   referenceToAdd?: WorkbenchReferenceInput | null
+  onImageTypeChange?: (imageType: WorkbenchImageType) => void
+  onPromptChange?: (prompt: string) => void
   onError: (message: string) => void
   onGenerate: (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => Promise<void>
   onReferenceAdded?: () => void
   onRefreshModels: () => void
+  onSavePendingReferences?: (files: File[]) => Promise<WorkbenchReferenceInput[]>
   resetKey?: string | null
 }
 
 export function BackendControlPanel({
+  availableReferences = [],
   isGenerating,
   modelStatus,
   models,
+  imageType: controlledImageType,
+  prompt: controlledPrompt,
   draft,
   referenceToAdd,
+  onImageTypeChange,
+  onPromptChange,
   onGenerate,
   onError,
   onRefreshModels,
   onReferenceAdded,
+  onSavePendingReferences,
   resetKey,
 }: BackendControlPanelProps) {
-  const [prompt, setPrompt] = useState('')
+  const [internalPrompt, setInternalPrompt] = useState('')
   const [modelId, setModelId] = useState('')
   const [size, setSize] = useState('')
   const [quality, setQuality] = useState('')
   const [outputFormat, setOutputFormat] = useState('')
-  const [imageType, setImageType] = useState<WorkbenchImageType>(DEFAULT_WORKBENCH_IMAGE_TYPE)
+  const [internalImageType, setInternalImageType] = useState<WorkbenchImageType>(DEFAULT_WORKBENCH_IMAGE_TYPE)
   const [imageCount, setImageCount] = useState<ImageCount>(1)
   const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
   const previousResetKey = useRef(resetKey)
+  const setImageTypeRef = useRef(onImageTypeChange ?? setInternalImageType)
+  const setPromptRef = useRef(onPromptChange ?? setInternalPrompt)
   const selectedModel = useMemo(() => models.find((model) => model.id === modelId) ?? null, [modelId, models])
+  const supportedSizeOptions = useMemo(() => prioritizeAutoOption(selectedModel?.supportedSizes ?? []), [selectedModel])
+  const supportedQualityOptions = useMemo(() => prioritizeAutoOption(selectedModel?.supportedQualities ?? []), [selectedModel])
+  const parameterLabels = useMemo(
+    () => parameterLabelsForCapabilities(
+      selectedModel?.supportedSizes ?? [],
+      selectedModel?.supportedQualities ?? [],
+      selectedModel?.providerType,
+    ),
+    [selectedModel],
+  )
   const isSelectedModelUnavailable = modelId.length > 0 && selectedModel === null
+  const imageType = controlledImageType ?? internalImageType
+  const setImageType = onImageTypeChange ?? setInternalImageType
+  const prompt = controlledPrompt ?? internalPrompt
+  const setPrompt = onPromptChange ?? setInternalPrompt
 
   useEffect(() => {
     if (modelId || models.length === 0) {
@@ -72,13 +105,18 @@ export function BackendControlPanel({
   }, [modelId, models])
 
   useEffect(() => {
+    setImageTypeRef.current = onImageTypeChange ?? setInternalImageType
+    setPromptRef.current = onPromptChange ?? setInternalPrompt
+  }, [onImageTypeChange, onPromptChange])
+
+  useEffect(() => {
     if (!draft) {
       return
     }
 
-    setPrompt(draft.prompt)
+    setPromptRef.current(draft.prompt)
     setModelId(draft.modelId)
-    setImageType(normalizeWorkbenchImageType(draft.imageType))
+    setImageTypeRef.current(normalizeWorkbenchImageType(draft.imageType))
     setImageCount(draft.imageCount ?? 1)
     setReferences((currentReferences) => {
       revokeReferencePreviewUrls(currentReferences)
@@ -103,11 +141,11 @@ export function BackendControlPanel({
       return
     }
 
-    setSize((current) => normalizeOption(current, selectedModel.supportedSizes))
-    setQuality((current) => normalizeOption(current, selectedModel.supportedQualities))
+    setSize((current) => normalizeOption(current, supportedSizeOptions))
+    setQuality((current) => normalizeOption(current, supportedQualityOptions))
     setOutputFormat((current) => normalizeOption(current, selectedModel.supportedOutputFormats))
     setImageCount((current) => normalizeImageCount(current, selectedModel))
-  }, [selectedModel])
+  }, [selectedModel, supportedQualityOptions, supportedSizeOptions])
 
   useEffect(() => {
     if (!selectedModel || selectedModel.supportsEdit) {
@@ -148,7 +186,7 @@ export function BackendControlPanel({
         currentReferences.some((reference) => reference.kind === 'asset' && reference.assetId === referenceToAdd.assetId)
       ) {
         revokeReferencePreviewUrls([referenceToAdd])
-        onError('该项目资产已在参考图中。')
+        onError('该产品素材已在参考图中。')
         return currentReferences
       }
 
@@ -157,47 +195,58 @@ export function BackendControlPanel({
     onReferenceAdded?.()
   }, [modelId.length, models.length, onError, onReferenceAdded, referenceToAdd, selectedModel])
 
-  const workbenchInput = selectedModel
-    ? buildWorkbenchTaskInput(selectedModel, {
-        size,
-        quality,
-        outputFormat,
-        imageType,
-        imageCount,
-        references,
-      })
-    : null
+  const workbenchInput = selectedModel ? buildCurrentWorkbenchInput(selectedModel, references) : null
 
   const canSubmit = Boolean(workbenchInput) && !isSelectedModelUnavailable && !isGenerating
 
   return (
     <PanelShell
       onSubmit={() => {
-        if (!workbenchInput) {
+        if (!selectedModel) {
           onError('请先选择可用模型。')
           return
         }
 
-        void onGenerate(
-          {
-            prompt,
-          },
-          workbenchInput,
-        )
+        void submitGeneration(selectedModel)
       }}
     >
+      <label className="sr-only" htmlFor="workbench-image-type-accessibility">
+        图片类型
+      </label>
+      <select
+        className="sr-only"
+        disabled={false}
+        id="workbench-image-type-accessibility"
+        onChange={(event) => setImageType(normalizeWorkbenchImageType(event.target.value))}
+        value={imageType}
+        tabIndex={-1}
+      >
+        {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+
       {selectedModel?.supportsEdit ? (
-        <ImageDropzone
-          allowUpload={false}
-          disabled={isGenerating}
-          maxReferences={selectedModel.supportsMultiReference ? undefined : 1}
-          onChange={setReferences}
-          onError={onError}
-          references={references}
-        />
+        <div className="grid gap-3">
+          <ImageDropzone
+            availableReferences={availableReferences}
+            disabled={isGenerating}
+            maxReferences={selectedModel.supportsMultiReference ? undefined : 1}
+            onChange={setReferences}
+            onError={onError}
+            references={references}
+          />
+          {references.some((reference) => reference.kind === 'pending') ? (
+            <Button disabled={isGenerating || !onSavePendingReferences} onClick={() => void savePendingReferences()} variant="secondary">
+              保存为产品参考图
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
-      <PromptEditor disabled={isGenerating} onChange={setPrompt} onError={onError} value={prompt} />
+      <PromptEditor disabled={isGenerating} imageType={imageType} onChange={setPrompt} onError={onError} value={prompt} />
 
       <section className="grid gap-4">
         <div className="space-y-2">
@@ -245,36 +294,26 @@ export function BackendControlPanel({
 
         {selectedModel ? (
           <div className="grid gap-3">
-            <div className="space-y-2">
-              <label className="field-label" htmlFor="backend-image-type">
-                图片类型
-              </label>
-              <select
-                className="field-input"
-                disabled={isGenerating}
-                id="backend-image-type"
-                onChange={(event) => setImageType(normalizeWorkbenchImageType(event.target.value))}
-                value={imageType}
-              >
-                {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedModel.supportedSizes.length > 0 ? (
-              <SelectField disabled={isGenerating} id="image-size" label="尺寸" onChange={setSize} options={selectedModel.supportedSizes} value={size} />
-            ) : null}
-
-            {selectedModel.supportedQualities.length > 0 ? (
+            {supportedSizeOptions.length > 0 ? (
               <SelectField
                 disabled={isGenerating}
+                getOptionLabel={labelForSizePreset}
+                id="image-size"
+                label={parameterLabels.sizeLabel}
+                onChange={setSize}
+                options={supportedSizeOptions}
+                value={size}
+              />
+            ) : null}
+
+            {supportedQualityOptions.length > 0 ? (
+              <SelectField
+                disabled={isGenerating}
+                getOptionLabel={labelForQualityPreset}
                 id="image-quality"
-                label="质量"
+                label={parameterLabels.qualityLabel}
                 onChange={setQuality}
-                options={selectedModel.supportedQualities}
+                options={supportedQualityOptions}
                 value={quality}
               />
             ) : null}
@@ -313,14 +352,63 @@ export function BackendControlPanel({
       </section>
 
       <Button className="mt-auto w-full" disabled={!canSubmit} icon={<Sparkles className="h-4 w-4" />} type="submit" variant="primary">
-        {isGenerating ? '生成中...' : '生成图片'}
+        {isGenerating ? '正在提交...' : '生成图片'}
       </Button>
     </PanelShell>
   )
+
+  async function savePendingReferences(): Promise<WorkbenchReferenceInput[]> {
+    const pendingReferences = references.filter((reference) => reference.kind === 'pending')
+    if (pendingReferences.length === 0) {
+      return references
+    }
+    if (!onSavePendingReferences) {
+      onError('当前产品不可保存参考图，请刷新后重试。')
+      return references
+    }
+
+    const savedReferences = await onSavePendingReferences(pendingReferences.map((reference) => reference.file))
+    if (savedReferences.length === 0) {
+      onError('参考图保存失败，请检查图片或稍后重试。')
+      return references
+    }
+
+    const nextReferences = [...references.filter((reference) => reference.kind === 'asset'), ...savedReferences]
+    revokeReferencePreviewUrls(pendingReferences)
+    setReferences(nextReferences)
+    return nextReferences
+  }
+
+  async function submitGeneration(selectedModel: Model) {
+    const referencesForSubmit = references.some((reference) => reference.kind === 'pending') ? await savePendingReferences() : references
+    const nextWorkbenchInput = buildCurrentWorkbenchInput(selectedModel, referencesForSubmit)
+    if (!nextWorkbenchInput) {
+      onError('请先选择可用模型。')
+      return
+    }
+    void onGenerate(
+      {
+        prompt,
+      },
+      nextWorkbenchInput,
+    )
+  }
+
+  function buildCurrentWorkbenchInput(selectedModel: Model, nextReferences: WorkbenchReferenceInput[]): WorkbenchTaskInput {
+    return buildWorkbenchTaskInput(selectedModel, {
+      size,
+      quality,
+      outputFormat,
+      imageType,
+      imageCount,
+      references: nextReferences,
+    })
+  }
 }
 
 interface SelectFieldProps {
   disabled: boolean
+  getOptionLabel?: (value: string) => string
   id: string
   label: string
   options: string[]
@@ -328,7 +416,7 @@ interface SelectFieldProps {
   onChange: (value: string) => void
 }
 
-function SelectField({ disabled, id, label, options, value, onChange }: SelectFieldProps) {
+function SelectField({ disabled, getOptionLabel = identityOptionLabel, id, label, options, value, onChange }: SelectFieldProps) {
   return (
     <div className="space-y-2">
       <label className="field-label" htmlFor={id}>
@@ -337,12 +425,16 @@ function SelectField({ disabled, id, label, options, value, onChange }: SelectFi
       <select className="field-input" disabled={disabled} id={id} onChange={(event) => onChange(event.target.value)} value={value}>
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {getOptionLabel(option)}
           </option>
         ))}
       </select>
     </div>
   )
+}
+
+function identityOptionLabel(value: string): string {
+  return value
 }
 
 interface PanelShellProps {
@@ -357,7 +449,7 @@ function PanelShell({ children, onSubmit }: PanelShellProps) {
         <h2 className="text-sm font-semibold text-ink-900">生成参数</h2>
       </div>
       <form
-        className="flex flex-1 flex-col gap-5 p-4 xl:overflow-y-auto"
+        className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4"
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
@@ -375,6 +467,14 @@ function normalizeOption(current: string, options: string[]): string {
   }
 
   return options.includes(current) ? current : options[0]
+}
+
+function prioritizeAutoOption(options: string[]): string[] {
+  if (!options.includes('auto') || options[0] === 'auto') {
+    return options
+  }
+
+  return ['auto', ...options.filter((option) => option !== 'auto')]
 }
 
 function normalizeImageCount(current: ImageCount, model: Model): ImageCount {

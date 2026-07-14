@@ -3,6 +3,7 @@
 ## General delivery rules
 
 - State what changed, what was intentionally not changed, and how it was verified.
+- Git 提交信息的标题和正文默认使用简体中文；Conventional Commits 的类型前缀（如 `feat`、`fix`、`docs`）可保留英文。
 - Keep changes scoped to the requested phase.
 - Do not mix documentation, frontend refactors, backend implementation, and deployment changes unless the task explicitly asks for that combination.
 - Final handoff for a worktree task must map every required regression scenario or failure mode from the task package to the actual test file and test name that covers it.

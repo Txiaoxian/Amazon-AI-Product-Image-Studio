@@ -7,6 +7,7 @@ export const WORKBENCH_IMAGE_TYPE_OPTIONS = [
   { value: 'DETAIL', label: '细节图' },
   { value: 'DIMENSION', label: '尺寸图' },
   { value: 'SELLING_POINT', label: '卖点图' },
+  { value: 'PROMOTION', label: '宣传图' },
   { value: 'COMPARISON', label: '对比图' },
 ] as const
 

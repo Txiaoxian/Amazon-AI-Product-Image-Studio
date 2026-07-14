@@ -307,6 +307,15 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 		if err != nil {
 			return err
 		}
+		if !isTenantAdmin(principal) {
+			allowed, err := repo.UserCanAccessModel(ctx, scope, principal.UserID, modelRecord.ID)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrForbidden
+			}
+		}
 		if modelRecord.ProviderID != providerRecord.ID || modelRecord.Status != modelpkg.StatusEnabled {
 			return ErrValidation
 		}
@@ -395,6 +404,15 @@ func (s *Service) createTask(ctx context.Context, principal auth.Principal, proj
 	}
 
 	return s.responseForRecord(ctx, scope, created)
+}
+
+func isTenantAdmin(principal auth.Principal) bool {
+	for _, role := range principal.Roles {
+		if role.Code == "admin" {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveTaskDefaultProviderModel(ctx context.Context, tx *gorm.DB, scope tenant.Scope, request createRequest) (createRequest, error) {

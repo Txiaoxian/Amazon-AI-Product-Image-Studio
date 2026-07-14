@@ -159,9 +159,10 @@ type Project struct {
 	ASIN      string         `gorm:"type:varchar(32);index:idx_projects_tenant_asin,priority:2"`
 	Site      string         `gorm:"type:varchar(64)"`
 	Notes     string         `gorm:"type:text"`
-	Status    string         `gorm:"type:varchar(32);not null;index:idx_projects_tenant_status_created,priority:2"`
+	Status    string         `gorm:"type:varchar(32);not null;index:idx_projects_tenant_status_created,priority:2;index:idx_projects_tenant_status_sort,priority:2"`
+	SortOrder int            `gorm:"type:int;not null;default:0;index:idx_projects_tenant_status_sort,priority:3"`
 	CreatedBy string         `gorm:"type:varchar(36);not null;index"`
-	CreatedAt time.Time      `gorm:"type:datetime(3);not null;index:idx_projects_tenant_status_created,priority:3"`
+	CreatedAt time.Time      `gorm:"type:datetime(3);not null;index:idx_projects_tenant_status_created,priority:3;index:idx_projects_tenant_status_sort,priority:4"`
 	UpdatedAt time.Time      `gorm:"type:datetime(3);not null"`
 	DeletedAt gorm.DeletedAt `gorm:"type:datetime(3);index;index:idx_projects_tenant_deleted,priority:2"`
 }
@@ -260,6 +261,23 @@ type AIModel struct {
 
 func (AIModel) TableName() string {
 	return "ai_models"
+}
+
+// UserModelAccessGrant limits which tenant-scoped AI models a non-admin user
+// can discover and use. Tenant administrators bypass this relation while
+// managing the tenant, but all stored grants remain tenant scoped.
+type UserModelAccessGrant struct {
+	ID        string    `gorm:"type:varchar(36);primaryKey"`
+	TenantID  string    `gorm:"type:varchar(36);not null;uniqueIndex:uk_user_model_access_tenant_user_model,priority:1;index:idx_user_model_access_tenant_user,priority:1;index:idx_user_model_access_tenant_model,priority:1"`
+	UserID    string    `gorm:"type:varchar(36);not null;uniqueIndex:uk_user_model_access_tenant_user_model,priority:2;index:idx_user_model_access_tenant_user,priority:2"`
+	ModelID   string    `gorm:"type:varchar(36);not null;uniqueIndex:uk_user_model_access_tenant_user_model,priority:3;index:idx_user_model_access_tenant_model,priority:2"`
+	GrantedBy *string   `gorm:"type:varchar(36)"`
+	CreatedAt time.Time `gorm:"type:datetime(3);not null"`
+	UpdatedAt time.Time `gorm:"type:datetime(3);not null"`
+}
+
+func (UserModelAccessGrant) TableName() string {
+	return "user_model_access_grants"
 }
 
 type GenerationTask struct {

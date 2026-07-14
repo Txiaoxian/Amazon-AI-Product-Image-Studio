@@ -5,9 +5,11 @@ import { taskApi as defaultTaskApi, type TaskApi } from '../api/tasks'
 import { FriendlyError } from '../lib/errors'
 import type { BackendHistoryItem, HistoryKind } from '../types/history'
 import type { Asset, AssetId, ProjectId, Task, TaskId } from '../types/platform'
+import type { WorkbenchImageType } from '../types/workbench'
 
 interface UseHistoryOptions {
   assetApi?: AssetApi
+  imageType?: WorkbenchImageType
   projectId?: ProjectId | null
   taskApi?: TaskApi
 }
@@ -16,6 +18,7 @@ const DEFAULT_HISTORY_PAGE_SIZE = 10
 
 export function useHistory({
   assetApi = defaultAssetApi,
+  imageType,
   projectId = null,
   taskApi = defaultTaskApi,
 }: UseHistoryOptions = {}) {
@@ -28,20 +31,22 @@ export function useHistory({
   const [total, setTotal] = useState(0)
   const refreshVersionRef = useRef(0)
   const projectIdRef = useRef<ProjectId | null | undefined>(undefined)
+  const imageTypeRef = useRef<WorkbenchImageType | undefined>(undefined)
 
   useEffect(() => {
-    if (projectIdRef.current === projectId) {
+    if (projectIdRef.current === projectId && imageTypeRef.current === imageType) {
       return
     }
 
     projectIdRef.current = projectId
+    imageTypeRef.current = imageType
     refreshVersionRef.current += 1
     setItems([])
     setError('')
     setTotal(0)
     setIsLoading(false)
     setPageNum(1)
-  }, [projectId])
+  }, [imageType, projectId])
 
   const refresh = useCallback(async () => {
     const refreshVersion = refreshVersionRef.current + 1
@@ -59,7 +64,7 @@ export function useHistory({
     setError('')
     setItems([])
     try {
-      const historyPage = await taskApi.listHistory(projectId, { pageNum, pageSize, kind })
+      const historyPage = await taskApi.listHistory(projectId, { pageNum, pageSize, kind, imageType })
       if (refreshVersion !== refreshVersionRef.current) {
         return
       }
@@ -71,13 +76,13 @@ export function useHistory({
       }
       setItems([])
       setTotal(0)
-      setError(getBackendHistoryErrorMessage(err, '无法加载项目历史，请稍后重试。'))
+      setError(getBackendHistoryErrorMessage(err, '无法加载产品生成记录，请稍后重试。'))
     } finally {
       if (refreshVersion === refreshVersionRef.current) {
         setIsLoading(false)
       }
     }
-  }, [kind, pageNum, pageSize, projectId, taskApi])
+  }, [imageType, kind, pageNum, pageSize, projectId, taskApi])
 
   const loadBackendDetail = useCallback(
     async (assetId: AssetId, taskId?: TaskId): Promise<{ asset: Asset; task: Task }> => {
@@ -274,7 +279,7 @@ function getBackendHistoryErrorMessage(error: unknown, fallback: string): string
   }
 
   if (error.status === 403) {
-    return '没有权限读取该项目历史。'
+    return '没有权限读取该产品生成记录。'
   }
 
   if (error.status === 404) {

@@ -247,7 +247,7 @@ func (s *Service) setProviderStatus(c *gin.Context, status string, action string
 }
 
 func (s *Service) listProviders(ctx context.Context, principal auth.Principal, query ListQuery) (Page, error) {
-	if !isTenantAdmin(principal) && !principal.HasPermission(PermissionRead) {
+	if !isTenantAdmin(principal) {
 		return Page{}, ErrForbidden
 	}
 	scope, err := tenant.NewScope(principal.TenantID)
@@ -267,7 +267,7 @@ func (s *Service) listProviders(ctx context.Context, principal auth.Principal, q
 }
 
 func (s *Service) createProvider(ctx context.Context, principal auth.Principal, input CreateInput, ip string, userAgent string) (Response, error) {
-	if !isTenantAdmin(principal) && !principal.HasPermission(PermissionManage) {
+	if !isTenantAdmin(principal) {
 		return Response{}, ErrForbidden
 	}
 	if s.db == nil {
@@ -646,6 +646,9 @@ func (s *Service) authorizeProviderForUpdateWithRepo(ctx context.Context, repo R
 }
 
 func (s *Service) authorizeProviderWithLookup(ctx context.Context, lookup func(context.Context, tenant.Scope, string) (database.AIProvider, error), principal auth.Principal, providerID string, permission string) (database.AIProvider, error) {
+	if !isTenantAdmin(principal) {
+		return database.AIProvider{}, ErrForbidden
+	}
 	scope, err := tenant.NewScope(principal.TenantID)
 	if err != nil {
 		return database.AIProvider{}, err
@@ -654,12 +657,7 @@ func (s *Service) authorizeProviderWithLookup(ctx context.Context, lookup func(c
 	if err != nil {
 		return database.AIProvider{}, err
 	}
-	if isTenantAdmin(principal) {
-		return record, nil
-	}
-	if !principal.HasPermission(permission) {
-		return database.AIProvider{}, ErrForbidden
-	}
+	_ = permission
 	return record, nil
 }
 

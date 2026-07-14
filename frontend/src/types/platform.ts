@@ -63,6 +63,7 @@ export interface Project {
   site: string
   notes: string
   status: ProjectStatus
+  sortOrder: number
   createdBy: UserId
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
@@ -73,9 +74,19 @@ export interface ProjectMember {
   tenantId: TenantId
   projectId: ProjectId
   userId: UserId
+  userEmail: string
+  userName: string
+  userStatus: UserStatus
   role: ProjectMemberRole
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString
+}
+
+export interface ProjectMemberCandidate {
+  userId: UserId
+  userEmail: string
+  userName: string
+  status: UserStatus
 }
 
 export type AssetKind = 'REFERENCE' | 'GENERATED' | 'EDITED'
@@ -193,6 +204,7 @@ export interface Model {
   tenantId: TenantId
   providerId: ProviderId
   providerName: string
+  providerType?: ProviderType
   modelName: string
   displayName: string
   supportsGenerate: boolean

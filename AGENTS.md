@@ -35,6 +35,7 @@ P0/P1 are complete. The `frontend/`, `backend/`, `deploy/`, and `docs/` split is
 - File uploads must validate true file type, size, dimensions, and pixel count. SVG upload is forbidden.
 - Object ID APIs must check object-level authorization, not only login state.
 - Image downloads must pass through backend authorization.
+- 平台面向用户的文本应尽量使用简体中文，尤其是配置标签、说明文案、校验提示和错误信息；必要的技术标识、枚举值、模型 ID、API 字段名可保持原始形式。
 
 ## Instruction index
 
@@ -45,7 +46,7 @@ P0/P1 are complete. The `frontend/`, `backend/`, `deploy/`, and `docs/` split is
 | `agent-instructions/03-frontend-rules.md` | Frontend code, UI, state, API integration | Preserve existing React UI while replacing local AI/data paths with backend contracts. |
 | `agent-instructions/04-backend-rules.md` | Go backend, database, worker, queues | Gin/GORM structure, tenant filters, Redis queue, MySQL source of truth. |
 | `agent-instructions/05-security-rules.md` | Auth, RBAC, uploads, Provider config, logging | Security requirements for cookies, SSRF, API keys, uploads, audit, and logs. |
-| `agent-instructions/06-testing-and-delivery.md` | Verification, delivery notes, PR handoff | Required validation commands and delivery expectations by change type. |
+| `agent-instructions/06-testing-and-delivery.md` | Verification, delivery notes, PR handoff | Required validation commands, Simplified Chinese Git messages, and delivery expectations by change type. |
 | `agent-instructions/07-task-package-and-review-rules.md` | Worktree task planning, migration tasks, review handoff | Required task-package sections, intermediate-state rules, failure matrices, and regression-test mapping. |
 
 ## Related planning docs

@@ -33,6 +33,22 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe('auth API', () => {
+  it('creates a one-time captcha challenge', async () => {
+    const challenge = {
+      captchaId: 'captcha_1',
+      imageUrl: '/api/v1/auth/captcha/captcha_1/image',
+      expiresAt: '2026-07-13T12:00:00Z',
+    }
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(challenge, 201))
+    const authApi = createAuthApi(createApiClient({ fetchImpl }))
+
+    await expect(authApi.createCaptcha()).resolves.toEqual(challenge)
+    expect(fetchImpl).toHaveBeenCalledWith('/api/v1/auth/captcha', expect.objectContaining({
+      credentials: 'include',
+      method: 'POST',
+    }))
+  })
+
   it('posts login through /api/v1 with credentials included', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(session))
     const authApi = createAuthApi(createApiClient({ fetchImpl }))
@@ -42,6 +58,8 @@ describe('auth API', () => {
         tenantId: 'tenant_1',
         email: 'admin@example.com',
         password: 'valid-password-123',
+        captchaId: 'captcha_1',
+        captchaCode: '1234',
       }),
     ).resolves.toEqual(session)
 
@@ -53,6 +71,8 @@ describe('auth API', () => {
           tenantId: 'tenant_1',
           email: 'admin@example.com',
           password: 'valid-password-123',
+          captchaId: 'captcha_1',
+          captchaCode: '1234',
         }),
         credentials: 'include',
         method: 'POST',

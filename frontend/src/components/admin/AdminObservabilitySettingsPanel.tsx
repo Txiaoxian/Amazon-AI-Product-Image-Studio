@@ -99,7 +99,7 @@ const usageDimensions: Array<{ value: UsageSummaryDimension; label: string }> = 
   { value: 'tenant', label: '租户' },
   { value: 'provider', label: 'Provider' },
   { value: 'model', label: '模型' },
-  { value: 'project', label: '项目' },
+  { value: 'project', label: '产品' },
   { value: 'user', label: '用户' },
 ]
 
@@ -482,6 +482,7 @@ export function AdminObservabilitySettingsPanel({
             isLoading={isLoadingApiCallLogs}
             loadingDetailId={loadingApiCallDetailId}
             error={apiCallLogsError}
+            onCloseDetail={resetApiCallDetail}
             onLoadDetail={(id) => void loadApiCallDetail(id)}
             onPageChange={(pageNum) => {
               resetApiCallDetail()

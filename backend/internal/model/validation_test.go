@@ -124,3 +124,54 @@ func TestNormalizeCapabilityListsRejectInvalidValues(t *testing.T) {
 		t.Fatalf("invalid output format err = %v, want ErrValidation", err)
 	}
 }
+
+func TestNormalizeUpdateRequestAcceptsResolutionQualityPresets(t *testing.T) {
+	qualities := []string{"auto", "1K", "2k", "4K"}
+	input, changedFields, err := normalizeUpdateRequest(updateRequest{SupportedQualities: &qualities})
+	if err != nil {
+		t.Fatalf("normalize resolution quality presets: %v", err)
+	}
+	if len(changedFields) != 1 || changedFields[0] != "supportedQualities" {
+		t.Fatalf("changed fields = %#v, want supportedQualities", changedFields)
+	}
+	if input.SupportedQualitiesJSON == nil {
+		t.Fatal("supported qualities JSON is nil")
+	}
+
+	var normalized []string
+	if err := json.Unmarshal([]byte(*input.SupportedQualitiesJSON), &normalized); err != nil {
+		t.Fatalf("decode supported qualities: %v", err)
+	}
+	want := []string{"auto", "1k", "2k", "4k"}
+	if len(normalized) != len(want) {
+		t.Fatalf("normalized qualities = %#v, want %#v", normalized, want)
+	}
+	for index := range want {
+		if normalized[index] != want[index] {
+			t.Fatalf("normalized qualities = %#v, want %#v", normalized, want)
+		}
+	}
+}
+
+func TestNormalizeUpdateRequestAcceptsGeminiAspectRatios(t *testing.T) {
+	sizes := []string{"auto", "1:1", "1.62:1", "4:5", "16:9", "21:9"}
+	input, changedFields, err := normalizeUpdateRequest(updateRequest{SupportedSizes: &sizes})
+	if err != nil {
+		t.Fatalf("normalize Gemini aspect ratios: %v", err)
+	}
+	if len(changedFields) != 1 || changedFields[0] != "supportedSizes" {
+		t.Fatalf("changed fields = %#v, want supportedSizes", changedFields)
+	}
+	if input.SupportedSizesJSON == nil || *input.SupportedSizesJSON != `["auto","1:1","1.62:1","4:5","16:9","21:9"]` {
+		t.Fatalf("supported sizes JSON = %#v", input.SupportedSizesJSON)
+	}
+}
+
+func TestNormalizeUpdateRequestRejectsAspectRatiosOutsideOfficialGPTImage2Range(t *testing.T) {
+	for _, size := range []string{"1:4", "1:8", "4:1", "8:1"} {
+		sizes := []string{size}
+		if _, _, err := normalizeUpdateRequest(updateRequest{SupportedSizes: &sizes}); !errors.Is(err, ErrValidation) {
+			t.Fatalf("size %s error = %v, want ErrValidation", size, err)
+		}
+	}
+}

@@ -44,6 +44,24 @@ const userRecord = {
 }
 
 describe('user admin API wrapper', () => {
+  it('gets and replaces administrator-assigned model access for a user', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ userId: 'user_2', modelIds: ['model_1'] }))
+      .mockResolvedValueOnce(jsonResponse({ userId: 'user_2', modelIds: ['model_1', 'model_2'] }))
+    const api = createUserAdminApi(createApiClient({ fetchImpl }))
+
+    await expect(api.getUserModelAccess('user_2')).resolves.toEqual({ userId: 'user_2', modelIds: ['model_1'] })
+    await api.replaceUserModelAccess('user_2', { modelIds: ['model_1', 'model_2'] }, 'csrf_memory_only')
+
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ['/api/v1/users/user_2/ai-access', 'GET'],
+      ['/api/v1/users/user_2/ai-access', 'PUT'],
+    ])
+    expect(JSON.parse(fetchImpl.mock.calls[1][1]?.body as string)).toEqual({ modelIds: ['model_1', 'model_2'] })
+    expect((fetchImpl.mock.calls[1][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
+  })
+
   it('covers user, role, and permission endpoints with authenticated requests and CSRF writes', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

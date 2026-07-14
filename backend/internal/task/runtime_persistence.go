@@ -1,6 +1,7 @@
 package task
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"image/jpeg"
 	"image/png"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +30,7 @@ import (
 
 type validatedOutputImage struct {
 	Data      []byte
+	FilePath  string
 	MIMEType  string
 	Ext       string
 	SizeBytes int64
@@ -140,7 +144,17 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		}
 		assetID := idgen.New()
 		objectKey := outputObjectKey(scope.ID(), current.ProjectID, assetID, validated.Ext)
-		thumbnailImage, err := thumbnail.Generate(validated.Data, validated.MIMEType)
+		imageReader, err := openValidatedOutput(validated)
+		if err != nil {
+			return err
+		}
+		thumbnailImage, thumbnailErr := thumbnail.GenerateReader(imageReader, validated.MIMEType)
+		closeErr := imageReader.Close()
+		if thumbnailErr != nil {
+			err = thumbnailErr
+		} else if closeErr != nil {
+			err = closeErr
+		}
 		if err != nil {
 			p.log.Warn("provider output thumbnail generation failed", "task_id", current.ID, "output_index", index)
 			return ErrValidation
@@ -172,9 +186,19 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 		}()
 	}
 	for _, output := range pending {
-		if err := p.store.PutObject(ctx, p.storage.BucketGenerated, output.ObjectKey, bytes.NewReader(output.Image.Data), output.Image.SizeBytes, output.Image.MIMEType); err != nil {
+		imageReader, err := openValidatedOutput(output.Image)
+		if err != nil {
 			p.cleanupUploadedOutputs(ctx, uploaded)
 			return err
+		}
+		putErr := p.store.PutObject(ctx, p.storage.BucketGenerated, output.ObjectKey, imageReader, output.Image.SizeBytes, output.Image.MIMEType)
+		closeErr := imageReader.Close()
+		if putErr != nil || closeErr != nil {
+			p.cleanupUploadedOutputs(ctx, uploaded)
+			if putErr != nil {
+				return putErr
+			}
+			return closeErr
 		}
 		uploaded = append(uploaded, output)
 		if err := p.store.PutObject(ctx, p.storage.BucketThumbnails, output.ThumbnailObjectKey, bytes.NewReader(output.Thumbnail.Data), output.Thumbnail.SizeBytes, output.Thumbnail.MIMEType); err != nil {
@@ -319,35 +343,100 @@ func (p *WorkerProcessor) taskOutputExistsWithDB(ctx context.Context, db *gorm.D
 }
 
 func (p *WorkerProcessor) validateOutputImage(output GeneratedImageOutput) (validatedOutputImage, error) {
-	data := output.Data
-	if len(data) == 0 || int64(len(data)) > p.upload.MaxFileSizeBytes {
+	sizeBytes, err := generatedOutputSize(output)
+	if err != nil || sizeBytes <= 0 || sizeBytes > p.generatedOutputMaxBytes {
 		return validatedOutputImage{}, ErrValidation
 	}
-	mimeType, ext, err := detectOutputImageType(data)
+	reader, err := openGeneratedOutput(output)
 	if err != nil {
+		return validatedOutputImage{}, ErrValidation
+	}
+	buffered := bufio.NewReader(reader)
+	header, peekErr := buffered.Peek(12)
+	if peekErr != nil && !errors.Is(peekErr, io.EOF) {
+		_ = reader.Close()
+		return validatedOutputImage{}, ErrValidation
+	}
+	mimeType, ext, err := detectOutputImageType(header)
+	if err != nil {
+		_ = reader.Close()
 		return validatedOutputImage{}, err
 	}
 	if !uploadMIMEAllowed(p.upload.AllowedMIMETypes, mimeType) {
+		_ = reader.Close()
 		return validatedOutputImage{}, ErrValidation
 	}
-	width, height, err := decodeOutputDimensions(mimeType, data)
+	width, height, err := decodeOutputDimensionsReader(mimeType, buffered)
+	closeErr := reader.Close()
 	if err != nil {
 		return validatedOutputImage{}, ErrValidation
+	}
+	if closeErr != nil {
+		return validatedOutputImage{}, closeErr
 	}
 	if width <= 0 || height <= 0 || width > p.upload.MaxWidth || height > p.upload.MaxHeight || int64(width)*int64(height) > p.upload.MaxPixels {
 		return validatedOutputImage{}, ErrValidation
 	}
-	sum := sha256.Sum256(data)
+	hashReader, err := openGeneratedOutput(output)
+	if err != nil {
+		return validatedOutputImage{}, err
+	}
+	hash := sha256.New()
+	written, copyErr := io.Copy(hash, hashReader)
+	closeErr = hashReader.Close()
+	if copyErr != nil || closeErr != nil || written != sizeBytes {
+		return validatedOutputImage{}, ErrValidation
+	}
 	return validatedOutputImage{
-		Data:      data,
+		Data:      output.Data,
+		FilePath:  output.FilePath,
 		MIMEType:  mimeType,
 		Ext:       ext,
-		SizeBytes: int64(len(data)),
+		SizeBytes: sizeBytes,
 		Width:     width,
 		Height:    height,
-		SHA256:    hex.EncodeToString(sum[:]),
+		SHA256:    hex.EncodeToString(hash.Sum(nil)),
 		Metadata:  provideradapter.SanitizeMetadata(output.Metadata),
 	}, nil
+}
+
+func generatedOutputSize(output GeneratedImageOutput) (int64, error) {
+	if len(output.Data) > 0 {
+		return int64(len(output.Data)), nil
+	}
+	if strings.TrimSpace(output.FilePath) == "" {
+		return 0, ErrValidation
+	}
+	info, err := os.Stat(output.FilePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0, ErrValidation
+	}
+	if output.SizeBytes > 0 && output.SizeBytes != info.Size() {
+		return 0, ErrValidation
+	}
+	return info.Size(), nil
+}
+
+func openGeneratedOutput(output GeneratedImageOutput) (io.ReadCloser, error) {
+	if len(output.Data) > 0 {
+		return io.NopCloser(bytes.NewReader(output.Data)), nil
+	}
+	return os.Open(output.FilePath)
+}
+
+func openValidatedOutput(output validatedOutputImage) (io.ReadCloser, error) {
+	if len(output.Data) > 0 {
+		return io.NopCloser(bytes.NewReader(output.Data)), nil
+	}
+	return os.Open(output.FilePath)
+}
+
+func cleanupTemporaryGeneratedOutputs(outputs []GeneratedImageOutput) {
+	for _, output := range outputs {
+		if output.Temporary && strings.TrimSpace(output.FilePath) != "" {
+			_ = os.Remove(output.FilePath)
+		}
+	}
 }
 
 func (p *WorkerProcessor) createUsageIfAbsent(ctx context.Context, tx *gorm.DB, scope tenant.Scope, taskRecord database.GenerationTask, modelRecord database.AIModel, usage UsageResult, now time.Time) (database.UsageRecord, error) {
@@ -460,15 +549,19 @@ func detectOutputImageType(data []byte) (string, string, error) {
 }
 
 func decodeOutputDimensions(mimeType string, data []byte) (int, int, error) {
+	return decodeOutputDimensionsReader(mimeType, bytes.NewReader(data))
+}
+
+func decodeOutputDimensionsReader(mimeType string, reader io.Reader) (int, int, error) {
 	switch mimeType {
 	case "image/jpeg":
-		cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
+		cfg, err := jpeg.DecodeConfig(reader)
 		return cfg.Width, cfg.Height, err
 	case "image/png":
-		cfg, err := png.DecodeConfig(bytes.NewReader(data))
+		cfg, err := png.DecodeConfig(reader)
 		return cfg.Width, cfg.Height, err
 	case "image/webp":
-		cfg, err := webp.DecodeConfig(bytes.NewReader(data))
+		cfg, err := webp.DecodeConfig(reader)
 		return cfg.Width, cfg.Height, err
 	default:
 		return 0, 0, ErrValidation

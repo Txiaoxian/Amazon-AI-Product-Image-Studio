@@ -49,6 +49,7 @@ Current verified state:
 - Compose and backend configuration pin the browser/backend CSRF request-header contract to `X-CSRF-Token`; deployment must not override it.
 - Production backend startup and production dry-run preflight now fail closed unless `CSRF_ENABLED=true`.
 - Login rate limiting uses Redis with `AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES` and `AUTH_LOGIN_RATE_LIMIT_WINDOW`; defaults are conservative and do not expose email/IP in Redis keys.
+- Ordinary-user captcha challenges use Redis with `AUTH_CAPTCHA_ENABLED` and `AUTH_CAPTCHA_TTL` (default `2m`). `AUTH_DEFAULT_TENANT_ID` may be set for a tenant-specific login entry point so the browser never asks users to type a tenant ID.
 - `backend/cmd/provider-key-rotation` provides a default-safe dry-run and explicitly confirmed transactional apply path for Provider master-key rotation. Active Provider credentials are re-encrypted; historical soft-deleted Provider credential remnants are count-reported in dry-run and crypto-erased in apply.
 - `backend/cmd/provision-tenant` provides a default-safe dry-run and explicitly confirmed transactional apply path for additional tenant creation.
 - The `backend-api` image bundles both operator CLI binaries so Compose servers can run them through scoped `docker compose run --rm --no-deps` commands without a host Go toolchain.

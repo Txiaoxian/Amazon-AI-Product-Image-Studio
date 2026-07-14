@@ -33,6 +33,13 @@ The current React UI is the baseline. Keep the existing workbench, upload intera
 - Handle loading, empty, error, disabled, permission, and duplicate-submit states.
 - Use branded or clearly named TypeScript ID types where practical for tenant, project, asset, task, provider, and model IDs.
 
+## User-facing language
+
+- Prefer Simplified Chinese for all platform-facing UI text.
+- Configuration labels, helper text, empty states, validation copy, button labels, status labels, and error messages should be Simplified Chinese whenever practical.
+- Keep unavoidable technical identifiers such as Provider type codes, model IDs, API field names, MIME types, and enum values unchanged when changing them would reduce precision.
+- Do not expose raw backend or third-party English error payloads directly in UI; translate or summarize them in Simplified Chinese while preserving actionable meaning.
+
 ## Verification
 
 For frontend-affecting work, run:

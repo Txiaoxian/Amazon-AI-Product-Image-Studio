@@ -48,6 +48,10 @@ type replaceRolesRequest struct {
 	RoleIDs []string `json:"roleIds"`
 }
 
+type replaceModelAccessRequest struct {
+	ModelIDs []string `json:"modelIds"`
+}
+
 type updateTenantRequest struct {
 	Name *string `json:"name"`
 }
@@ -96,6 +100,8 @@ func (s *Service) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/users/:userId/disable", s.DisableUser)
 	group.POST("/users/:userId/enable", s.EnableUser)
 	group.POST("/users/:userId/roles", s.ReplaceUserRoles)
+	group.GET("/users/:userId/ai-access", s.GetUserModelAccess)
+	group.PUT("/users/:userId/ai-access", s.ReplaceUserModelAccess)
 	group.GET("/roles", s.ListRoles)
 	group.POST("/roles", s.CreateRole)
 	group.PATCH("/roles/:roleId", s.UpdateRole)
@@ -246,6 +252,42 @@ func (s *Service) ReplaceUserRoles(c *gin.Context) {
 	}
 
 	response, err := s.replaceUserRoles(c.Request.Context(), principal, c.Param("userId"), input, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
+func (s *Service) GetUserModelAccess(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	response, err := s.getUserModelAccess(c.Request.Context(), principal, c.Param("userId"))
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.JSON(c, http.StatusOK, response)
+}
+
+func (s *Service) ReplaceUserModelAccess(c *gin.Context) {
+	principal, ok := requirePrincipal(c)
+	if !ok {
+		return
+	}
+	request, err := parseReplaceModelAccessRequest(c.Request.Body)
+	if err != nil {
+		respondParseError(c, err)
+		return
+	}
+	input, err := normalizeModelAccessRequest(request)
+	if err != nil {
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		return
+	}
+	response, err := s.replaceUserModelAccess(c.Request.Context(), principal, c.Param("userId"), input, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		s.respondError(c, err)
 		return
@@ -730,6 +772,77 @@ func (s *Service) replaceUserRoles(ctx context.Context, principal auth.Principal
 	return userResponse(userRecord, assignedRoles), nil
 }
 
+func (s *Service) getUserModelAccess(ctx context.Context, principal auth.Principal, userID string) (ModelAccessResponse, error) {
+	if !isTenantAdmin(principal) {
+		return ModelAccessResponse{}, ErrForbidden
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return ModelAccessResponse{}, err
+	}
+	userRecord, err := s.repo.FindUser(ctx, scope, userID)
+	if err != nil {
+		return ModelAccessResponse{}, err
+	}
+	modelIDs, err := s.repo.ListUserModelAccessIDs(ctx, scope, userRecord.ID)
+	if err != nil {
+		return ModelAccessResponse{}, err
+	}
+	return ModelAccessResponse{UserID: userRecord.ID, ModelIDs: modelIDs}, nil
+}
+
+func (s *Service) replaceUserModelAccess(ctx context.Context, principal auth.Principal, userID string, input ModelAccessInput, ip string, userAgent string) (ModelAccessResponse, error) {
+	if !isTenantAdmin(principal) {
+		return ModelAccessResponse{}, ErrForbidden
+	}
+	if s.db == nil {
+		return ModelAccessResponse{}, database.ErrNilDB
+	}
+	scope, err := tenant.NewScope(principal.TenantID)
+	if err != nil {
+		return ModelAccessResponse{}, err
+	}
+
+	var response ModelAccessResponse
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.withDB(tx)
+		userRecord, err := repo.FindUser(ctx, scope, userID)
+		if err != nil {
+			return err
+		}
+		models, err := repo.ModelsByIDs(ctx, scope, input.ModelIDs)
+		if err != nil {
+			return err
+		}
+		modelIDs := make([]string, 0, len(models))
+		for _, record := range models {
+			modelIDs = append(modelIDs, record.ID)
+		}
+		sort.Strings(modelIDs)
+		if err := repo.ReplaceUserModelAccess(ctx, scope, userRecord.ID, modelIDs, principal.UserID, s.now()); err != nil {
+			return err
+		}
+		response = ModelAccessResponse{UserID: userRecord.ID, ModelIDs: modelIDs}
+		return audit.NewRecorder(tx).Record(ctx, audit.Event{
+			TenantID:     scope.ID(),
+			ActorUserID:  &principal.UserID,
+			Action:       "user.ai_access.replace",
+			ResourceType: "user",
+			ResourceID:   userRecord.ID,
+			IP:           ip,
+			UserAgent:    userAgent,
+			Metadata: map[string]any{
+				"modelIds": modelIDs,
+				"count":    len(modelIDs),
+			},
+		})
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return ModelAccessResponse{}, err
+	}
+	return response, nil
+}
+
 func (s *Service) listRoles(ctx context.Context, principal auth.Principal) ([]RoleResponse, error) {
 	if !hasPermissionOrAdmin(principal, PermissionRoleRead) {
 		return nil, ErrForbidden
@@ -1114,6 +1227,27 @@ func parseReplaceRolesRequest(body io.Reader) (replaceRolesRequest, error) {
 	return request, nil
 }
 
+func parseReplaceModelAccessRequest(body io.Reader) (replaceModelAccessRequest, error) {
+	fields, err := decodeRawObject(body)
+	if err != nil {
+		return replaceModelAccessRequest{}, err
+	}
+	for key := range fields {
+		if key != "modelIds" {
+			return replaceModelAccessRequest{}, ErrValidation
+		}
+	}
+	raw, ok := fields["modelIds"]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return replaceModelAccessRequest{}, ErrValidation
+	}
+	var request replaceModelAccessRequest
+	if err := json.Unmarshal(raw, &request.ModelIDs); err != nil {
+		return replaceModelAccessRequest{}, errMalformedJSON
+	}
+	return request, nil
+}
+
 func parseUpdateTenantRequest(body io.Reader) (updateTenantRequest, error) {
 	var request updateTenantRequest
 	if err := decodeStrictObject(body, map[string]bool{"name": true}, &request); err != nil {
@@ -1213,6 +1347,22 @@ func normalizeRolesRequest(request replaceRolesRequest) (RolesInput, error) {
 		return RolesInput{}, err
 	}
 	return RolesInput{RoleIDs: roleIDs}, nil
+}
+
+func normalizeModelAccessRequest(request replaceModelAccessRequest) (ModelAccessInput, error) {
+	if len(request.ModelIDs) > maxModelIDsPerRequest {
+		return ModelAccessInput{}, ErrValidation
+	}
+	modelIDs := cleanStringSet(request.ModelIDs)
+	if len(modelIDs) != len(request.ModelIDs) {
+		return ModelAccessInput{}, ErrValidation
+	}
+	for _, modelID := range modelIDs {
+		if utf8.RuneCountInString(modelID) > 36 {
+			return ModelAccessInput{}, ErrValidation
+		}
+	}
+	return ModelAccessInput{ModelIDs: modelIDs}, nil
 }
 
 func normalizeUpdateTenantRequest(request updateTenantRequest) (string, error) {

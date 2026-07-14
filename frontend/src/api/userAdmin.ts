@@ -5,6 +5,7 @@ import type {
   CurrentTenantAdminResponse,
   ListUsersParams,
   ReplaceRolePermissionsRequest,
+  ReplaceUserModelAccessRequest,
   ReplaceUserRolesRequest,
   UpdateCurrentTenantRequest,
   UpdateUserAdminRoleRequest,
@@ -13,6 +14,7 @@ import type {
   UserAdminPermission,
   UserAdminRole,
   UserAdminUser,
+  UserModelAccess,
 } from '../types/userAdmin'
 import type { UserId } from '../types/platform'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
@@ -27,6 +29,8 @@ export interface UserAdminApi {
   disableUser(userId: UserId | string, csrfToken: string): Promise<UserAdminUser>
   enableUser(userId: UserId | string, csrfToken: string): Promise<UserAdminUser>
   replaceUserRoles(userId: UserId | string, request: ReplaceUserRolesRequest, csrfToken: string): Promise<UserAdminUser>
+  getUserModelAccess(userId: UserId | string): Promise<UserModelAccess>
+  replaceUserModelAccess(userId: UserId | string, request: ReplaceUserModelAccessRequest, csrfToken: string): Promise<UserModelAccess>
   listRoles(): Promise<UserAdminRole[]>
   createRole(request: CreateUserAdminRoleRequest, csrfToken: string): Promise<UserAdminRole>
   updateRole(roleId: string, request: UpdateUserAdminRoleRequest, csrfToken: string): Promise<UserAdminRole>
@@ -63,6 +67,13 @@ export function createUserAdminApi(client: ApiClient = apiClient): UserAdminApi 
     replaceUserRoles: (userId, request, csrfToken) =>
       client.post<UserAdminUser>(`/users/${encodeURIComponent(userId)}/roles`, request, {
         headers: csrfHeaders(csrfToken),
+      }),
+    getUserModelAccess: (userId) => client.get<UserModelAccess>(`/users/${encodeURIComponent(userId)}/ai-access`),
+    replaceUserModelAccess: (userId, request, csrfToken) =>
+      client.request<UserModelAccess>(`/users/${encodeURIComponent(userId)}/ai-access`, {
+        body: request,
+        headers: csrfHeaders(csrfToken),
+        method: 'PUT',
       }),
     listRoles: () => client.get<UserAdminRole[]>('/roles'),
     createRole: (request, csrfToken) =>

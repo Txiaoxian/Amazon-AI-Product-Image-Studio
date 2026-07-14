@@ -180,7 +180,11 @@ func parseHistoryQuery(c *gin.Context) (HistoryQuery, error) {
 	if kind != "" && !validHistoryKind(kind) {
 		return HistoryQuery{}, ErrValidation
 	}
-	return HistoryQuery{PageNum: pageNum, PageSize: pageSize, Kind: kind}, nil
+	imageType, err := cleanImageType(c.Query("imageType"))
+	if err != nil {
+		return HistoryQuery{}, err
+	}
+	return HistoryQuery{PageNum: pageNum, PageSize: pageSize, Kind: kind, ImageType: imageType}, nil
 }
 
 func parsePositiveInt(raw string, fallback int) int {
@@ -241,6 +245,9 @@ func validateModelCapability(taskType string, model database.AIModel, inputAsset
 	switch taskType {
 	case TypeImageGeneration:
 		if !model.SupportsGenerate {
+			return ErrValidation
+		}
+		if len(inputAssetIDs) > 0 && !model.SupportsEdit {
 			return ErrValidation
 		}
 	case TypeImageEdit:
@@ -424,7 +431,7 @@ func cleanImageType(value string) (string, error) {
 		return "", ErrValidation
 	}
 	switch value {
-	case "MAIN", "A_PLUS", "SCENE", "DETAIL", "DIMENSION", "SELLING_POINT", "COMPARISON":
+	case "MAIN", "A_PLUS", "SCENE", "DETAIL", "DIMENSION", "SELLING_POINT", "PROMOTION", "COMPARISON":
 		return value, nil
 	default:
 		return "", ErrValidation

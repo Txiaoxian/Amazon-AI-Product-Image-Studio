@@ -36,6 +36,12 @@ type ListQuery struct {
 	Status   string
 }
 
+type CandidateListQuery struct {
+	PageNum  int
+	PageSize int
+	Q        string
+}
+
 type Page struct {
 	Records  []ProjectResponse `json:"records"`
 	Total    int64             `json:"total"`
@@ -52,37 +58,50 @@ type ProjectResponse struct {
 	Site      string `json:"site"`
 	Notes     string `json:"notes"`
 	Status    string `json:"status"`
+	SortOrder int    `json:"sortOrder"`
 	CreatedBy string `json:"createdBy"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
 
 type MemberResponse struct {
-	ID        string `json:"id"`
-	TenantID  string `json:"tenantId"`
-	ProjectID string `json:"projectId"`
+	ID         string `json:"id"`
+	TenantID   string `json:"tenantId"`
+	ProjectID  string `json:"projectId"`
+	UserID     string `json:"userId"`
+	UserEmail  string `json:"userEmail"`
+	UserName   string `json:"userName"`
+	UserStatus string `json:"userStatus"`
+	Role       string `json:"role"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+type MemberCandidateResponse struct {
 	UserID    string `json:"userId"`
-	Role      string `json:"role"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	UserEmail string `json:"userEmail"`
+	UserName  string `json:"userName"`
+	Status    string `json:"status"`
 }
 
 type CreateInput struct {
-	Name   string
-	Brand  string
-	ASIN   string
-	Site   string
-	Notes  string
-	Status string
+	Name      string
+	Brand     string
+	ASIN      string
+	Site      string
+	Notes     string
+	Status    string
+	SortOrder *int
 }
 
 type UpdateInput struct {
-	Name   *string
-	Brand  *string
-	ASIN   *string
-	Site   *string
-	Notes  *string
-	Status *string
+	Name      *string
+	Brand     *string
+	ASIN      *string
+	Site      *string
+	Notes     *string
+	Status    *string
+	SortOrder *int
 }
 
 type MemberInput struct {
@@ -100,22 +119,42 @@ func projectResponse(record database.Project) ProjectResponse {
 		Site:      record.Site,
 		Notes:     record.Notes,
 		Status:    record.Status,
+		SortOrder: record.SortOrder,
 		CreatedBy: record.CreatedBy,
 		CreatedAt: formatTime(record.CreatedAt),
 		UpdatedAt: formatTime(record.UpdatedAt),
 	}
 }
 
-func memberResponse(record database.ProjectMember) MemberResponse {
+type MemberRecord struct {
+	Member     database.ProjectMember
+	UserEmail  string
+	UserName   string
+	UserStatus string
+}
+
+func memberResponse(record MemberRecord) MemberResponse {
 	return MemberResponse{
-		ID:        record.ID,
-		TenantID:  record.TenantID,
-		ProjectID: record.ProjectID,
-		UserID:    record.UserID,
-		Role:      record.Role,
-		CreatedAt: formatTime(record.CreatedAt),
-		UpdatedAt: formatTime(record.UpdatedAt),
+		ID:         record.Member.ID,
+		TenantID:   record.Member.TenantID,
+		ProjectID:  record.Member.ProjectID,
+		UserID:     record.Member.UserID,
+		UserEmail:  record.UserEmail,
+		UserName:   record.UserName,
+		UserStatus: record.UserStatus,
+		Role:       record.Member.Role,
+		CreatedAt:  formatTime(record.Member.CreatedAt),
+		UpdatedAt:  formatTime(record.Member.UpdatedAt),
 	}
+}
+
+func memberResponseFromRecord(record database.ProjectMember, user database.User) MemberResponse {
+	return memberResponse(MemberRecord{
+		Member:     record,
+		UserEmail:  user.Email,
+		UserName:   user.DisplayName,
+		UserStatus: user.Status,
+	})
 }
 
 func formatTime(value time.Time) string {

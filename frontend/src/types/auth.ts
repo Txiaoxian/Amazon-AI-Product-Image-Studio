@@ -11,6 +11,14 @@ export interface LoginRequest {
   tenantId?: string
   email: string
   password: string
+  captchaId?: string
+  captchaCode?: string
+}
+
+export interface CaptchaChallenge {
+  captchaId: string
+  imageUrl: string
+  expiresAt: string
 }
 
 export interface ChangePasswordRequest {

@@ -467,6 +467,82 @@ func (r Repository) ReplaceUserRoles(ctx context.Context, scope tenant.Scope, us
 	return db.Create(userRoleRecords(scope.ID(), userID, roleIDs)).Error
 }
 
+func (r Repository) ListUserModelAccessIDs(ctx context.Context, scope tenant.Scope, userID string) ([]string, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, ErrValidation
+	}
+	var modelIDs []string
+	if err := db.Table("user_model_access_grants").
+		Select("user_model_access_grants.model_id").
+		Joins("JOIN ai_models ON ai_models.tenant_id = user_model_access_grants.tenant_id AND ai_models.id = user_model_access_grants.model_id AND ai_models.deleted_at IS NULL").
+		Where("user_model_access_grants.tenant_id = ? AND user_model_access_grants.user_id = ?", scope.ID(), userID).
+		Order("user_model_access_grants.model_id ASC").
+		Pluck("user_model_access_grants.model_id", &modelIDs).Error; err != nil {
+		return nil, err
+	}
+	return modelIDs, nil
+}
+
+func (r Repository) ModelsByIDs(ctx context.Context, scope tenant.Scope, modelIDs []string) ([]database.AIModel, error) {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	modelIDs = cleanStringSet(modelIDs)
+	if len(modelIDs) == 0 {
+		return []database.AIModel{}, nil
+	}
+	var records []database.AIModel
+	if err := db.Model(&database.AIModel{}).
+		Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", scope.ID(), modelIDs).
+		Order("id ASC").
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+	if len(records) != len(modelIDs) {
+		return nil, ErrValidation
+	}
+	return records, nil
+}
+
+func (r Repository) ReplaceUserModelAccess(ctx context.Context, scope tenant.Scope, userID string, modelIDs []string, grantedBy string, now time.Time) error {
+	db, err := r.base(ctx, scope)
+	if err != nil {
+		return err
+	}
+	userID = strings.TrimSpace(userID)
+	grantedBy = strings.TrimSpace(grantedBy)
+	if userID == "" || grantedBy == "" {
+		return ErrValidation
+	}
+	if err := db.Where("tenant_id = ? AND user_id = ?", scope.ID(), userID).Delete(&database.UserModelAccessGrant{}).Error; err != nil {
+		return err
+	}
+	modelIDs = cleanStringSet(modelIDs)
+	if len(modelIDs) == 0 {
+		return nil
+	}
+	records := make([]database.UserModelAccessGrant, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		actorID := grantedBy
+		records = append(records, database.UserModelAccessGrant{
+			ID:        newID(),
+			TenantID:  scope.ID(),
+			UserID:    userID,
+			ModelID:   modelID,
+			GrantedBy: &actorID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+	return db.Create(&records).Error
+}
+
 func (r Repository) ReplaceRolePermissions(ctx context.Context, scope tenant.Scope, roleID string, permissionIDs []string) error {
 	db, err := r.base(ctx, scope)
 	if err != nil {

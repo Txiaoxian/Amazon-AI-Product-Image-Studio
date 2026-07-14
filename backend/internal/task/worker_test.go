@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -69,6 +70,54 @@ func TestWorkerProcessorCompletesQueuedTaskWithProgressAndWakeups(t *testing.T) 
 	}
 	assertWorkerNoOutputsOrUsage(t, db)
 	assertWorkerEventsSanitized(t, db)
+}
+
+func TestWorkerProcessorPersistsAndCleansStreamedProviderOutput(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-streamed-output", Status: StatusQueued})
+	pngBytes := workerTinyPNG(t)
+	file, err := os.CreateTemp(t.TempDir(), "provider-output-*.png")
+	if err != nil {
+		t.Fatalf("create temporary provider output: %v", err)
+	}
+	if _, err := file.Write(pngBytes); err != nil {
+		t.Fatalf("write temporary provider output: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close temporary provider output: %v", err)
+	}
+	filePath := file.Name()
+	store := newMemoryObjectStore()
+	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
+		Executor: executorFunc(func(context.Context, ExecutionContext) ExecutionResult {
+			return ExecutionResult{Outputs: []GeneratedImageOutput{{
+				FilePath: filePath, SizeBytes: int64(len(pngBytes)), Temporary: true, MIMEType: "image/png",
+			}}}
+		}),
+		Store:                   store,
+		StorageConfig:           config.StorageConfig{BucketGenerated: "generated-assets", BucketOriginals: "original-assets", BucketThumbnails: "thumbnail-assets"},
+		GeneratedOutputMaxBytes: int64(len(pngBytes)),
+	})
+
+	result, err := processor.Process(context.Background(), queue.TaskClaim{TaskID: taskID, DeliveryCount: 1})
+	if err != nil || result.Action != claimActionAck {
+		t.Fatalf("Process result/error = %#v / %v", result, err)
+	}
+	if _, err := os.Stat(filePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary provider output was not removed: %v", err)
+	}
+	if len(store.objects["generated-assets"]) != 1 || len(store.objects["thumbnail-assets"]) != 1 {
+		t.Fatalf("stored generated/thumbnail counts = %d/%d", len(store.objects["generated-assets"]), len(store.objects["thumbnail-assets"]))
+	}
+	for _, stored := range store.objects["generated-assets"] {
+		if !bytes.Equal(stored, pngBytes) {
+			t.Fatal("MinIO upload did not preserve the Provider image bytes")
+		}
+	}
+	if record := loadWorkerTask(t, db, taskID); record.Status != StatusSucceeded {
+		t.Fatalf("task status = %s, want %s", record.Status, StatusSucceeded)
+	}
 }
 
 func TestWorkerProcessorStatusMatrixAndDuplicateTerminalIdempotency(t *testing.T) {
@@ -786,6 +835,86 @@ func TestProviderRuntimeExecutorRedactsCurrentAPIKeyBeforeWorkerPersistsAPICall(
 	}
 }
 
+func TestProviderRuntimeExecutorTreatsGenerationWithReferencesAsEdit(t *testing.T) {
+	db := newWorkerTestDB(t)
+	seedWorkerBase(t, db)
+	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-reference-generation", Status: StatusQueued})
+	inputAssetIDs := `["asset-reference"]`
+	if err := db.Model(&database.GenerationTask{}).
+		Where("tenant_id = ? AND id = ?", "tenant-worker", taskID).
+		Update("input_asset_ids_json", inputAssetIDs).Error; err != nil {
+		t.Fatalf("attach reference asset to task: %v", err)
+	}
+
+	now := time.Now().UTC()
+	inputBytes := workerTinyPNG(t)
+	asset := database.ImageAsset{
+		ID:        "asset-reference",
+		TenantID:  "tenant-worker",
+		ProjectID: "project-worker",
+		Kind:      "REFERENCE",
+		Category:  "reference",
+		Filename:  "reference.png",
+		ObjectKey: "tenant-worker/project-worker/reference.png",
+		MimeType:  "image/png",
+		SizeBytes: int64(len(inputBytes)),
+		Width:     1,
+		Height:    1,
+		SHA256:    strings.Repeat("a", 64),
+		CreatedBy: "user-worker",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatalf("seed reference asset: %v", err)
+	}
+	store := newMemoryObjectStore()
+	if err := store.PutObject(context.Background(), "original-assets", asset.ObjectKey, bytes.NewReader(inputBytes), int64(len(inputBytes)), asset.MimeType); err != nil {
+		t.Fatalf("store reference asset: %v", err)
+	}
+
+	var captured provideradapter.ImageRequest
+	executor, err := NewProviderRuntimeExecutor(db, nil, ProviderRuntimeExecutorOptions{
+		Runtime: fakeProviderRuntime(func(_ context.Context, request provideradapter.ImageRequest) (provideradapter.ImageResult, error) {
+			captured = request
+			return provideradapter.ImageResult{APICall: provideradapter.APICall{Status: provideradapter.APICallStatusSuccess}}, nil
+		}),
+		Decrypter:    staticAPIKeyDecrypter("relay-key"),
+		URLValidator: providerpkg.NewURLValidator(staticIPResolver{ip: net.ParseIP("8.8.8.8")}),
+		Storage:      config.StorageConfig{BucketOriginals: "original-assets"},
+		Store:        store,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("create runtime executor: %v", err)
+	}
+
+	execution := ExecutionContext{Task: loadWorkerTask(t, db, taskID)}
+	if err := db.First(&execution.Tenant, "id = ?", "tenant-worker").Error; err != nil {
+		t.Fatalf("load tenant: %v", err)
+	}
+	if err := db.First(&execution.Project, "id = ?", "project-worker").Error; err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	if err := db.First(&execution.Provider, "id = ?", "provider-worker").Error; err != nil {
+		t.Fatalf("load provider: %v", err)
+	}
+	if err := db.First(&execution.Model, "id = ?", "model-worker").Error; err != nil {
+		t.Fatalf("load model: %v", err)
+	}
+
+	result := executor.Execute(context.Background(), execution)
+	if result.ErrorCode != "" {
+		t.Fatalf("Execute error = %s: %s", result.ErrorCode, result.ErrorMessage)
+	}
+	if captured.Operation != provideradapter.OperationEdit {
+		t.Fatalf("provider operation = %q, want %q", captured.Operation, provideradapter.OperationEdit)
+	}
+	if len(captured.InputImages) != 1 || captured.InputImages[0].Filename != asset.Filename || !bytes.Equal(captured.InputImages[0].Data, inputBytes) {
+		t.Fatalf("provider input images = %#v", captured.InputImages)
+	}
+}
+
 func TestProviderRuntimeAttemptLedgerPrewritesAndFinalizesSuccess(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
@@ -1242,6 +1371,48 @@ func TestExecutionResultFromProviderRedactsCurrentAPIKeyInOutputsAndUsage(t *tes
 	}
 	if !strings.Contains(text, "[REDACTED]") {
 		t.Fatalf("execution result did not contain redacted marker: %s", text)
+	}
+}
+
+func TestWorkerValidatesFileBackedProviderOutputAgainstGeneratedLimit(t *testing.T) {
+	pngBytes := workerTinyPNG(t)
+	file, err := os.CreateTemp(t.TempDir(), "provider-output-*.png")
+	if err != nil {
+		t.Fatalf("create temporary provider output: %v", err)
+	}
+	if _, err := file.Write(pngBytes); err != nil {
+		t.Fatalf("write temporary provider output: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close temporary provider output: %v", err)
+	}
+
+	processor := newWorkerTestProcessor(nil, WorkerProcessorOptions{
+		UploadConfig: config.UploadConfig{
+			MaxFileSizeBytes: 1,
+			MaxWidth:         8192,
+			MaxHeight:        8192,
+			MaxPixels:        40_000_000,
+			AllowedMIMETypes: []string{"image/png"},
+		},
+		GeneratedOutputMaxBytes: int64(len(pngBytes)),
+	})
+	validated, err := processor.validateOutputImage(GeneratedImageOutput{
+		FilePath:  file.Name(),
+		SizeBytes: int64(len(pngBytes)),
+		Temporary: true,
+		MIMEType:  "image/png",
+	})
+	if err != nil {
+		t.Fatalf("validate file-backed provider output: %v", err)
+	}
+	if validated.SizeBytes != int64(len(pngBytes)) || validated.FilePath != file.Name() || validated.MIMEType != "image/png" {
+		t.Fatalf("validated output = %#v", validated)
+	}
+
+	cleanupTemporaryGeneratedOutputs([]GeneratedImageOutput{{FilePath: file.Name(), Temporary: true}})
+	if _, err := os.Stat(file.Name()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary provider output was not cleaned up: %v", err)
 	}
 }
 
@@ -2820,9 +2991,10 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 			brand TEXT NOT NULL DEFAULT '',
 			asin TEXT NOT NULL DEFAULT '',
 			site TEXT NOT NULL DEFAULT '',
-			notes TEXT NULL,
-			status TEXT NOT NULL,
-			created_by TEXT NOT NULL,
+		notes TEXT NULL,
+		status TEXT NOT NULL,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		created_by TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			deleted_at TIMESTAMP NULL

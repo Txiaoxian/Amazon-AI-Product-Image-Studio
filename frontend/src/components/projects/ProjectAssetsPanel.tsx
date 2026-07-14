@@ -1,49 +1,28 @@
-import { Download, Eye, ImagePlus, Loader2, Pencil, RefreshCw, Star, Trash2, UploadCloud, X } from 'lucide-react'
-import type { FormEvent } from 'react'
+import { Download, Eye, ImagePlus, Loader2, RefreshCw, Star, Trash2, UploadCloud } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { formatBytes } from '../../lib/storageLimit'
-import type { Asset, AssetKind, Project, ProjectId, ProjectMember, ProjectMemberRole, UserId } from '../../types/platform'
+import type { Asset, AssetKind, ProjectId } from '../../types/platform'
 import { Button } from '../ui/Button'
 
 interface ProjectAssetsPanelProps {
   actionAssetId: string | null
   assets: Asset[]
   error: string | null
-  isCreatingProject: boolean
   isLoadingAssets: boolean
-  isLoadingProjects: boolean
-  isUpdatingProject: boolean
   isUploadingAsset: boolean
-  projectStatus: 'idle' | 'loading' | 'success' | 'error'
   assetStatus: 'idle' | 'loading' | 'success' | 'error'
-  projects: Project[]
-  selectedProject: Project | null
   selectedProjectId: ProjectId | null
   assetFilters: {
     category?: string
     favorite?: boolean
     kind?: AssetKind
   }
-  canManageProjectMembers: boolean
-  isSavingProjectMember: boolean
-  projectMemberActionUserId: UserId | string | null
-  projectMemberError: string | null
-  projectMembers: ProjectMember[]
-  projectMemberStatus: 'idle' | 'loading' | 'success' | 'error'
-  onAddProjectMember: (projectId: ProjectId, request: { userId: UserId | string; role: ProjectMemberRole }) => void
-  onCreateProject: (request: { name: string; brand?: string; asin?: string; site?: string; notes?: string }) => void
   onDeleteAsset: (asset: Asset) => void
   onDownloadAsset: (asset: Asset) => void
   onOpenAsset: (asset: Asset) => void
   onRefreshAssets: () => void
-  onRefreshProjectMembers: (projectId: ProjectId) => void
-  onRefreshProjects: () => void
-  onRemoveProjectMember: (projectId: ProjectId, userId: UserId | string) => void
-  onSelectProject: (projectId: ProjectId) => void
   onToggleFavorite: (asset: Asset) => void
   onUpdateAssetFilters: (filters: { category?: string; favorite?: boolean; kind?: AssetKind }) => void
-  onUpdateProjectMember: (projectId: ProjectId, userId: UserId | string, request: { role: ProjectMemberRole }) => void
-  onUpdateProject: (projectId: ProjectId, request: { name?: string; brand?: string; asin?: string; site?: string; notes?: string }) => void
   onUploadReferences: (files: FileList) => void
   onUseAssetAsReference: (asset: Asset) => void
 }
@@ -52,151 +31,63 @@ export function ProjectAssetsPanel({
   actionAssetId,
   assets,
   error,
-  isCreatingProject,
   isLoadingAssets,
-  isLoadingProjects,
-  isUpdatingProject,
   isUploadingAsset,
-  projectStatus,
   assetStatus,
-  projects,
-  selectedProject,
   selectedProjectId,
   assetFilters,
-  canManageProjectMembers,
-  isSavingProjectMember,
-  projectMemberActionUserId,
-  projectMemberError,
-  projectMembers,
-  projectMemberStatus,
-  onAddProjectMember,
-  onCreateProject,
   onDeleteAsset,
   onDownloadAsset,
   onOpenAsset,
   onRefreshAssets,
-  onRefreshProjectMembers,
-  onRefreshProjects,
-  onRemoveProjectMember,
-  onSelectProject,
   onToggleFavorite,
   onUpdateAssetFilters,
-  onUpdateProjectMember,
-  onUpdateProject,
   onUploadReferences,
   onUseAssetAsReference,
 }: ProjectAssetsPanelProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null)
-  const [name, setName] = useState('')
-  const [brand, setBrand] = useState('')
-  const [asin, setAsin] = useState('')
-  const [projectEditOpen, setProjectEditOpen] = useState(false)
-  const [projectMembersOpen, setProjectMembersOpen] = useState(false)
-  const [projectDraft, setProjectDraft] = useState({
-    name: '',
-    brand: '',
-    asin: '',
-    site: '',
-    notes: '',
-  })
-  const [filterDraft, setFilterDraft] = useState({
-    category: assetFilters.category ?? '',
-    favorite: assetFilters.favorite === undefined ? '' : String(assetFilters.favorite),
-    kind: assetFilters.kind ?? '',
-  })
-  const [memberDraft, setMemberDraft] = useState<{ userId: string; role: ProjectMemberRole }>({
-    userId: '',
-    role: 'VIEWER',
-  })
+  const [kind, setKind] = useState<AssetKind | ''>(assetFilters.kind ?? '')
+  const [category, setCategory] = useState(assetFilters.category ?? '')
+  const [favorite, setFavorite] = useState(assetFilters.favorite === undefined ? '' : String(assetFilters.favorite))
+  const referenceAssets = assets.filter((asset) => asset.kind === 'REFERENCE')
 
   useEffect(() => {
-    if (!selectedProject) {
-      setProjectDraft({ name: '', brand: '', asin: '', site: '', notes: '' })
-      setProjectEditOpen(false)
-      setProjectMembersOpen(false)
-      return
-    }
-
-    setProjectDraft({
-      name: selectedProject.name,
-      brand: selectedProject.brand,
-      asin: selectedProject.asin,
-      site: selectedProject.site,
-      notes: selectedProject.notes,
-    })
-    setProjectEditOpen(false)
-    setProjectMembersOpen(false)
-  }, [selectedProject])
+    setKind(assetFilters.kind ?? '')
+  }, [assetFilters.kind])
 
   useEffect(() => {
-    setFilterDraft({
-      category: assetFilters.category ?? '',
-      favorite: assetFilters.favorite === undefined ? '' : String(assetFilters.favorite),
-      kind: assetFilters.kind ?? '',
-    })
-  }, [assetFilters])
+    setCategory(assetFilters.category ?? '')
+  }, [assetFilters.category])
 
-  const submitProject = () => {
-    onCreateProject({
-      name,
-      brand: brand.trim() || undefined,
-      asin: asin.trim() || undefined,
-    })
-    setName('')
-    setBrand('')
-    setAsin('')
-  }
+  useEffect(() => {
+    setFavorite(assetFilters.favorite === undefined ? '' : String(assetFilters.favorite))
+  }, [assetFilters.favorite])
 
-  const submitProjectEdit = () => {
-    if (!selectedProjectId) {
-      return
-    }
-
-    onUpdateProject(selectedProjectId, projectDraft)
-  }
-
-  const submitFilters = () => {
+  const applyKind = (nextKind: AssetKind | '') => {
+    setKind(nextKind)
     onUpdateAssetFilters({
-      category: filterDraft.category,
-      favorite: filterDraft.favorite === '' ? undefined : filterDraft.favorite === 'true',
-      kind: filterDraft.kind ? (filterDraft.kind as AssetKind) : undefined,
+      ...assetFilters,
+      kind: nextKind || undefined,
     })
   }
 
-  const clearFilters = () => {
-    setFilterDraft({ category: '', favorite: '', kind: '' })
-    onUpdateAssetFilters({})
-  }
-
-  const toggleProjectMembers = () => {
-    if (!selectedProjectId) {
-      return
-    }
-
-    const shouldOpen = !projectMembersOpen
-    setProjectMembersOpen(shouldOpen)
-    if (shouldOpen) {
-      onRefreshProjectMembers(selectedProjectId)
-    }
-  }
-
-  const submitProjectMember = () => {
-    if (!selectedProjectId) {
-      return
-    }
-
-    onAddProjectMember(selectedProjectId, memberDraft)
+  const applyFilters = () => {
+    onUpdateAssetFilters({
+      kind: kind || undefined,
+      category: category.trim() || undefined,
+      favorite: favorite === '' ? undefined : favorite === 'true',
+    })
   }
 
   return (
-    <aside className="panel flex min-h-0 flex-col">
+    <aside className="flex min-h-0 flex-col rounded-lg border border-ink-200 bg-white">
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-ink-900">项目资产库</h2>
-          <p className="text-xs text-ink-400">{assets.length} 个资产</p>
+          <h2 className="text-sm font-semibold text-ink-900">产品素材库</h2>
+          <p className="text-xs text-ink-400">参考图与资产 · {assets.length} 个资产，{referenceAssets.length} 张参考图</p>
         </div>
         <button
-          aria-label="刷新项目资产"
+          aria-label="刷新产品素材"
           className="icon-button"
           disabled={isLoadingAssets || !selectedProjectId}
           onClick={onRefreshAssets}
@@ -208,240 +99,64 @@ export function ProjectAssetsPanel({
       </div>
 
       <div className="grid gap-3 border-b border-ink-200 p-4">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <label className="field-label" htmlFor="project-selector">
-              当前项目
-            </label>
-            <button
-              aria-label="刷新项目列表"
-              className="text-xs font-semibold text-ink-500 hover:text-ink-900 disabled:text-ink-300"
-              disabled={isLoadingProjects}
-              onClick={onRefreshProjects}
-              type="button"
-            >
-              刷新
-            </button>
-          </div>
-          <select
-            className="field-input"
-            disabled={isLoadingProjects || projects.length === 0}
-            id="project-selector"
-            onChange={(event) => onSelectProject(event.target.value as ProjectId)}
-            value={selectedProjectId ?? ''}
-          >
-            {projects.length === 0 ? <option value="">暂无项目</option> : null}
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {projectStatus === 'loading' ? (
-          <div className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-sm text-ink-500" role="status">
-            正在加载项目列表...
-          </div>
-        ) : null}
-
-        {projectStatus === 'error' ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
-            项目加载失败，请刷新项目列表后重试。
-          </div>
-        ) : null}
-
-        {!isLoadingProjects && projects.length === 0 ? (
-          <div className="rounded-md border border-dashed border-ink-300 bg-ink-50 px-3 py-3">
-            <p className="text-sm font-semibold text-ink-700">暂无项目</p>
-            <p className="mt-1 text-xs leading-5 text-ink-400">创建项目后即可上传并管理该商品的图片资产。</p>
-          </div>
-        ) : null}
-
-        {selectedProject ? (
-          <section className="rounded-lg border border-ink-200 bg-white p-3" aria-label="当前项目详情">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink-900">{selectedProject.name}</p>
-                <p className="mt-1 text-xs text-ink-500">
-                  {selectedProject.brand || '未填写品牌'} · {selectedProject.asin || '未填写 ASIN'} · {selectedProject.site || '未填写站点'}
-                </p>
-              </div>
-              <button
-                aria-label={`编辑项目 ${selectedProject.name}`}
-                className="icon-button h-8 w-8"
-                disabled={isUpdatingProject}
-                onClick={() => setProjectEditOpen((current) => !current)}
-                title="编辑项目"
-                type="button"
-              >
-                {projectEditOpen ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-              </button>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
-              <span className="rounded border border-ink-200 bg-ink-50 px-2 py-1 font-semibold text-ink-600">{selectedProject.status}</span>
-              <span className="rounded border border-ink-200 bg-ink-50 px-2 py-1 text-ink-500">
-                更新 {new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(selectedProject.updatedAt))}
-              </span>
-            </div>
-            {selectedProject.notes ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-ink-500">{selectedProject.notes}</p> : null}
-
-            {projectEditOpen ? (
-              <form
-                className="mt-3 grid gap-2 border-t border-ink-100 pt-3"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  submitProjectEdit()
-                }}
-              >
-                <label className="field-label" htmlFor="project-edit-name">
-                  项目名称
-                </label>
-                <input
-                  className="field-input"
-                  disabled={isUpdatingProject}
-                  id="project-edit-name"
-                  onChange={(event) => setProjectDraft((current) => ({ ...current, name: event.target.value }))}
-                  value={projectDraft.name}
-                />
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    aria-label="编辑项目品牌"
-                    className="field-input"
-                    disabled={isUpdatingProject}
-                    onChange={(event) => setProjectDraft((current) => ({ ...current, brand: event.target.value }))}
-                    placeholder="品牌"
-                    value={projectDraft.brand}
-                  />
-                  <input
-                    aria-label="编辑项目 ASIN"
-                    className="field-input"
-                    disabled={isUpdatingProject}
-                    onChange={(event) => setProjectDraft((current) => ({ ...current, asin: event.target.value }))}
-                    placeholder="ASIN"
-                    value={projectDraft.asin}
-                  />
-                </div>
-                <input
-                  aria-label="编辑项目站点"
-                  className="field-input"
-                  disabled={isUpdatingProject}
-                  onChange={(event) => setProjectDraft((current) => ({ ...current, site: event.target.value }))}
-                  placeholder="站点，例如 US"
-                  value={projectDraft.site}
-                />
-                <textarea
-                  aria-label="编辑项目备注"
-                  className="field-input min-h-20 resize-y"
-                  disabled={isUpdatingProject}
-                  onChange={(event) => setProjectDraft((current) => ({ ...current, notes: event.target.value }))}
-                  placeholder="备注"
-                  value={projectDraft.notes}
-                />
-                <Button disabled={isUpdatingProject || projectDraft.name.trim().length === 0} type="submit" variant="primary">
-                  {isUpdatingProject ? '保存中...' : '保存项目'}
-                </Button>
-              </form>
-            ) : null}
-
-            {canManageProjectMembers ? (
-              <div className="mt-3 border-t border-ink-100 pt-3">
-                <Button className="w-full" onClick={toggleProjectMembers} variant="secondary">
-                  {projectMembersOpen ? '收起项目成员' : '项目成员'}
-                </Button>
-                {projectMembersOpen ? (
-                  <ProjectMembersPanel
-                    actionUserId={projectMemberActionUserId}
-                    draft={memberDraft}
-                    error={projectMemberError}
-                    isSaving={isSavingProjectMember}
-                    members={projectMembers}
-                    onAdd={(event) => {
-                      event.preventDefault()
-                      submitProjectMember()
-                    }}
-                    onDraftChange={setMemberDraft}
-                    onRefresh={() => selectedProjectId && onRefreshProjectMembers(selectedProjectId)}
-                    onRemove={(userId) => selectedProjectId && onRemoveProjectMember(selectedProjectId, userId)}
-                    onUpdate={(userId, role) => selectedProjectId && onUpdateProjectMember(selectedProjectId, userId, { role })}
-                    status={projectMemberStatus}
-                  />
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        <form
-          className="grid gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            submitProject()
+        <input
+          ref={uploadInputRef}
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          disabled={!selectedProjectId || isUploadingAsset}
+          id="reference-asset-upload"
+          multiple
+          onChange={(event) => {
+            if (event.target.files) {
+              onUploadReferences(event.target.files)
+            }
+            event.target.value = ''
           }}
+          type="file"
+        />
+        <label className="sr-only" htmlFor="reference-asset-upload">
+          上传参考图
+        </label>
+        <Button
+          className="w-full"
+          disabled={!selectedProjectId || isUploadingAsset}
+          icon={isUploadingAsset ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+          onClick={() => uploadInputRef.current?.click()}
+          variant="primary"
         >
-          <label className="field-label" htmlFor="new-project-name">
-            新项目名称
-          </label>
-          <input
-            className="field-input"
-            disabled={isCreatingProject}
-            id="new-project-name"
-            onChange={(event) => setName(event.target.value)}
-            placeholder="例如 Summer Launch"
-            value={name}
-          />
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <input
-              aria-label="项目品牌"
-              className="field-input"
-              disabled={isCreatingProject}
-              onChange={(event) => setBrand(event.target.value)}
-              placeholder="品牌"
-              value={brand}
-            />
-            <input
-              aria-label="项目 ASIN"
-              className="field-input"
-              disabled={isCreatingProject}
-              onChange={(event) => setAsin(event.target.value)}
-              placeholder="ASIN"
-              value={asin}
-            />
-          </div>
-          <Button disabled={isCreatingProject || name.trim().length === 0} type="submit" variant="secondary">
-            {isCreatingProject ? '创建中...' : '创建项目'}
-          </Button>
-        </form>
+          {isUploadingAsset ? '上传中...' : '上传参考图'}
+        </Button>
 
-        <div>
-          <label className="sr-only" htmlFor="reference-asset-upload">
-            上传参考图
-          </label>
-          <input
-            ref={uploadInputRef}
-            accept="image/jpeg,image/png,image/webp"
-            className="hidden"
-            disabled={!selectedProjectId || isUploadingAsset}
-            id="reference-asset-upload"
-            multiple
-            onChange={(event) => {
-              if (event.target.files) {
-                onUploadReferences(event.target.files)
-              }
-              event.target.value = ''
-            }}
-            type="file"
-          />
-          <Button
-            className="w-full"
-            disabled={!selectedProjectId || isUploadingAsset}
-            icon={isUploadingAsset ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-            onClick={() => uploadInputRef.current?.click()}
-            variant="primary"
-          >
-            {isUploadingAsset ? '上传中...' : '上传参考图'}
-          </Button>
-        </div>
+        {referenceAssets.length > 0 ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold text-ink-500">产品参考图</p>
+            <div className="grid grid-cols-3 gap-2">
+              {referenceAssets.slice(0, 9).map((asset) => (
+                <button
+                  className="group relative flex aspect-square items-center justify-center overflow-hidden rounded-md border border-ink-200 bg-ink-100"
+                  key={asset.id}
+                  onClick={() => onUseAssetAsReference(asset)}
+                  title="加入本次参考图"
+                  type="button"
+                >
+                  {asset.thumbnailUrl || asset.previewUrl ? (
+                    <img alt={`${asset.filename} 缩略图`} className="h-full w-full object-cover" src={asset.thumbnailUrl || asset.previewUrl} />
+                  ) : (
+                    <ImagePlus className="h-6 w-6 text-ink-400" />
+                  )}
+                  <span className="absolute inset-x-0 bottom-0 bg-ink-900/70 px-1.5 py-1 text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                    作为参考
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-ink-300 bg-ink-50 px-3 py-3">
+            <p className="text-sm font-semibold text-ink-700">暂无产品参考图</p>
+            <p className="mt-1 text-xs leading-5 text-ink-400">上传参考图后，可在这里一键加入本次生图。</p>
+          </div>
+        )}
 
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
@@ -449,21 +164,37 @@ export function ProjectAssetsPanel({
           </div>
         ) : null}
 
-        <form
-          className="grid gap-2 rounded-lg border border-ink-200 bg-ink-50 p-3"
-          onSubmit={(event) => {
-            event.preventDefault()
-            submitFilters()
-          }}
-        >
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { value: 'REFERENCE', label: '参考图' },
+            { value: 'GENERATED', label: '生成图' },
+            { value: 'EDITED', label: '编辑图' },
+            { value: '', label: '全部' },
+          ].map((option) => (
+            <button
+              className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                kind === option.value ? 'border-amazon-300 bg-amazon-50 text-amazon-700' : 'border-ink-200 bg-white text-ink-600 hover:bg-ink-50'
+              }`}
+              disabled={!selectedProjectId || isLoadingAssets}
+              key={option.value}
+              onClick={() => applyKind(option.value as AssetKind | '')}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid gap-2 rounded-md border border-ink-200 bg-ink-50 p-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             <label className="grid gap-1 text-xs font-semibold text-ink-500">
               资产类型
               <select
+                aria-label="资产类型"
                 className="field-input bg-white"
                 disabled={!selectedProjectId || isLoadingAssets}
-                onChange={(event) => setFilterDraft((current) => ({ ...current, kind: event.target.value }))}
-                value={filterDraft.kind}
+                onChange={(event) => setKind(event.target.value as AssetKind | '')}
+                value={kind}
               >
                 <option value="">全部</option>
                 <option value="REFERENCE">参考图</option>
@@ -474,13 +205,14 @@ export function ProjectAssetsPanel({
             <label className="grid gap-1 text-xs font-semibold text-ink-500">
               收藏
               <select
+                aria-label="收藏"
                 className="field-input bg-white"
                 disabled={!selectedProjectId || isLoadingAssets}
-                onChange={(event) => setFilterDraft((current) => ({ ...current, favorite: event.target.value }))}
-                value={filterDraft.favorite}
+                onChange={(event) => setFavorite(event.target.value)}
+                value={favorite}
               >
                 <option value="">全部</option>
-                <option value="true">已收藏</option>
+                <option value="true">仅收藏</option>
                 <option value="false">未收藏</option>
               </select>
             </label>
@@ -488,45 +220,41 @@ export function ProjectAssetsPanel({
           <label className="grid gap-1 text-xs font-semibold text-ink-500">
             筛选分类
             <input
+              aria-label="筛选分类"
               className="field-input bg-white"
               disabled={!selectedProjectId || isLoadingAssets}
-              onChange={(event) => setFilterDraft((current) => ({ ...current, category: event.target.value }))}
-              placeholder="例如 reference"
-              value={filterDraft.category}
+              onChange={(event) => setCategory(event.target.value)}
+              placeholder="例如 reference、hero、a-plus"
+              value={category}
             />
           </label>
-          <div className="grid grid-cols-2 gap-2">
-            <Button disabled={!selectedProjectId || isLoadingAssets} type="submit" variant="secondary">
-              筛选资产
-            </Button>
-            <Button disabled={!selectedProjectId || isLoadingAssets} onClick={clearFilters} variant="ghost">
-              清除筛选
-            </Button>
-          </div>
-        </form>
+          <Button disabled={!selectedProjectId || isLoadingAssets} onClick={applyFilters} variant="secondary">
+            筛选资产
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 p-3 xl:overflow-y-auto">
-        {isLoadingAssets ? <p className="py-8 text-center text-sm text-ink-400">正在加载项目资产...</p> : null}
+        {isLoadingAssets ? <p className="py-8 text-center text-sm text-ink-400">正在加载产品素材...</p> : null}
 
         {!isLoadingAssets && assetStatus === 'error' ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-8 text-center">
             <p className="text-sm font-medium text-red-700">资产加载失败</p>
-            <p className="mt-1 text-xs text-red-600">请检查筛选条件或刷新资产列表后重试。</p>
+            <p className="mt-1 text-xs text-red-600">请刷新资产列表后重试。</p>
           </div>
         ) : null}
 
         {!isLoadingAssets && assetStatus !== 'error' && selectedProjectId && assets.length === 0 ? (
           <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-8 text-center">
-            <p className="text-sm font-medium text-ink-700">暂无项目资产</p>
-            <p className="mt-1 text-xs text-ink-400">上传参考图后会显示在这里。</p>
+            <p className="text-sm font-medium text-ink-700">暂无产品素材</p>
+            <p className="mt-1 text-xs text-ink-400">上传参考图，或完成生图任务后会显示在这里。</p>
           </div>
         ) : null}
 
         {!isLoadingAssets && !selectedProjectId ? (
           <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-8 text-center">
-            <p className="text-sm font-medium text-ink-700">暂无已选项目</p>
-            <p className="mt-1 text-xs text-ink-400">创建或选择项目后可管理资产。</p>
+            <p className="text-sm font-medium text-ink-700">暂无已选产品</p>
+            <p className="mt-1 text-xs text-ink-400">请选择或创建产品后再管理素材。</p>
           </div>
         ) : null}
 
@@ -549,114 +277,6 @@ export function ProjectAssetsPanel({
   )
 }
 
-interface ProjectMembersPanelProps {
-  actionUserId: UserId | string | null
-  draft: { userId: string; role: ProjectMemberRole }
-  error: string | null
-  isSaving: boolean
-  members: ProjectMember[]
-  status: 'idle' | 'loading' | 'success' | 'error'
-  onAdd: (event: FormEvent<HTMLFormElement>) => void
-  onDraftChange: (draft: { userId: string; role: ProjectMemberRole }) => void
-  onRefresh: () => void
-  onRemove: (userId: UserId | string) => void
-  onUpdate: (userId: UserId | string, role: ProjectMemberRole) => void
-}
-
-function ProjectMembersPanel({
-  actionUserId,
-  draft,
-  error,
-  isSaving,
-  members,
-  status,
-  onAdd,
-  onDraftChange,
-  onRefresh,
-  onRemove,
-  onUpdate,
-}: ProjectMembersPanelProps) {
-  return (
-    <div className="mt-3 grid gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-ink-600">项目成员</p>
-        <button
-          className="text-xs font-semibold text-ink-500 hover:text-ink-900 disabled:text-ink-300"
-          disabled={status === 'loading'}
-          onClick={onRefresh}
-          type="button"
-        >
-          刷新
-        </button>
-      </div>
-
-      <form className="grid gap-2" onSubmit={onAdd}>
-        <input
-          aria-label="成员用户 ID"
-          className="field-input bg-white"
-          disabled={isSaving}
-          onChange={(event) => onDraftChange({ ...draft, userId: event.target.value })}
-          placeholder="用户 ID"
-          value={draft.userId}
-        />
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <select
-            aria-label="成员角色"
-            className="field-input bg-white"
-            disabled={isSaving}
-            onChange={(event) => onDraftChange({ ...draft, role: event.target.value as ProjectMemberRole })}
-            value={draft.role}
-          >
-            <option value="OWNER">OWNER</option>
-            <option value="EDITOR">EDITOR</option>
-            <option value="VIEWER">VIEWER</option>
-          </select>
-          <Button disabled={isSaving || draft.userId.trim().length === 0} type="submit" variant="primary">
-            添加
-          </Button>
-        </div>
-      </form>
-
-      {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700" role="alert">
-          {error}
-        </div>
-      ) : null}
-
-      {status === 'loading' ? <p className="text-sm text-ink-400">正在加载项目成员...</p> : null}
-      {status !== 'loading' && members.length === 0 ? <p className="text-sm text-ink-400">暂无项目成员。</p> : null}
-
-      <div className="grid gap-2">
-        {members.map((member) => (
-          <article className="rounded-md border border-ink-200 bg-white p-2" key={member.id}>
-            <p className="break-all text-xs font-semibold text-ink-800">{member.userId}</p>
-            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-              <select
-                aria-label={`项目成员角色 ${member.userId}`}
-                className="field-input bg-white"
-                disabled={isSaving && actionUserId === member.userId}
-                onChange={(event) => onUpdate(member.userId, event.target.value as ProjectMemberRole)}
-                value={member.role}
-              >
-                <option value="OWNER">OWNER</option>
-                <option value="EDITOR">EDITOR</option>
-                <option value="VIEWER">VIEWER</option>
-              </select>
-              <Button
-                disabled={isSaving && actionUserId === member.userId}
-                onClick={() => onRemove(member.userId)}
-                variant="danger"
-              >
-                移除
-              </Button>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 interface AssetListItemProps {
   asset: Asset
   isPending: boolean
@@ -676,7 +296,7 @@ function AssetListItem({
   onToggleFavorite,
   onUseAsReference,
 }: AssetListItemProps) {
-  const previewUrl = asset.thumbnailUrl
+  const previewUrl = asset.thumbnailUrl || asset.previewUrl
   const createdAt = new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -701,7 +321,7 @@ function AssetListItem({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-ink-900">{asset.filename}</p>
           <p className="mt-1 text-xs text-ink-500">
-            {asset.kind} · {asset.width} x {asset.height}
+            {assetKindLabel(asset.kind)} · {asset.width} x {asset.height}
           </p>
           <p className="mt-1 text-xs text-ink-400">
             {createdAt} · {formatBytes(asset.fileSize)}
@@ -755,4 +375,15 @@ function AssetListItem({
       </div>
     </article>
   )
+}
+
+function assetKindLabel(kind: AssetKind): string {
+  switch (kind) {
+    case 'REFERENCE':
+      return '参考图'
+    case 'GENERATED':
+      return '生成图'
+    case 'EDITED':
+      return '编辑图'
+  }
 }

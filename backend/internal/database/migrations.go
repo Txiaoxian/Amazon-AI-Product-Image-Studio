@@ -613,6 +613,17 @@ CREATE TABLE IF NOT EXISTS project_members (
 		},
 	},
 	{
+		ID:   "202606050002_project_sort_order",
+		Name: "add tenant scoped project sort order",
+		Checks: []SchemaCheck{
+			schemaCheck("projects", []string{"sort_order"}, []string{"idx_projects_tenant_status_sort"}),
+		},
+		Statements: []string{
+			`ALTER TABLE projects ADD COLUMN sort_order INT NOT NULL DEFAULT 0`,
+			`CREATE INDEX idx_projects_tenant_status_sort ON projects (tenant_id, status, sort_order, created_at)`,
+		},
+	},
+	{
 		ID:   "202605120002_image_assets",
 		Name: "create image asset metadata table",
 		Checks: []SchemaCheck{
@@ -952,6 +963,40 @@ CREATE TABLE IF NOT EXISTS storage_quota_reservations (
   KEY idx_storage_quota_reservations_tenant_expires (tenant_id, expires_at),
   CONSTRAINT fk_storage_quota_reservations_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Internal storage quota reservations; never expose IDs in API responses or audit metadata'
+`,
+		},
+	},
+	{
+		ID:   "202607130001_user_model_access_grants",
+		Name: "create tenant scoped user model access grants",
+		Checks: []SchemaCheck{
+			schemaCheck("user_model_access_grants", []string{"id", "tenant_id", "user_id", "model_id", "granted_by", "created_at", "updated_at"}, []string{"uk_user_model_access_tenant_user_model", "idx_user_model_access_tenant_user", "idx_user_model_access_tenant_model", "idx_user_model_access_granted_by"}),
+		},
+		Statements: []string{
+			`
+CREATE TABLE IF NOT EXISTS user_model_access_grants (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  tenant_id VARCHAR(36) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  model_id VARCHAR(36) NOT NULL,
+  granted_by VARCHAR(36) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_user_model_access_tenant_user_model (tenant_id, user_id, model_id),
+  KEY idx_user_model_access_tenant_user (tenant_id, user_id),
+  KEY idx_user_model_access_tenant_model (tenant_id, model_id),
+  KEY idx_user_model_access_granted_by (tenant_id, granted_by),
+  CONSTRAINT fk_user_model_access_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  CONSTRAINT fk_user_model_access_user FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id),
+  CONSTRAINT fk_user_model_access_model FOREIGN KEY (tenant_id, model_id) REFERENCES ai_models(tenant_id, id),
+  CONSTRAINT fk_user_model_access_granted_by FOREIGN KEY (tenant_id, granted_by) REFERENCES users(tenant_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Administrator-assigned tenant-scoped AI model access for non-admin users'
+`,
+			`
+INSERT IGNORE INTO user_model_access_grants (id, tenant_id, user_id, model_id, granted_by, created_at, updated_at)
+SELECT UUID(), users.tenant_id, users.id, ai_models.id, NULL, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)
+FROM users
+JOIN ai_models ON ai_models.tenant_id = users.tenant_id AND ai_models.deleted_at IS NULL
 `,
 		},
 	},

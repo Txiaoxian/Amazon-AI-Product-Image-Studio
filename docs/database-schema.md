@@ -52,15 +52,16 @@ The built-in role codes `admin`, `seller`, and `viewer` are reserved and reconci
 
 Stores Amazon product projects.
 
-Key fields: `id`, `tenant_id`, `name`, `brand`, `asin`, `site`, `notes`, `status`, `created_by`, `created_at`, `updated_at`, `deleted_at`.
+Key fields: `id`, `tenant_id`, `name`, `brand`, `asin`, `site`, `notes`, `status`, `sort_order`, `created_by`, `created_at`, `updated_at`, `deleted_at`.
 
 P5 implementation notes:
 
 - `status` values: `ACTIVE`, `ARCHIVED`.
+- `sort_order` is an integer used for seller workspace project-tab ordering. New projects may receive the next tenant-scoped order value when the client omits it.
 - `name` is required.
 - `deleted_at` implements soft delete.
 - Project list/detail queries must always include `tenant_id` and exclude soft-deleted rows by default.
-- Suggested indexes: `(tenant_id, status, created_at)`, `(tenant_id, asin)`, `(tenant_id, deleted_at)`.
+- Suggested indexes: `(tenant_id, status, sort_order)`, `(tenant_id, status, created_at)`, `(tenant_id, asin)`, `(tenant_id, deleted_at)`.
 
 ### project_members
 
@@ -141,6 +142,21 @@ P6 implementation notes:
 - Current implementation does not enforce uniqueness on `(tenant_id, provider_id, model_name)`; R7 confirmed current task execution uses `modelId`, so runtime does not require that invariant. A later management/data-integrity decision may still tighten it.
 - Current implementation keeps model rows independently soft-deletable. P10 resolved Provider deletion behavior: deletion is blocked while any non-deleted same-tenant model still references that Provider; soft-deleted models do not block deletion. P14 tightened Provider disable and model write behavior: Provider disable is blocked while enabled linked models exist, disabled linked models may remain, and model create/update/enable rejects disabled, deleted, or cross-tenant Providers.
 - Generated and edited task execution must not begin in P6; models are configuration data for P7/P8.
+
+### user_model_access_grants
+
+Stores administrator-assigned model access for non-admin users.
+
+Key fields: `id`, `tenant_id`, `user_id`, `model_id`, nullable `granted_by`, `created_at`, `updated_at`.
+
+Rules:
+
+- `(tenant_id, user_id, model_id)` is unique.
+- User, model, and grant-actor foreign keys include `tenant_id`; cross-tenant grants are structurally rejected.
+- Tenant administrators bypass this relation while administering their own tenant. Non-admin model discovery and task creation require a matching grant.
+- Replacing one user's grants is transactional. Invalid, deleted, missing, or cross-tenant model IDs must not partially replace the prior set.
+- The introducing migration backfills existing users with existing non-deleted same-tenant models to preserve deployed behavior. Newly created users and models are not auto-granted after that migration.
+- Model soft deletion does not hard-delete historical grant rows; normal reads join only non-deleted models.
 
 ### generation_tasks
 

@@ -356,6 +356,9 @@ func cleanSupportedSize(value string) (string, error) {
 	if value == "auto" {
 		return value, nil
 	}
+	if isSupportedAspectRatio(value) {
+		return value, nil
+	}
 	widthRaw, heightRaw, ok := strings.Cut(value, "x")
 	if !ok || widthRaw == "" || heightRaw == "" {
 		return "", ErrValidation
@@ -371,13 +374,22 @@ func cleanSupportedSize(value string) (string, error) {
 	return strconv.Itoa(width) + "x" + strconv.Itoa(height), nil
 }
 
+func isSupportedAspectRatio(value string) bool {
+	switch value {
+	case "1:1", "1.62:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9":
+		return true
+	default:
+		return false
+	}
+}
+
 func cleanSupportedQuality(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" || utf8.RuneCountInString(value) > maxListItemRunes {
 		return "", ErrValidation
 	}
 	switch value {
-	case "auto", "low", "medium", "standard", "high", "hd":
+	case "auto", "1k", "2k", "4k", "low", "medium", "standard", "high", "hd":
 		return value, nil
 	default:
 		return "", ErrValidation

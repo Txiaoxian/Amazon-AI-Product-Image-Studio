@@ -75,15 +75,17 @@ type ListOptions struct {
 }
 
 type HistoryQuery struct {
-	PageNum  int
-	PageSize int
-	Kind     string
+	PageNum   int
+	PageSize  int
+	Kind      string
+	ImageType string
 }
 
 type HistoryOptions struct {
-	PageNum  int
-	PageSize int
-	Kind     string
+	PageNum   int
+	PageSize  int
+	Kind      string
+	ImageType string
 }
 
 type Page struct {

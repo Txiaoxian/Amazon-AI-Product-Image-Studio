@@ -40,6 +40,7 @@ const (
 	defaultCSRFCookieName                       = "studio_csrf"
 	defaultCSRFHeaderName                       = "X-CSRF-Token"
 	defaultCookieSameSite                       = "Lax"
+	defaultCaptchaTTL                           = 2 * time.Minute
 	defaultMinIOEndpoint                        = "http://127.0.0.1:9000"
 	defaultMinIORegion                          = "us-east-1"
 	defaultMinIOAccessKey                       = "minioadmin"
@@ -56,6 +57,10 @@ const (
 	defaultAPIKeyEncryptionKeyID                = "local-dev-v1"
 	defaultProviderTimeout                      = 120 * time.Second
 	defaultProviderMaxRetries                   = 2
+	defaultProviderMaxResponseSizeMB            = 1024
+	defaultProviderMaxOutputImageSizeMB         = 512
+	maxProviderResponseSizeMB                   = 8192
+	maxProviderOutputImageSizeMB                = 4096
 	defaultRedisAddr                            = "127.0.0.1:6379"
 	defaultRedisDB                              = 0
 	defaultTaskQueueName                        = "image-tasks"
@@ -125,6 +130,9 @@ type AuthConfig struct {
 	CSRF                      CSRFConfig
 	LoginRateLimitMaxFailures int
 	LoginRateLimitWindow      time.Duration
+	CaptchaEnabled            bool
+	CaptchaTTL                time.Duration
+	DefaultTenantID           string
 }
 
 type StorageConfig struct {
@@ -150,6 +158,8 @@ type ProviderConfig struct {
 	APIKeyEncryptionKeyID string
 	DefaultTimeout        time.Duration
 	MaxRetries            int
+	MaxResponseSizeBytes  int64
+	MaxOutputImageBytes   int64
 }
 
 type QueueConfig struct {
@@ -694,6 +704,18 @@ func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
 	if err != nil {
 		return AuthConfig{}, err
 	}
+	captchaEnabled, err := boolFromEnv(lookup, "AUTH_CAPTCHA_ENABLED", true)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	captchaTTL, err := durationFromEnv(lookup, "AUTH_CAPTCHA_TTL", defaultCaptchaTTL)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+	defaultTenantID := stringFromEnv(lookup, "AUTH_DEFAULT_TENANT_ID", "")
+	if len(defaultTenantID) > 36 {
+		return AuthConfig{}, fmt.Errorf("invalid AUTH_DEFAULT_TENANT_ID: must not exceed 36 characters")
+	}
 
 	return AuthConfig{
 		JWTSigningSecret:          signingSecret,
@@ -701,6 +723,9 @@ func authConfigFromEnv(lookup lookupFunc) (AuthConfig, error) {
 		AccessTokenTTL:            time.Duration(ttlMinutes) * time.Minute,
 		LoginRateLimitMaxFailures: loginRateLimitMaxFailures,
 		LoginRateLimitWindow:      loginRateLimitWindow,
+		CaptchaEnabled:            captchaEnabled,
+		CaptchaTTL:                captchaTTL,
+		DefaultTenantID:           defaultTenantID,
 		Cookie: CookieConfig{
 			Name:     cookieName,
 			Domain:   cookieDomain,
@@ -866,12 +891,31 @@ func providerConfigFromEnv(lookup lookupFunc) (ProviderConfig, error) {
 	if err != nil {
 		return ProviderConfig{}, err
 	}
+	maxResponseSizeMB, err := positiveInt64FromEnv(lookup, "PROVIDER_MAX_RESPONSE_SIZE_MB", defaultProviderMaxResponseSizeMB)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	maxOutputImageSizeMB, err := positiveInt64FromEnv(lookup, "PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB", defaultProviderMaxOutputImageSizeMB)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	if maxResponseSizeMB > maxProviderResponseSizeMB {
+		return ProviderConfig{}, fmt.Errorf("invalid PROVIDER_MAX_RESPONSE_SIZE_MB: must not exceed %d MiB", maxProviderResponseSizeMB)
+	}
+	if maxOutputImageSizeMB > maxProviderOutputImageSizeMB {
+		return ProviderConfig{}, fmt.Errorf("invalid PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB: must not exceed %d MiB", maxProviderOutputImageSizeMB)
+	}
+	if maxOutputImageSizeMB > maxResponseSizeMB {
+		return ProviderConfig{}, fmt.Errorf("invalid PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB: must not exceed PROVIDER_MAX_RESPONSE_SIZE_MB")
+	}
 
 	return ProviderConfig{
 		APIKeyEncryptionKey:   encryptionKey,
 		APIKeyEncryptionKeyID: encryptionKeyID,
 		DefaultTimeout:        time.Duration(timeoutSeconds) * time.Second,
 		MaxRetries:            maxRetries,
+		MaxResponseSizeBytes:  maxResponseSizeMB * 1024 * 1024,
+		MaxOutputImageBytes:   maxOutputImageSizeMB * 1024 * 1024,
 	}, nil
 }
 

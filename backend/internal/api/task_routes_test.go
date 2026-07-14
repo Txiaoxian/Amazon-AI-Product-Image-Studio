@@ -519,7 +519,7 @@ func TestTaskRoutesRejectEditSourceAssetsOutsideCurrentProjectAndTenant(t *testi
 }
 
 func TestTaskRoutesEnforceTenantAndProjectAuthorization(t *testing.T) {
-	router, db, _, adminSession := newTaskRouteTestRouter(t)
+	router, db, enqueuer, adminSession := newTaskRouteTestRouter(t)
 	projectID := createTaskTestProject(t, router, adminSession, "Restricted Project")
 	providerID, modelID := seedTaskProviderModel(t, db, adminSession.tenantID, "authz", provider.StatusEnabled, model.StatusEnabled, true, true, false, false, 1)
 
@@ -542,6 +542,35 @@ func TestTaskRoutesEnforceTenantAndProjectAuthorization(t *testing.T) {
 	}, sellerSession.cookies, sellerSession.csrfHeader())
 	if viewerCreateResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer task create status = %d, want %d", viewerCreateResponse.Code, http.StatusForbidden)
+	}
+
+	seedActiveUser(t, db, adminSession.tenantID, "seller-task-editor", "seller-task-editor@example.com", "Seller Task Editor", "seller-task-editor-password-123")
+	assignRole(t, db, adminSession.tenantID, "seller-task-editor", "seller")
+	addMember(t, router, adminSession, projectID, "seller-task-editor", project.RoleEditor)
+	editorSession := loginProjectRouteUser(t, router, adminSession.tenantID, "seller-task-editor@example.com", "seller-task-editor-password-123")
+	createPayload := map[string]any{
+		"type":       task.TypeImageGeneration,
+		"prompt":     "Assigned model access is required",
+		"providerId": providerID,
+		"modelId":    modelID,
+		"parameters": map[string]any{"size": "1024x1024", "outputFormat": "png"},
+	}
+	unassignedResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", createPayload, editorSession.cookies, editorSession.csrfHeader())
+	if unassignedResponse.Code != http.StatusForbidden {
+		t.Fatalf("unassigned model task create status = %d, want %d: %s", unassignedResponse.Code, http.StatusForbidden, unassignedResponse.Body.String())
+	}
+	var taskCount int64
+	if err := db.Model(&database.GenerationTask{}).Where("tenant_id = ? AND created_by = ?", adminSession.tenantID, "seller-task-editor").Count(&taskCount).Error; err != nil {
+		t.Fatalf("count rejected tasks: %v", err)
+	}
+	if taskCount != 0 || len(enqueuer.taskIDs) != 0 {
+		t.Fatalf("unassigned model request had side effects: tasks=%d queue=%#v", taskCount, enqueuer.taskIDs)
+	}
+
+	grantModelAccess(t, db, adminSession.tenantID, "seller-task-editor", modelID, adminSession.userID)
+	assignedResponse := performJSON(router, http.MethodPost, "/api/v1/projects/"+projectID+"/tasks", createPayload, editorSession.cookies, editorSession.csrfHeader())
+	if assignedResponse.Code != http.StatusCreated {
+		t.Fatalf("assigned model task create status = %d, want %d: %s", assignedResponse.Code, http.StatusCreated, assignedResponse.Body.String())
 	}
 
 	seedOtherTenantTask(t, db)

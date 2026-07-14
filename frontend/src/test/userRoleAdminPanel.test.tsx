@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { ApiClientError } from '../api/client'
+import type { ModelApi } from '../api/models'
 import type { UserAdminApi } from '../api/userAdmin'
 import { UserRoleAdminPanel } from '../components/admin/UserRoleAdminPanel'
 import type { UserAdminRole, UserAdminUser } from '../types/userAdmin'
@@ -155,6 +156,11 @@ function createMockUserAdminApi(overrides: Partial<UserAdminApi> = {}): UserAdmi
       ...managedUser,
       roles: [sellerRole, viewerRole].filter((role) => request.roleIds.includes(role.id)),
     })),
+    getUserModelAccess: vi.fn().mockResolvedValue({ userId: 'user_seller', modelIds: ['model_one'] }),
+    replaceUserModelAccess: vi.fn().mockImplementation(async (userId, request) => ({
+      userId,
+      modelIds: request.modelIds,
+    })),
     listRoles: vi.fn().mockResolvedValue([sellerRole, viewerRole]),
     listPermissions: vi.fn().mockResolvedValue(sellerRole.permissions ?? []),
     createRole: vi.fn().mockImplementation(async (request) => ({
@@ -172,6 +178,62 @@ function createMockUserAdminApi(overrides: Partial<UserAdminApi> = {}): UserAdmi
     })),
     ...overrides,
   }
+}
+
+const accessModels = [
+  {
+    id: 'model_one',
+    tenantId: 'tenant_1',
+    providerId: 'provider_a',
+    providerName: 'Euzhi 中转站',
+    modelName: 'gpt-image-2',
+    displayName: 'GPT Image 2',
+    supportsGenerate: true,
+    supportsEdit: true,
+    supportsMultiReference: true,
+    supportsN: true,
+    maxOutputCount: 4,
+    supportedSizes: ['1024x1024'],
+    supportedQualities: ['high'],
+    supportedOutputFormats: ['png'],
+    pricing: { currency: 'USD', unitPrices: {} },
+    status: 'ENABLED',
+    createdAt: '2026-05-21T00:00:00Z',
+    updatedAt: '2026-05-21T00:00:00Z',
+  },
+  {
+    id: 'model_two',
+    tenantId: 'tenant_1',
+    providerId: 'provider_a',
+    providerName: 'Euzhi 中转站',
+    modelName: 'gpt-image-2-low',
+    displayName: 'GPT Image 2 快速版',
+    supportsGenerate: true,
+    supportsEdit: false,
+    supportsMultiReference: false,
+    supportsN: false,
+    maxOutputCount: 1,
+    supportedSizes: ['1024x1024'],
+    supportedQualities: ['low'],
+    supportedOutputFormats: ['png'],
+    pricing: { currency: 'USD', unitPrices: {} },
+    status: 'ENABLED',
+    createdAt: '2026-05-21T00:00:00Z',
+    updatedAt: '2026-05-21T00:00:00Z',
+  },
+] as const
+
+function createMockModelApi(): ModelApi {
+  return {
+    list: vi.fn().mockResolvedValue(page([...accessModels], 100)),
+    listEnabledCapabilities: vi.fn().mockResolvedValue([...accessModels]),
+    create: vi.fn(),
+    get: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    enable: vi.fn(),
+    disable: vi.fn(),
+  } as unknown as ModelApi
 }
 
 function renderPanel(props: Partial<Parameters<typeof UserRoleAdminPanel>[0]> = {}) {
@@ -209,6 +271,57 @@ describe('user and role admin UI', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows Simplified Chinese permission names and descriptions while retaining the permission code', async () => {
+    renderPanel({
+      canReadRoles: true,
+      userAdminApi: createMockUserAdminApi({
+        listRoles: vi.fn().mockResolvedValue([sellerRole]),
+        listPermissions: vi.fn().mockResolvedValue(sellerRole.permissions ?? []),
+      }),
+    })
+
+    expect((await screen.findAllByText('查看用户')).length).toBeGreaterThan(0)
+    expect(screen.getByText('查看当前租户的用户列表与用户详情。')).toBeInTheDocument()
+    expect(screen.getAllByText('user:read').length).toBeGreaterThan(0)
+  })
+
+  it('lets an administrator assign models grouped by provider to an ordinary user', async () => {
+    const user = userEvent.setup()
+    const userApi = createMockUserAdminApi()
+    const modelApi = createMockModelApi()
+    renderPanel({
+      canManageModelAccess: true,
+      canReadUsers: true,
+      modelApi,
+      userAdminApi: userApi,
+    })
+
+    await user.click(await screen.findByRole('button', { name: '分配可用模型 seller@example.com' }))
+
+    expect(await screen.findByRole('dialog', { name: '分配可用模型' })).toBeInTheDocument()
+    expect(await screen.findByText('Euzhi 中转站')).toBeInTheDocument()
+    expect(screen.getByText('GPT Image 2')).toBeInTheDocument()
+    expect(screen.getByText('GPT Image 2 快速版')).toBeInTheDocument()
+    expect(userApi.getUserModelAccess).toHaveBeenCalledWith('user_seller')
+
+    await user.click(screen.getByRole('checkbox', { name: 'GPT Image 2 快速版 Euzhi 中转站' }))
+    await user.click(screen.getByRole('button', { name: '保存可用模型' }))
+
+    await waitFor(() => expect(userApi.replaceUserModelAccess).toHaveBeenCalledWith(
+      'user_seller',
+      { modelIds: ['model_one', 'model_two'] },
+      'csrf_from_me',
+    ))
+    expect(await screen.findByText('用户可用模型已更新。')).toBeInTheDocument()
+  })
+
+  it('does not show model access management to an ordinary user', async () => {
+    renderPanel({ canManageModelAccess: false, canReadUsers: true })
+
+    expect(await screen.findByText('seller@example.com')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '分配可用模型 seller@example.com' })).not.toBeInTheDocument()
+  })
+
   it('App hides the entry for users without identity permissions and does not call user admin APIs', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
@@ -233,7 +346,7 @@ describe('user and role admin UI', () => {
     render(<App />)
 
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '用户/角色管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '用户/角色管理' })).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => ['/api/v1/users', '/api/v1/roles', '/api/v1/permissions'].includes(url))).toBe(false)
   })
 
@@ -267,7 +380,8 @@ describe('user and role admin UI', () => {
 
     render(<App />)
 
-    await browserUser.click(await screen.findByRole('button', { name: '用户/角色管理' }))
+    await browserUser.click(await screen.findByRole('button', { name: '打开管理菜单' }))
+    await browserUser.click(screen.getByRole('menuitem', { name: '用户/角色管理' }))
     expect(await screen.findByRole('heading', { name: '用户与角色管理' })).toBeInTheDocument()
     expect(await screen.findByText('Seller')).toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/roles')
@@ -302,7 +416,8 @@ describe('user and role admin UI', () => {
 
     render(<App />)
 
-    await browserUser.click(await screen.findByRole('button', { name: '用户/角色管理' }))
+    await browserUser.click(await screen.findByRole('button', { name: '打开管理菜单' }))
+    await browserUser.click(screen.getByRole('menuitem', { name: '用户/角色管理' }))
     expect(await screen.findByRole('button', { name: '编辑当前租户名称' })).toBeInTheDocument()
     expect(screen.queryByText('当前账号没有 user:read 权限，面板不会调用用户列表接口。')).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/tenants/current')
@@ -404,12 +519,14 @@ describe('user and role admin UI', () => {
 
     await screen.findByText('Seller User')
     await browserUser.click(screen.getByRole('button', { name: /编辑显示名 seller@example.com/ }))
+    expect(await screen.findByRole('dialog', { name: '编辑用户' })).toBeInTheDocument()
     await browserUser.clear(screen.getByLabelText(/新的显示名 seller@example.com/))
     await browserUser.type(screen.getByLabelText(/新的显示名 seller@example.com/), 'Seller Renamed')
     await browserUser.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(api.updateUser).toHaveBeenCalledWith('user_seller', { displayName: 'Seller Renamed' }, 'csrf_from_me'))
 
     await browserUser.click(screen.getByRole('button', { name: /分配角色 seller@example.com/ }))
+    expect(await screen.findByRole('dialog', { name: '分配用户角色' })).toBeInTheDocument()
     await browserUser.click(screen.getAllByLabelText(/Viewer/).at(-1) as HTMLElement)
     await browserUser.click(screen.getByRole('button', { name: '保存角色' }))
     await waitFor(() => expect(api.replaceUserRoles).toHaveBeenCalledWith('user_seller', { roleIds: ['role_seller', 'role_viewer'] }, 'csrf_from_me'))
@@ -581,6 +698,7 @@ describe('user and role admin UI', () => {
     expect(screen.queryByRole('button', { name: '编辑角色 Seller' })).not.toBeInTheDocument()
 
     await browserUser.click(screen.getByRole('button', { name: '编辑角色 Catalog Manager' }))
+    expect(await screen.findByRole('dialog', { name: '编辑角色' })).toBeInTheDocument()
     await browserUser.clear(screen.getByLabelText('编辑角色名称'))
     await browserUser.type(screen.getByLabelText('编辑角色名称'), 'Catalog Lead')
     await browserUser.selectOptions(screen.getByLabelText('编辑角色状态'), 'DISABLED')
@@ -592,6 +710,7 @@ describe('user and role admin UI', () => {
     ))
 
     await browserUser.click(screen.getByRole('button', { name: '配置角色权限 Catalog Manager' }))
+    expect(await screen.findByRole('dialog', { name: '配置角色权限' })).toBeInTheDocument()
     await browserUser.click(screen.getByLabelText('角色权限 user:read'))
     await browserUser.click(screen.getByRole('button', { name: '保存权限' }))
     await waitFor(() => expect(api.replaceRolePermissions).toHaveBeenCalledWith(

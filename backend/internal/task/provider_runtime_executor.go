@@ -64,7 +64,11 @@ func NewProviderRuntimeExecutor(db *gorm.DB, log *slog.Logger, options ProviderR
 	runtime := options.Runtime
 	if runtime == nil {
 		httpClient := provider.NewSafeHTTPClient(validator, options.Provider.DefaultTimeout)
-		runtime = provideradapter.NewClient(provideradapter.ClientOptions{HTTPClient: httpClient})
+		runtime = provideradapter.NewClient(provideradapter.ClientOptions{
+			HTTPClient:       httpClient,
+			MaxResponseBytes: options.Provider.MaxResponseSizeBytes,
+			MaxImageBytes:    options.Provider.MaxOutputImageBytes,
+		})
 	}
 	upload := config.NormalizeUploadConfig(options.Upload)
 	maxInputBytes := options.MaxInputBytes
@@ -113,7 +117,7 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 		return ExecutionResult{ErrorCode: "TASK_INPUT_UNAVAILABLE", ErrorMessage: "Task input images are unavailable.", Retryable: true}
 	}
 	operation := provideradapter.OperationGenerate
-	if execution.Task.Type == TypeImageEdit {
+	if execution.Task.Type == TypeImageEdit || len(inputImages) > 0 {
 		operation = provideradapter.OperationEdit
 	}
 
@@ -158,6 +162,7 @@ func (e *ProviderRuntimeExecutor) Execute(ctx context.Context, execution Executi
 	}
 	finalizedCall, finalizeErr := e.finalizeProviderAttemptLedger(attempt, executionResult.APICall, ctx.Err(), redactor)
 	if finalizeErr != nil {
+		cleanupTemporaryGeneratedOutputs(executionResult.Outputs)
 		return ExecutionResult{
 			ErrorCode:    "PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED",
 			ErrorMessage: "Provider attempt ledger could not be finalized.",
@@ -226,9 +231,12 @@ func executionResultFromProvider(result provideradapter.ImageResult, redactor *p
 	outputs := make([]GeneratedImageOutput, 0, len(result.Images))
 	for _, image := range result.Images {
 		outputs = append(outputs, GeneratedImageOutput{
-			Data:     image.Data,
-			MIMEType: image.MIMEType,
-			Metadata: sanitizeProviderRuntimeMetadata(image.Metadata, redactor),
+			Data:      image.Data,
+			FilePath:  image.FilePath,
+			SizeBytes: image.SizeBytes,
+			Temporary: image.Temporary,
+			MIMEType:  image.MIMEType,
+			Metadata:  sanitizeProviderRuntimeMetadata(image.Metadata, redactor),
 		})
 	}
 	call := redactor.SanitizeAPICall(result.APICall)

@@ -1,4 +1,4 @@
-import { AlertCircle, Download, ImageIcon, Info, Loader2, RotateCcw, XCircle } from 'lucide-react'
+import { AlertCircle, Download, ImageIcon, Images, Info, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import type { WorkbenchGeneration } from '../../hooks/useGeneration'
 import { formatBytes } from '../../lib/storageLimit'
 import type { TaskStatus } from '../../types/platform'
@@ -19,6 +19,7 @@ interface ResultCanvasProps {
   onDownload: () => void
   onCancelTask?: () => void
   onRetryTask?: () => void
+  onOpenAssets?: () => void
 }
 
 export function ResultCanvas({
@@ -36,13 +37,14 @@ export function ResultCanvas({
   onDownload,
   onCancelTask,
   onRetryTask,
+  onOpenAssets,
 }: ResultCanvasProps) {
   const imageUrl = useResultImageUrl(current)
   const hasResult = Boolean(current && imageUrl)
 
   return (
-    <section className="panel flex min-h-[360px] flex-col overflow-hidden sm:min-h-[440px] xl:min-h-[520px]">
-      <div className="flex items-center justify-between gap-3 border-b border-ink-200 px-4 py-3">
+    <section className="panel flex min-h-[360px] flex-col overflow-hidden sm:min-h-[440px] lg:h-full lg:min-h-0">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-ink-200 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="text-sm font-semibold text-ink-900">生成结果</h2>
           {taskStatus ? (
@@ -50,6 +52,16 @@ export function ResultCanvas({
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          {onOpenAssets ? (
+            <button
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-ink-200 bg-white px-2.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-50"
+              onClick={onOpenAssets}
+              type="button"
+            >
+              <Images className="h-4 w-4" />
+              产品素材
+            </button>
+          ) : null}
           {canCancelTask ? (
             <button
               aria-label="取消任务"
@@ -84,7 +96,10 @@ export function ResultCanvas({
         </div>
       </div>
 
-      <div className="flex flex-1 items-center justify-center bg-[linear-gradient(45deg,#f8fafc_25%,transparent_25%),linear-gradient(-45deg,#f8fafc_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f8fafc_75%),linear-gradient(-45deg,transparent_75%,#f8fafc_75%)] bg-[length:24px_24px] bg-[position:0_0,0_12px,12px_-12px,-12px_0] p-3 sm:p-4">
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-[linear-gradient(45deg,#f8fafc_25%,transparent_25%),linear-gradient(-45deg,#f8fafc_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f8fafc_75%),linear-gradient(-45deg,transparent_75%,#f8fafc_75%)] bg-[length:24px_24px] bg-[position:0_0,0_12px,12px_-12px,-12px_0] p-3 sm:p-4"
+        data-testid="result-canvas-content"
+      >
         {status === 'idle' ? (
           <div className="max-w-sm text-center">
             <ImageIcon className="mx-auto h-12 w-12 text-ink-300" />
@@ -110,20 +125,21 @@ export function ResultCanvas({
         ) : null}
 
         {hasResult && current && imageUrl ? (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-4">
+          <div className="flex h-full min-h-0 w-full flex-col items-center justify-center gap-3">
             {status === 'error' && error ? (
               <div className="w-full max-w-lg rounded-md border border-red-200 bg-white px-3 py-2 text-sm text-red-700">{error}</div>
             ) : null}
             <button
               aria-label="打开当前结果详情"
-              className="max-h-full max-w-full overflow-hidden rounded-lg border border-ink-200 bg-white p-2 shadow-panel"
+              className="flex min-h-0 w-full max-w-full flex-1 items-center justify-center overflow-hidden rounded-lg border border-ink-200 bg-white p-2 shadow-panel"
+              data-testid="result-canvas-image"
               onClick={onOpenDetail}
               type="button"
             >
-              <img alt="生成结果" className="max-h-[52dvh] w-auto object-contain sm:max-h-[64vh]" src={imageUrl} />
+              <img alt="生成结果" className="h-full max-h-full w-full max-w-full object-contain" src={imageUrl} />
             </button>
             {currentItems.length > 1 ? (
-              <div className="grid w-full max-w-lg grid-cols-4 gap-2">
+              <div className="grid w-full max-w-lg shrink-0 grid-cols-4 gap-2">
                 {currentItems.map((item, index) => (
                   <ResultThumbnail
                     index={index}
@@ -135,7 +151,7 @@ export function ResultCanvas({
                 ))}
               </div>
             ) : null}
-            <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-ink-500">
+            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 text-xs text-ink-500">
               {currentItems.length > 1 ? (
                 <>
                   <span>第 {selectedIndex + 1} / {currentItems.length} 张</span>
@@ -150,7 +166,7 @@ export function ResultCanvas({
                 </>
               ) : null}
             </div>
-            <div className="flex flex-wrap justify-center gap-2">
+            <div className="flex shrink-0 flex-wrap justify-center gap-2 pb-1" data-testid="result-canvas-actions">
               <Button icon={<Download className="h-4 w-4" />} onClick={onDownload} variant="primary">
                 下载原图
               </Button>

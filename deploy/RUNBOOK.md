@@ -47,7 +47,14 @@ Required groups:
   `UPLOAD_MAX_HEIGHT`, `UPLOAD_MAX_PIXELS`, `UPLOAD_ALLOWED_MIME_TYPES`.
 - Queue and worker controls: `TASK_*`, `WORKER_*`, `MIGRATIONS_MODE`.
 - Provider runtime defaults: `PROVIDER_TIMEOUT_SECONDS`,
-  `PROVIDER_MAX_RETRIES`.
+  `PROVIDER_MAX_RETRIES`, `PROVIDER_MAX_RESPONSE_SIZE_MB`,
+  `PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB`.
+
+Provider image responses are decoded through the worker temporary directory and
+then streamed into MinIO. Size the worker's temporary storage for the configured
+task concurrency and output limits. `PROVIDER_MAX_RESPONSE_SIZE_MB` defaults to
+1024 MiB and `PROVIDER_MAX_OUTPUT_IMAGE_SIZE_MB` defaults to 512 MiB; the latter
+must not exceed the former. These settings do not change the user upload limit.
 
 For production, set `APP_ENV=production`, `COOKIE_SECURE=true`, restrict
 `CORS_ALLOWED_ORIGINS` to the public frontend origin, and bind public traffic

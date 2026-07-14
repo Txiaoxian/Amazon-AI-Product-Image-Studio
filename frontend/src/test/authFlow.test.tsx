@@ -24,7 +24,7 @@ const authenticatedSession = {
       name: '管理员',
     },
   ],
-  permissions: ['audit:read'],
+  permissions: ['audit:read', 'project:read', 'project:create'],
   csrfToken: 'csrf_from_me',
 }
 
@@ -86,7 +86,7 @@ describe('auth flow', () => {
 
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
     expect(screen.getByText('Studio Tenant')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '生成参数' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
     expect(fetchImpl).toHaveBeenCalledWith(
       '/api/v1/me',
       expect.objectContaining({
@@ -96,6 +96,32 @@ describe('auth flow', () => {
     )
   })
 
+  it('guides users to create their first project instead of showing a disabled workbench', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '生成参数' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '创建第一个产品' }))
+
+    expect(screen.getByRole('dialog', { name: '产品管理' })).toBeInTheDocument()
+  })
+
   it('shows a login screen when unauthenticated and stores the returned CSRF token only in memory', async () => {
     const user = userEvent.setup()
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
@@ -103,6 +129,13 @@ describe('auth flow', () => {
 
       if (url === '/api/v1/me') {
         return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+      if (url === '/api/v1/auth/captcha') {
+        return successResponse({
+          captchaId: 'captcha_1',
+          imageUrl: '/api/v1/auth/captcha/captcha_1/image',
+          expiresAt: '2026-07-13T12:00:00Z',
+        }, 201)
       }
       if (url === '/api/v1/auth/login') {
         return successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_login' })
@@ -119,15 +152,18 @@ describe('auth flow', () => {
 
     expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('租户 ID'), 'tenant_1')
+    expect(screen.queryByLabelText('租户 ID')).not.toBeInTheDocument()
+    expect(await screen.findByAltText('登录验证码')).toBeInTheDocument()
     await user.type(screen.getByLabelText('邮箱'), 'admin@example.com')
     await user.type(screen.getByLabelText('密码'), 'valid-password-123')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '生成参数' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
 
-    const [url, init] = fetchImpl.mock.calls[1]
+    const loginCall = fetchImpl.mock.calls.find(([requestUrl]) => requestUrl === '/api/v1/auth/login')
+    expect(loginCall).toBeDefined()
+    const [url, init] = loginCall!
     expect(url).toBe('/api/v1/auth/login')
     expect(init).toEqual(
       expect.objectContaining({
@@ -136,7 +172,6 @@ describe('auth flow', () => {
       }),
     )
     expect(JSON.parse(init?.body as string)).toEqual({
-      tenantId: 'tenant_1',
       email: 'admin@example.com',
       password: 'valid-password-123',
     })

@@ -57,7 +57,7 @@ func (s *Service) ListModels(c *gin.Context) {
 	}
 	query, err := parseListQuery(c)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "模型查询参数无效。", nil)
 		return
 	}
 
@@ -78,12 +78,12 @@ func (s *Service) CreateModel(c *gin.Context) {
 
 	var request createRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "模型配置格式无效。", nil)
 		return
 	}
 	input, err := normalizeCreateRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "模型配置未通过校验，请检查模型能力、尺寸、质量和输出格式。", nil)
 		return
 	}
 
@@ -119,12 +119,12 @@ func (s *Service) UpdateModel(c *gin.Context) {
 
 	var request updateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusBadRequest, "VALIDATION_ERROR", "模型配置格式无效。", nil)
 		return
 	}
 	input, changedFields, err := normalizeUpdateRequest(request)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "模型配置未通过校验，请检查模型能力、尺寸、质量和输出格式。", nil)
 		return
 	}
 
@@ -182,7 +182,11 @@ func (s *Service) listModels(ctx context.Context, principal auth.Principal, quer
 		return Page{}, err
 	}
 
-	records, total, err := s.repo.ListModels(ctx, scope, ListOptions(query))
+	accessibleUserID := ""
+	if !isTenantAdmin(principal) {
+		accessibleUserID = principal.UserID
+	}
+	records, total, err := s.repo.ListModels(ctx, scope, ListOptions(query), accessibleUserID)
 	if err != nil {
 		return Page{}, err
 	}
@@ -194,7 +198,7 @@ func (s *Service) listModels(ctx context.Context, principal auth.Principal, quer
 }
 
 func (s *Service) createModel(ctx context.Context, principal auth.Principal, input CreateInput, ip string, userAgent string) (Response, error) {
-	if !isTenantAdmin(principal) && !principal.HasPermission(PermissionManage) {
+	if !isTenantAdmin(principal) {
 		return Response{}, ErrForbidden
 	}
 	if s.db == nil {
@@ -266,7 +270,7 @@ func (s *Service) createModel(ctx context.Context, principal auth.Principal, inp
 		return Response{}, err
 	}
 
-	return responseFromRecord(record, providerRecord.Name)
+	return responseFromRecord(record, providerRecord.Name, providerRecord.Type)
 }
 
 func (s *Service) getModel(ctx context.Context, principal auth.Principal, modelID string) (Response, error) {
@@ -499,15 +503,29 @@ func (s *Service) authorizeModelWithLookup(ctx context.Context, lookup func(cont
 	if err != nil {
 		return database.AIModel{}, err
 	}
+	if isTenantAdmin(principal) {
+		record, err := lookup(ctx, scope, modelID)
+		if err != nil {
+			return database.AIModel{}, err
+		}
+		return record, nil
+	}
+	if permission == PermissionManage {
+		return database.AIModel{}, ErrForbidden
+	}
+	if !hasModelPermission(principal, permission) {
+		return database.AIModel{}, ErrForbidden
+	}
 	record, err := lookup(ctx, scope, modelID)
 	if err != nil {
 		return database.AIModel{}, err
 	}
-	if isTenantAdmin(principal) {
-		return record, nil
+	allowed, err := s.repo.UserCanAccessModel(ctx, scope, principal.UserID, record.ID)
+	if err != nil {
+		return database.AIModel{}, err
 	}
-	if !hasModelPermission(principal, permission) {
-		return database.AIModel{}, ErrForbidden
+	if !allowed {
+		return database.AIModel{}, ErrNotFound
 	}
 	return record, nil
 }
@@ -517,14 +535,15 @@ func (s *Service) responsesForRecords(ctx context.Context, scope tenant.Scope, r
 	for _, record := range records {
 		providerIDs = append(providerIDs, record.ProviderID)
 	}
-	providerNames, err := s.repo.ProviderNames(ctx, scope, providerIDs)
+	providerSummaries, err := s.repo.ProviderSummaries(ctx, scope, providerIDs)
 	if err != nil {
 		return nil, err
 	}
 
 	responses := make([]Response, 0, len(records))
 	for _, record := range records {
-		response, err := responseFromRecord(record, providerNames[record.ProviderID])
+		providerSummary := providerSummaries[record.ProviderID]
+		response, err := responseFromRecord(record, providerSummary.Name, providerSummary.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -599,13 +618,13 @@ func hasModelPermission(principal auth.Principal, permission string) bool {
 func (s *Service) respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrValidation), errors.Is(err, ErrDuplicateModelName):
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "模型配置未通过校验，请检查模型能力、尺寸、质量和输出格式。", nil)
 	case errors.Is(err, ErrForbidden):
-		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
+		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "当前账号没有模型管理权限。", nil)
 	case errors.Is(err, ErrNotFound):
-		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "Resource not found.", nil)
+		httpx.AbortWithError(c, http.StatusNotFound, "NOT_FOUND", "模型不存在或无权访问。", nil)
 	default:
 		s.log.Error("model request failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
-		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "模型请求处理失败，请稍后重试。", nil)
 	}
 }
