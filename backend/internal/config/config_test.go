@@ -38,8 +38,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Worker.Name != "backend-worker" {
 		t.Fatalf("Worker.Name = %q, want backend-worker", cfg.Worker.Name)
 	}
-	if cfg.Worker.Concurrency != 1 {
-		t.Fatalf("Worker.Concurrency = %d, want 1", cfg.Worker.Concurrency)
+	if cfg.Worker.Concurrency != 8 {
+		t.Fatalf("Worker.Concurrency = %d, want 8", cfg.Worker.Concurrency)
 	}
 	if cfg.Database.Host != "127.0.0.1" {
 		t.Fatalf("Database.Host = %q, want 127.0.0.1", cfg.Database.Host)
@@ -167,7 +167,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Queue.MaxDeliveries != 5 {
 		t.Fatalf("Queue.MaxDeliveries = %d, want 5", cfg.Queue.MaxDeliveries)
 	}
-	if cfg.Queue.GlobalConcurrency != 4 || cfg.Queue.TenantConcurrency != 2 || cfg.Queue.UserConcurrency != 2 || cfg.Queue.ProviderConcurrency != 2 || cfg.Queue.ModelConcurrency != 2 {
+	if cfg.Queue.GlobalConcurrency != 8 || cfg.Queue.PolicyMaxConcurrency != 8 || cfg.Queue.TenantConcurrency != 2 || cfg.Queue.UserConcurrency != 2 || cfg.Queue.ProviderConcurrency != 2 || cfg.Queue.ModelConcurrency != 2 {
 		t.Fatalf("Queue concurrency defaults = %#v", cfg.Queue)
 	}
 }
@@ -239,6 +239,7 @@ func TestLoadOverrides(t *testing.T) {
 		"TASK_CONCURRENCY_LEASE_TTL":               "14s",
 		"TASK_MAX_DELIVERIES":                      "6",
 		"TASK_GLOBAL_CONCURRENCY":                  "7",
+		"TASK_POLICY_MAX_CONCURRENCY":              "6",
 		"TASK_TENANT_CONCURRENCY":                  "8",
 		"TASK_USER_CONCURRENCY":                    "9",
 		"TASK_PROVIDER_CONCURRENCY":                "10",
@@ -433,7 +434,7 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Queue.ConcurrencyLeaseTTL != 14*time.Second {
 		t.Fatalf("Queue.ConcurrencyLeaseTTL = %s, want 14s", cfg.Queue.ConcurrencyLeaseTTL)
 	}
-	if cfg.Queue.MaxDeliveries != 6 || cfg.Queue.GlobalConcurrency != 7 || cfg.Queue.TenantConcurrency != 8 || cfg.Queue.UserConcurrency != 9 || cfg.Queue.ProviderConcurrency != 10 || cfg.Queue.ModelConcurrency != 11 {
+	if cfg.Queue.MaxDeliveries != 6 || cfg.Queue.GlobalConcurrency != 7 || cfg.Queue.PolicyMaxConcurrency != 6 || cfg.Queue.TenantConcurrency != 8 || cfg.Queue.UserConcurrency != 9 || cfg.Queue.ProviderConcurrency != 10 || cfg.Queue.ModelConcurrency != 11 {
 		t.Fatalf("Queue concurrency overrides = %#v", cfg.Queue)
 	}
 }
@@ -656,7 +657,7 @@ func TestLoadWorkerConcurrency(t *testing.T) {
 		raw  string
 		want int
 	}{
-		{name: "missing", want: 1},
+		{name: "missing", want: 8},
 		{name: "one", raw: "1", want: 1},
 		{name: "pool", raw: "4", want: 4},
 	}
@@ -701,6 +702,36 @@ func TestLoadRejectsInvalidWorkerConcurrency(t *testing.T) {
 			})
 			if err == nil {
 				t.Fatal("load returned nil error for invalid worker concurrency")
+			}
+			if got := err.Error(); got != tt.want {
+				t.Fatalf("load error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidTaskConcurrencyCapacity(t *testing.T) {
+	tests := []struct {
+		key  string
+		raw  string
+		want string
+	}{
+		{key: "TASK_GLOBAL_CONCURRENCY", raw: "0", want: "invalid TASK_GLOBAL_CONCURRENCY: must be positive"},
+		{key: "TASK_GLOBAL_CONCURRENCY", raw: "257", want: "invalid TASK_GLOBAL_CONCURRENCY: must be <= 256"},
+		{key: "TASK_POLICY_MAX_CONCURRENCY", raw: "0", want: "invalid TASK_POLICY_MAX_CONCURRENCY: must be positive"},
+		{key: "TASK_POLICY_MAX_CONCURRENCY", raw: "257", want: "invalid TASK_POLICY_MAX_CONCURRENCY: must be <= 256"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key+"="+tt.raw, func(t *testing.T) {
+			_, err := load(func(key string) (string, bool) {
+				if key == tt.key {
+					return tt.raw, true
+				}
+				return "", false
+			})
+			if err == nil {
+				t.Fatal("load returned nil error for invalid task concurrency capacity")
 			}
 			if got := err.Error(); got != tt.want {
 				t.Fatalf("load error = %q, want %q", got, tt.want)

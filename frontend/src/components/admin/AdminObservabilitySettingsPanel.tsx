@@ -11,9 +11,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { adminApi as defaultAdminApi, type AdminApi } from '../../api/admin'
 import { isApiClientError } from '../../api/client'
+import { modelApi as defaultModelApi, type ModelApi } from '../../api/models'
+import { providerApi as defaultProviderApi, type ProviderApi } from '../../api/providers'
 import type {
   AdminUsageQuery,
   ApiCallLog,
+  IntegerRangeConstraint,
   OperationLog,
   SystemSettings,
   UpdateSystemSettingsRequest,
@@ -22,6 +25,7 @@ import type {
   UsageSummaryDimension,
 } from '../../types/admin'
 import type { ApiPage } from '../../types/api'
+import type { Model, Provider } from '../../types/platform'
 import { AdminApiCallLogsView } from './AdminApiCallLogsView'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
@@ -36,6 +40,8 @@ interface AdminObservabilitySettingsPanelProps {
   canManageSystemSettings: boolean
   onClose: () => void
   adminApi?: AdminApi
+  modelApi?: ModelApi
+  providerApi?: ProviderApi
 }
 
 interface PageViewState<TRecord> {
@@ -65,16 +71,21 @@ interface TaskConcurrencyDraft {
 }
 
 interface StorageRetentionDraft {
+  enabled: boolean
   deletedAssetRetentionDays: string
 }
 
 interface StorageQuotaDraft {
+  enabled: boolean
   maxBytes: string
 }
 
 interface LogRetentionDraft {
+  operationLogEnabled: boolean
   operationLogRetentionDays: string
+  apiCallLogEnabled: boolean
   apiCallLogRetentionDays: string
+  taskEventEnabled: boolean
   taskEventRetentionDays: string
 }
 
@@ -88,6 +99,9 @@ interface SystemSettingsDraft {
 }
 
 type SystemSettingsGroup = keyof SystemSettingsDraft
+type SettingsGroupFeedback = { message: string; field?: string }
+type SettingsGroupFeedbackMap = Partial<Record<SystemSettingsGroup, SettingsGroupFeedback>>
+type SettingsGroupNoticeMap = Partial<Record<SystemSettingsGroup, string>>
 type UsageFilterField = 'createdAtFrom' | 'createdAtTo' | 'taskId' | 'userId' | 'projectId' | 'providerId' | 'modelId'
 type UsageFiltersDraft = Record<UsageFilterField, string>
 
@@ -111,6 +125,8 @@ export function AdminObservabilitySettingsPanel({
   canManageSystemSettings,
   onClose,
   adminApi = defaultAdminApi,
+  modelApi = defaultModelApi,
+  providerApi = defaultProviderApi,
 }: AdminObservabilitySettingsPanelProps) {
   const apiCallDetailRequestSeqRef = useRef(0)
   const usageRequestSeqRef = useRef(0)
@@ -139,10 +155,13 @@ export function AdminObservabilitySettingsPanel({
   const [operationLogsError, setOperationLogsError] = useState<string | null>(null)
   const [apiCallLogsError, setApiCallLogsError] = useState<string | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [settingsNotice, setSettingsNotice] = useState<string | null>(null)
+  const [settingsGroupErrors, setSettingsGroupErrors] = useState<SettingsGroupFeedbackMap>({})
+  const [settingsGroupNotices, setSettingsGroupNotices] = useState<SettingsGroupNoticeMap>({})
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null)
   const [settingsDraft, setSettingsDraft] = useState<SystemSettingsDraft>(() => emptySystemSettingsDraft())
-  const [savingSettingsGroup, setSavingSettingsGroup] = useState<SystemSettingsGroup | null>(null)
+  const [savingSettingsGroups, setSavingSettingsGroups] = useState<Set<SystemSettingsGroup>>(() => new Set())
+  const [settingsProviders, setSettingsProviders] = useState<Provider[]>([])
+  const [settingsModels, setSettingsModels] = useState<Model[]>([])
   const [selectedApiCallLogId, setSelectedApiCallLogId] = useState<ApiCallLog['id'] | null>(null)
   const [selectedApiCallLog, setSelectedApiCallLog] = useState<ApiCallLog | null>(null)
   const [apiCallDetailError, setApiCallDetailError] = useState<string | null>(null)
@@ -159,7 +178,8 @@ export function AdminObservabilitySettingsPanel({
   useEffect(() => {
     if (!isOpen) {
       usageRequestSeqRef.current += 1
-      setSettingsNotice(null)
+      setSettingsGroupErrors({})
+      setSettingsGroupNotices({})
       resetApiCallDetail()
       return
     }
@@ -281,17 +301,33 @@ export function AdminObservabilitySettingsPanel({
 
     setLoadingSettings(true)
     setSettingsError(null)
-    setSettingsNotice(null)
+    setSettingsGroupErrors({})
+    setSettingsGroupNotices({})
     try {
-      const settings = await adminApi.getSystemSettings()
+      const [settingsResult, providerResult, modelResult] = await Promise.allSettled([
+        adminApi.getSystemSettings(),
+        providerApi.list({ status: 'ENABLED', pageNum: 1, pageSize: 100 }),
+        modelApi.list({ status: 'ENABLED', pageNum: 1, pageSize: 100 }),
+      ])
+      if (settingsResult.status === 'rejected') {
+        throw settingsResult.reason
+      }
+      const settings = settingsResult.value
       setSystemSettings(settings)
       setSettingsDraft(draftFromSettings(settings))
+      setSettingsProviders(providerResult.status === 'fulfilled' ? providerResult.value.records : [])
+      setSettingsModels(modelResult.status === 'fulfilled' ? modelResult.value.records : [])
+      if (providerResult.status === 'rejected' || modelResult.status === 'rejected') {
+        setSettingsGroupErrors({
+          taskDefaults: { message: 'Provider 或模型选项加载失败，其他设置仍可查看和保存。请刷新后重试。' },
+        })
+      }
     } catch (error) {
       setSettingsError(formatAdminError(error))
     } finally {
       setLoadingSettings(false)
     }
-  }, [adminApi, canManageSystemSettings])
+  }, [adminApi, canManageSystemSettings, modelApi, providerApi])
 
   useEffect(() => {
     if (!isOpen || activeTab !== 'usage' || !canReadUsage) {
@@ -352,24 +388,40 @@ export function AdminObservabilitySettingsPanel({
 
   const saveSystemSettingsGroup = async (group: SystemSettingsGroup) => {
     if (!csrfToken) {
-      setSettingsError('登录状态缺少 CSRF 凭据，请重新登录。')
-      setSettingsNotice(null)
+      setSettingsGroupErrors((current) => ({
+        ...current,
+        [group]: { message: '登录状态缺少 CSRF 凭据，请重新登录。' },
+      }))
       return
     }
 
-    setSavingSettingsGroup(group)
-    setSettingsError(null)
-    setSettingsNotice(null)
+    setSavingSettingsGroups((current) => new Set(current).add(group))
+    setSettingsGroupErrors((current) => ({ ...current, [group]: undefined }))
+    setSettingsGroupNotices((current) => ({ ...current, [group]: undefined }))
     try {
       const saved = await adminApi.updateSystemSettings(parseSettingsGroupPatch(group, settingsDraft), csrfToken)
-      setSystemSettings(saved)
-      setSettingsDraft(draftFromSettings(saved))
-      setSettingsNotice(`${settingsGroupLabel(group)}已更新。`)
+      const savedDraft = draftFromSettings(saved)
+      setSystemSettings((current) => mergeSavedSettingsGroup(current, saved, group))
+      setSettingsDraft((current) => mergeSavedDraftGroup(current, savedDraft, group))
+      setSettingsGroupNotices((current) => ({ ...current, [group]: `${settingsGroupLabel(group)}已更新。` }))
     } catch (error) {
-      setSettingsError(formatAdminError(error))
+      setSettingsGroupErrors((current) => ({ ...current, [group]: formatSettingsGroupError(error) }))
     } finally {
-      setSavingSettingsGroup(null)
+      setSavingSettingsGroups((current) => {
+        const next = new Set(current)
+        next.delete(group)
+        return next
+      })
     }
+  }
+
+  const updateSettingsDraft = (
+    group: SystemSettingsGroup,
+    update: SystemSettingsDraft | ((current: SystemSettingsDraft) => SystemSettingsDraft),
+  ) => {
+    setSettingsDraft(update)
+    setSettingsGroupErrors((current) => ({ ...current, [group]: undefined }))
+    setSettingsGroupNotices((current) => ({ ...current, [group]: undefined }))
   }
 
   const applyUsageFilters = () => {
@@ -497,11 +549,14 @@ export function AdminObservabilitySettingsPanel({
           <SystemSettingsView
             draft={settingsDraft}
             error={settingsError}
+            groupErrors={settingsGroupErrors}
+            groupNotices={settingsGroupNotices}
             isLoading={isLoadingSettings}
-            notice={settingsNotice}
-            onDraftChange={setSettingsDraft}
+            models={settingsModels}
+            onDraftChange={updateSettingsDraft}
             onSubmit={(group) => void saveSystemSettingsGroup(group)}
-            savingGroup={savingSettingsGroup}
+            providers={settingsProviders}
+            savingGroups={savingSettingsGroups}
             settings={systemSettings}
           />
         ) : null}
@@ -832,10 +887,16 @@ interface SystemSettingsViewProps {
   draft: SystemSettingsDraft
   isLoading: boolean
   error: string | null
-  notice: string | null
-  onDraftChange: (draft: SystemSettingsDraft | ((current: SystemSettingsDraft) => SystemSettingsDraft)) => void
+  groupErrors: SettingsGroupFeedbackMap
+  groupNotices: SettingsGroupNoticeMap
+  models: Model[]
+  onDraftChange: (
+    group: SystemSettingsGroup,
+    draft: SystemSettingsDraft | ((current: SystemSettingsDraft) => SystemSettingsDraft),
+  ) => void
   onSubmit: (group: SystemSettingsGroup) => void
-  savingGroup: SystemSettingsGroup | null
+  providers: Provider[]
+  savingGroups: Set<SystemSettingsGroup>
 }
 
 function SystemSettingsView({
@@ -843,12 +904,23 @@ function SystemSettingsView({
   draft,
   isLoading,
   error,
-  notice,
+  groupErrors,
+  groupNotices,
+  models,
   onDraftChange,
   onSubmit,
-  savingGroup,
+  providers,
+  savingGroups,
 }: SystemSettingsViewProps) {
-  const isDisabled = isLoading || savingGroup !== null
+  const savedDraft = settings ? draftFromSettings(settings) : null
+  const availableModels = models.filter((model) => model.providerId === draft.taskDefaults.defaultProviderId)
+  const groupProps = (group: SystemSettingsGroup) => ({
+    disabled: isLoading || savingGroups.has(group),
+    error: groupErrors[group]?.field ? undefined : groupErrors[group]?.message,
+    isDirty: savedDraft ? !settingsDraftGroupEquals(draft, savedDraft, group) : false,
+    isSaving: savingGroups.has(group),
+    notice: groupNotices[group],
+  })
 
   return (
     <section className="space-y-4">
@@ -857,120 +929,160 @@ function SystemSettingsView({
         <h3 className="text-sm font-semibold text-ink-900">系统设置</h3>
       </div>
       <StatusMessage message={error} tone="error" />
-      <StatusMessage message={notice} tone="success" />
       {isLoading ? <LoadingState text="正在加载系统设置..." /> : null}
-      {!isLoading && !error && !settings ? <EmptyState body="尚未读取到后端 system settings。" title="暂无系统设置" /> : null}
-      <SettingsGroupForm
-        disabled={isDisabled}
+      {!isLoading && !error && !settings ? <EmptyState body="尚未读取到后端系统设置。" title="暂无系统设置" /> : null}
+      {settings ? (
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <SettingsGroupForm
         group="uploadPolicy"
-        isSaving={savingGroup === 'uploadPolicy'}
         onSubmit={onSubmit}
-        title="Upload policy"
+        title="上传策略"
         submitLabel="保存上传策略"
+        {...groupProps('uploadPolicy')}
       >
         <div>
           <p className="mt-1 text-xs text-ink-400">仅显示后端已生效并由上传校验消费的四个字段。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <NumberField
+            error={fieldError(groupErrors.uploadPolicy, 'uploadPolicy.maxFileSizeBytes')}
+            hint={formatByteRangeHint(settings?.constraints.uploadPolicy.maxFileSizeBytes, draft.uploadPolicy.maxFileSizeBytes)}
             label="最大文件字节数"
+            max={settings?.constraints.uploadPolicy.maxFileSizeBytes.max}
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxFileSizeBytes: value } }))}
+            onChange={(value) => onDraftChange('uploadPolicy', (current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxFileSizeBytes: value } }))}
             value={draft.uploadPolicy.maxFileSizeBytes}
           />
           <NumberField
+            error={fieldError(groupErrors.uploadPolicy, 'uploadPolicy.maxWidth')}
+            hint={formatIntegerRangeHint(settings?.constraints.uploadPolicy.maxWidth, '像素')}
             label="最大宽度"
+            max={settings?.constraints.uploadPolicy.maxWidth.max}
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxWidth: value } }))}
+            onChange={(value) => onDraftChange('uploadPolicy', (current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxWidth: value } }))}
             value={draft.uploadPolicy.maxWidth}
           />
           <NumberField
+            error={fieldError(groupErrors.uploadPolicy, 'uploadPolicy.maxHeight')}
+            hint={formatIntegerRangeHint(settings?.constraints.uploadPolicy.maxHeight, '像素')}
             label="最大高度"
+            max={settings?.constraints.uploadPolicy.maxHeight.max}
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxHeight: value } }))}
+            onChange={(value) => onDraftChange('uploadPolicy', (current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxHeight: value } }))}
             value={draft.uploadPolicy.maxHeight}
           />
           <NumberField
+            error={fieldError(groupErrors.uploadPolicy, 'uploadPolicy.maxPixels')}
+            hint={formatIntegerRangeHint(settings?.constraints.uploadPolicy.maxPixels, '像素')}
             label="最大像素数"
+            max={settings?.constraints.uploadPolicy.maxPixels.max}
             min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxPixels: value } }))}
+            onChange={(value) => onDraftChange('uploadPolicy', (current) => ({ ...current, uploadPolicy: { ...current.uploadPolicy, maxPixels: value } }))}
             value={draft.uploadPolicy.maxPixels}
           />
         </div>
       </SettingsGroupForm>
 
       <SettingsGroupForm
-        disabled={isDisabled}
         group="taskDefaults"
-        isSaving={savingGroup === 'taskDefaults'}
         onSubmit={onSubmit}
-        title="Task defaults"
+        title="任务默认模型"
         submitLabel="保存任务默认模型"
+        {...groupProps('taskDefaults')}
       >
         <div>
-          <p className="mt-1 text-xs text-ink-400">Provider 与模型必须成对保存；两个输入都留空会清除默认值。</p>
+          <p className="mt-1 text-xs text-ink-400">Provider 与模型必须成对选择；两项都不选择时会清除默认值。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <TextField
-            label="默认 Provider ID"
+          <SelectField
+            error={fieldError(groupErrors.taskDefaults, 'taskDefaults.defaultProviderId')}
+            hint="只能选择当前租户已启用的 Provider。"
+            label="默认 Provider"
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskDefaults: { ...current.taskDefaults, defaultProviderId: value } }))
+              onDraftChange('taskDefaults', (current) => ({
+                ...current,
+                taskDefaults: {
+                  defaultProviderId: value,
+                  defaultModelId: models.some((model) => model.id === current.taskDefaults.defaultModelId && model.providerId === value)
+                    ? current.taskDefaults.defaultModelId
+                    : '',
+                },
+              }))
             }
-            placeholder="留空表示清除"
+            options={providers.map((provider) => ({ label: `${provider.name} · ${provider.type}`, value: provider.id }))}
+            placeholder="不设置默认 Provider"
             value={draft.taskDefaults.defaultProviderId}
           />
-          <TextField
-            label="默认模型 ID"
+          <SelectField
+            disabled={!draft.taskDefaults.defaultProviderId}
+            error={fieldError(groupErrors.taskDefaults, 'taskDefaults.defaultModelId')}
+            hint="模型选项会根据已选择的 Provider 自动筛选。"
+            label="默认模型"
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskDefaults: { ...current.taskDefaults, defaultModelId: value } }))
+              onDraftChange('taskDefaults', (current) => ({ ...current, taskDefaults: { ...current.taskDefaults, defaultModelId: value } }))
             }
-            placeholder="留空表示清除"
+            options={availableModels.map((model) => ({ label: `${model.displayName} · ${model.modelName}`, value: model.id }))}
+            placeholder={draft.taskDefaults.defaultProviderId ? '不设置默认模型' : '请先选择 Provider'}
             value={draft.taskDefaults.defaultModelId}
           />
         </div>
       </SettingsGroupForm>
 
       <SettingsGroupForm
-        disabled={isDisabled}
         group="taskConcurrency"
-        isSaving={savingGroup === 'taskConcurrency'}
         onSubmit={onSubmit}
-        title="Task concurrency"
+        title="任务并发限制"
         submitLabel="保存并发限制"
+        {...groupProps('taskConcurrency')}
       >
         <div>
-          <p className="mt-1 text-xs text-ink-400">这些值只会收紧或等于后端环境硬上限；全局并发不在租户设置内。</p>
+          <p className="mt-1 text-xs text-ink-400">
+            保存后会对新开始的任务立即生效，无需重启；降低限制不会中断正在生成的任务。当前全局安全容量为
+            {' '}{settings?.constraints.taskConcurrency.globalCapacity ?? '—'} 个任务，实际吞吐量还会受到 Worker 数量和中转站能力限制。
+          </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <NumberField
+            error={fieldError(groupErrors.taskConcurrency, 'taskConcurrency.tenantLimit')}
+            hint={formatIntegerRangeHint(settings?.constraints.taskConcurrency.tenantLimit, '个并发任务')}
             label="租户并发上限"
+            max={settings?.constraints.taskConcurrency.tenantLimit.max}
             min={1}
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, tenantLimit: value } }))
+              onDraftChange('taskConcurrency', (current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, tenantLimit: value } }))
             }
             value={draft.taskConcurrency.tenantLimit}
           />
           <NumberField
+            error={fieldError(groupErrors.taskConcurrency, 'taskConcurrency.userLimit')}
+            hint={formatIntegerRangeHint(settings?.constraints.taskConcurrency.userLimit, '个并发任务')}
             label="用户并发上限"
+            max={settings?.constraints.taskConcurrency.userLimit.max}
             min={1}
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, userLimit: value } }))
+              onDraftChange('taskConcurrency', (current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, userLimit: value } }))
             }
             value={draft.taskConcurrency.userLimit}
           />
           <NumberField
+            error={fieldError(groupErrors.taskConcurrency, 'taskConcurrency.providerLimit')}
+            hint={formatIntegerRangeHint(settings?.constraints.taskConcurrency.providerLimit, '个并发任务')}
             label="Provider 并发上限"
+            max={settings?.constraints.taskConcurrency.providerLimit.max}
             min={1}
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, providerLimit: value } }))
+              onDraftChange('taskConcurrency', (current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, providerLimit: value } }))
             }
             value={draft.taskConcurrency.providerLimit}
           />
           <NumberField
+            error={fieldError(groupErrors.taskConcurrency, 'taskConcurrency.modelLimit')}
+            hint={formatIntegerRangeHint(settings?.constraints.taskConcurrency.modelLimit, '个并发任务')}
             label="模型并发上限"
+            max={settings?.constraints.taskConcurrency.modelLimit.max}
             min={1}
             onChange={(value) =>
-              onDraftChange((current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, modelLimit: value } }))
+              onDraftChange('taskConcurrency', (current) => ({ ...current, taskConcurrency: { ...current.taskConcurrency, modelLimit: value } }))
             }
             value={draft.taskConcurrency.modelLimit}
           />
@@ -978,86 +1090,201 @@ function SystemSettingsView({
       </SettingsGroupForm>
 
       <SettingsGroupForm
-        disabled={isDisabled}
         group="storageRetention"
-        isSaving={savingGroup === 'storageRetention'}
         onSubmit={onSubmit}
-        title="Storage retention"
+        title="删除资产保留期"
         submitLabel="保存删除资产保留期"
+        {...groupProps('storageRetention')}
       >
         <div>
-          <p className="mt-1 text-xs text-ink-400">留空会设置为 null，并禁用软删除资产的自动物理清理。</p>
+          <p className="mt-1 text-xs text-ink-400">关闭自动清理后，软删除资产不会按时间自动物理清理。</p>
         </div>
+        <ToggleField
+          checked={draft.storageRetention.enabled}
+          label="启用软删除资产自动清理"
+          onChange={(enabled) =>
+            onDraftChange('storageRetention', (current) => ({
+              ...current,
+              storageRetention: {
+                ...current.storageRetention,
+                enabled,
+                deletedAssetRetentionDays:
+                  enabled && !current.storageRetention.deletedAssetRetentionDays
+                    ? String(settings?.constraints.storageRetention.min ?? 1)
+                    : current.storageRetention.deletedAssetRetentionDays,
+              },
+            }))
+          }
+        />
         <NumberField
+          disabled={!draft.storageRetention.enabled}
+          error={fieldError(groupErrors.storageRetention, 'storageRetention.deletedAssetRetentionDays')}
+          hint={formatIntegerRangeHint(settings?.constraints.storageRetention, '天')}
           label="删除资产保留天数"
-          min={1}
+          max={settings?.constraints.storageRetention.max}
+          min={settings?.constraints.storageRetention.min ?? 1}
           onChange={(value) =>
-            onDraftChange((current) => ({ ...current, storageRetention: { deletedAssetRetentionDays: value } }))
+            onDraftChange('storageRetention', (current) => ({ ...current, storageRetention: { ...current.storageRetention, deletedAssetRetentionDays: value } }))
           }
           value={draft.storageRetention.deletedAssetRetentionDays}
         />
       </SettingsGroupForm>
 
       <SettingsGroupForm
-        disabled={isDisabled}
         group="storageQuota"
-        isSaving={savingGroup === 'storageQuota'}
         onSubmit={onSubmit}
-        title="Storage quota"
+        title="存储配额"
         submitLabel="保存存储配额"
+        {...groupProps('storageQuota')}
       >
         <div>
-          <p className="mt-1 text-xs text-ink-400">留空会设置为 null，表示不限制租户资产存储配额。</p>
+          <p className="mt-1 text-xs text-ink-400">关闭存储配额后，租户资产存储不设容量上限。</p>
         </div>
+        <ToggleField
+          checked={draft.storageQuota.enabled}
+          label="启用租户存储配额"
+          onChange={(enabled) =>
+            onDraftChange('storageQuota', (current) => ({
+              ...current,
+              storageQuota: {
+                ...current.storageQuota,
+                enabled,
+                maxBytes:
+                  enabled && !current.storageQuota.maxBytes
+                    ? String(Math.max(settings?.storageQuota.usedBytes ?? 0, 1024 * 1024 * 1024))
+                    : current.storageQuota.maxBytes,
+              },
+            }))
+          }
+        />
         <div className="grid gap-3 md:grid-cols-2">
           <NumberField
+            disabled={!draft.storageQuota.enabled}
+            error={fieldError(groupErrors.storageQuota, 'storageQuota.maxBytes')}
+            hint={formatByteRangeHint(settings?.constraints.storageQuota, draft.storageQuota.maxBytes)}
             label="最大存储字节数"
-            min={1}
-            onChange={(value) => onDraftChange((current) => ({ ...current, storageQuota: { maxBytes: value } }))}
+            max={settings?.constraints.storageQuota.max}
+            min={settings?.constraints.storageQuota.min ?? 1}
+            onChange={(value) => onDraftChange('storageQuota', (current) => ({ ...current, storageQuota: { ...current.storageQuota, maxBytes: value } }))}
             value={draft.storageQuota.maxBytes}
           />
-          <ReadOnlyField label="已用存储字节数" value={settings ? formatNumber(settings.storageQuota.usedBytes) : '0'} />
+          <ReadOnlyField
+            hint="该值由现有资产自动计算，不可手动修改。"
+            label="已用存储容量"
+            value={settings ? `${formatBytes(settings.storageQuota.usedBytes)}（${formatNumber(settings.storageQuota.usedBytes)} 字节）` : '0 B'}
+          />
         </div>
       </SettingsGroupForm>
 
       <SettingsGroupForm
-        disabled={isDisabled}
+        wide
         group="logRetention"
-        isSaving={savingGroup === 'logRetention'}
         onSubmit={onSubmit}
-        title="Log retention"
+        title="日志保留期"
         submitLabel="保存日志保留期"
+        {...groupProps('logRetention')}
       >
         <div>
-          <p className="mt-1 text-xs text-ink-400">每项留空都会设置为 null，并禁用对应日志类别的自动清理。</p>
+          <p className="mt-1 text-xs text-ink-400">每类日志可独立启用自动清理；关闭后不会按时间自动删除对应日志。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <NumberField
-            label="操作日志保留天数"
-            min={1}
-            onChange={(value) =>
-              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, operationLogRetentionDays: value } }))
-            }
-            value={draft.logRetention.operationLogRetentionDays}
-          />
-          <NumberField
-            label="API 调用日志保留天数"
-            min={1}
-            onChange={(value) =>
-              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, apiCallLogRetentionDays: value } }))
-            }
-            value={draft.logRetention.apiCallLogRetentionDays}
-          />
-          <NumberField
-            label="任务事件保留天数"
-            min={1}
-            onChange={(value) =>
-              onDraftChange((current) => ({ ...current, logRetention: { ...current.logRetention, taskEventRetentionDays: value } }))
-            }
-            value={draft.logRetention.taskEventRetentionDays}
-          />
+          <div className="grid gap-2 rounded-md border border-ink-200 bg-white p-3">
+            <ToggleField
+              checked={draft.logRetention.operationLogEnabled}
+              label="自动清理操作日志"
+              onChange={(enabled) =>
+                onDraftChange('logRetention', (current) => ({
+                  ...current,
+                  logRetention: {
+                    ...current.logRetention,
+                    operationLogEnabled: enabled,
+                    operationLogRetentionDays:
+                      enabled && !current.logRetention.operationLogRetentionDays
+                        ? String(settings?.constraints.logRetention.min ?? 1)
+                        : current.logRetention.operationLogRetentionDays,
+                  },
+                }))
+              }
+            />
+            <NumberField
+              disabled={!draft.logRetention.operationLogEnabled}
+              error={fieldError(groupErrors.logRetention, 'logRetention.operationLogRetentionDays')}
+              hint={formatIntegerRangeHint(settings?.constraints.logRetention, '天')}
+              label="操作日志保留天数"
+              max={settings?.constraints.logRetention.max}
+              min={settings?.constraints.logRetention.min ?? 1}
+              onChange={(value) =>
+                onDraftChange('logRetention', (current) => ({ ...current, logRetention: { ...current.logRetention, operationLogRetentionDays: value } }))
+              }
+              value={draft.logRetention.operationLogRetentionDays}
+            />
+          </div>
+          <div className="grid gap-2 rounded-md border border-ink-200 bg-white p-3">
+            <ToggleField
+              checked={draft.logRetention.apiCallLogEnabled}
+              label="自动清理 API 调用日志"
+              onChange={(enabled) =>
+                onDraftChange('logRetention', (current) => ({
+                  ...current,
+                  logRetention: {
+                    ...current.logRetention,
+                    apiCallLogEnabled: enabled,
+                    apiCallLogRetentionDays:
+                      enabled && !current.logRetention.apiCallLogRetentionDays
+                        ? String(settings?.constraints.logRetention.min ?? 1)
+                        : current.logRetention.apiCallLogRetentionDays,
+                  },
+                }))
+              }
+            />
+            <NumberField
+              disabled={!draft.logRetention.apiCallLogEnabled}
+              error={fieldError(groupErrors.logRetention, 'logRetention.apiCallLogRetentionDays')}
+              hint={formatIntegerRangeHint(settings?.constraints.logRetention, '天')}
+              label="API 调用日志保留天数"
+              max={settings?.constraints.logRetention.max}
+              min={settings?.constraints.logRetention.min ?? 1}
+              onChange={(value) =>
+                onDraftChange('logRetention', (current) => ({ ...current, logRetention: { ...current.logRetention, apiCallLogRetentionDays: value } }))
+              }
+              value={draft.logRetention.apiCallLogRetentionDays}
+            />
+          </div>
+          <div className="grid gap-2 rounded-md border border-ink-200 bg-white p-3">
+            <ToggleField
+              checked={draft.logRetention.taskEventEnabled}
+              label="自动清理任务事件"
+              onChange={(enabled) =>
+                onDraftChange('logRetention', (current) => ({
+                  ...current,
+                  logRetention: {
+                    ...current.logRetention,
+                    taskEventEnabled: enabled,
+                    taskEventRetentionDays:
+                      enabled && !current.logRetention.taskEventRetentionDays
+                        ? String(settings?.constraints.logRetention.min ?? 1)
+                        : current.logRetention.taskEventRetentionDays,
+                  },
+                }))
+              }
+            />
+            <NumberField
+              disabled={!draft.logRetention.taskEventEnabled}
+              error={fieldError(groupErrors.logRetention, 'logRetention.taskEventRetentionDays')}
+              hint={formatIntegerRangeHint(settings?.constraints.logRetention, '天')}
+              label="任务事件保留天数"
+              max={settings?.constraints.logRetention.max}
+              min={settings?.constraints.logRetention.min ?? 1}
+              onChange={(value) =>
+                onDraftChange('logRetention', (current) => ({ ...current, logRetention: { ...current.logRetention, taskEventRetentionDays: value } }))
+              }
+              value={draft.logRetention.taskEventRetentionDays}
+            />
+          </div>
         </div>
-      </SettingsGroupForm>
+          </SettingsGroupForm>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -1065,83 +1292,180 @@ function SystemSettingsView({
 function SettingsGroupForm({
   children,
   disabled,
+  error,
   group,
+  isDirty,
   isSaving,
+  notice,
   onSubmit,
   submitLabel,
   title,
+  wide = false,
 }: {
   children: ReactNode
   disabled: boolean
+  error?: string
   group: SystemSettingsGroup
+  isDirty: boolean
   isSaving: boolean
+  notice?: string
   onSubmit: (group: SystemSettingsGroup) => void
   submitLabel: string
   title: string
+  wide?: boolean
 }) {
   return (
     <form
-      className="grid gap-4 rounded-lg border border-ink-200 bg-ink-50 p-4"
+      className={`grid gap-4 rounded-lg border border-ink-200 bg-ink-50 p-4 ${wide ? 'lg:col-span-2' : ''}`}
+      noValidate
       onSubmit={(event) => {
         event.preventDefault()
         onSubmit(group)
       }}
     >
-      <h4 className="text-sm font-semibold text-ink-900">{title}</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-ink-900">{title}</h4>
+        {isDirty ? <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">有未保存修改</span> : null}
+      </div>
+      <StatusMessage message={error ?? null} tone="error" />
+      <StatusMessage message={notice ?? null} tone="success" />
       {children}
       <Button
         className="justify-self-start"
-        disabled={disabled}
+        disabled={disabled || !isDirty}
         icon={isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         type="submit"
         variant="primary"
       >
-        {submitLabel}
+        {isSaving ? '正在保存...' : submitLabel}
       </Button>
     </form>
   )
 }
 
-function NumberField({ label, min, value, onChange }: { label: string; min: number; value: string; onChange: (value: string) => void }) {
-  const id = `admin-observability-${label}`
-
-  return (
-    <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
-      <span className="field-label">{label}</span>
-      <input className="field-input" id={id} min={min} onChange={(event) => onChange(event.target.value)} type="number" value={value} />
-    </label>
-  )
-}
-
-function TextField({
+function NumberField({
+  disabled = false,
+  error,
+  hint,
   label,
-  placeholder,
+  max,
+  min,
   value,
   onChange,
 }: {
+  disabled?: boolean
+  error?: string
+  hint?: string
   label: string
-  placeholder?: string
+  max?: number
+  min: number
   value: string
   onChange: (value: string) => void
 }) {
   const id = `admin-observability-${label}`
 
   return (
-    <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
-      <span className="field-label">{label}</span>
-      <input className="field-input" id={id} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type="text" value={value} />
+    <div className="grid gap-1 text-sm text-ink-700">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        aria-describedby={hint || error ? `${id}-help` : undefined}
+        aria-invalid={Boolean(error)}
+        className={`field-input ${error ? 'border-red-300 focus:border-red-400 focus:ring-red-100' : ''}`}
+        disabled={disabled}
+        id={id}
+        max={max}
+        min={min}
+        onChange={(event) => onChange(event.target.value)}
+        step={1}
+        type="number"
+        value={value}
+      />
+      {error || hint ? (
+        <span className={error ? 'text-xs text-red-600' : 'text-xs text-ink-400'} id={`${id}-help`}>
+          {error ?? hint}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function SelectField({
+  disabled = false,
+  error,
+  hint,
+  label,
+  options,
+  placeholder,
+  value,
+  onChange,
+}: {
+  disabled?: boolean
+  error?: string
+  hint?: string
+  label: string
+  options: Array<{ label: string; value: string }>
+  placeholder: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  const id = `admin-observability-${label}`
+
+  return (
+    <div className="grid gap-1 text-sm text-ink-700">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      <select
+        aria-describedby={hint || error ? `${id}-help` : undefined}
+        aria-invalid={Boolean(error)}
+        className={`field-input ${error ? 'border-red-300 focus:border-red-400 focus:ring-red-100' : ''}`}
+        disabled={disabled}
+        id={id}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {error || hint ? (
+        <span className={error ? 'text-xs text-red-600' : 'text-xs text-ink-400'} id={`${id}-help`}>
+          {error ?? hint}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function ToggleField({ checked, label, onChange }: { checked: boolean; label: string; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm font-medium text-ink-700">
+      <input checked={checked} className="h-4 w-4 rounded border-ink-300 text-brand-600" onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+      <span>{label}</span>
     </label>
   )
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+function ReadOnlyField({ hint, label, value }: { hint?: string; label: string; value: string }) {
   const id = `admin-observability-${label}`
 
   return (
-    <label className="grid gap-1 text-sm text-ink-700" htmlFor={id}>
-      <span className="field-label">{label}</span>
-      <input className="field-input bg-ink-100 text-ink-500" id={id} readOnly type="text" value={value} />
-    </label>
+    <div className="grid gap-1 text-sm text-ink-700">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      <input aria-describedby={hint ? `${id}-help` : undefined} className="field-input bg-ink-100 text-ink-500" id={id} readOnly type="text" value={value} />
+      {hint ? (
+        <span className="text-xs text-ink-400" id={`${id}-help`}>
+          {hint}
+        </span>
+      ) : null}
+    </div>
   )
 }
 
@@ -1356,14 +1680,19 @@ function emptySystemSettingsDraft(): SystemSettingsDraft {
       modelLimit: '',
     },
     storageRetention: {
+      enabled: false,
       deletedAssetRetentionDays: '',
     },
     storageQuota: {
+      enabled: false,
       maxBytes: '',
     },
     logRetention: {
+      operationLogEnabled: false,
       operationLogRetentionDays: '',
+      apiCallLogEnabled: false,
       apiCallLogRetentionDays: '',
+      taskEventEnabled: false,
       taskEventRetentionDays: '',
     },
   }
@@ -1388,14 +1717,19 @@ function draftFromSettings(settings: SystemSettings): SystemSettingsDraft {
       modelLimit: String(settings.taskConcurrency.modelLimit),
     },
     storageRetention: {
+      enabled: settings.storageRetention.deletedAssetRetentionDays !== null,
       deletedAssetRetentionDays: settings.storageRetention.deletedAssetRetentionDays === null ? '' : String(settings.storageRetention.deletedAssetRetentionDays),
     },
     storageQuota: {
+      enabled: settings.storageQuota.maxBytes !== null,
       maxBytes: settings.storageQuota.maxBytes === null ? '' : String(settings.storageQuota.maxBytes),
     },
     logRetention: {
+      operationLogEnabled: settings.logRetention.operationLogRetentionDays !== null,
       operationLogRetentionDays: settings.logRetention.operationLogRetentionDays === null ? '' : String(settings.logRetention.operationLogRetentionDays),
+      apiCallLogEnabled: settings.logRetention.apiCallLogRetentionDays !== null,
       apiCallLogRetentionDays: settings.logRetention.apiCallLogRetentionDays === null ? '' : String(settings.logRetention.apiCallLogRetentionDays),
+      taskEventEnabled: settings.logRetention.taskEventRetentionDays !== null,
       taskEventRetentionDays: settings.logRetention.taskEventRetentionDays === null ? '' : String(settings.logRetention.taskEventRetentionDays),
     },
   }
@@ -1420,22 +1754,30 @@ function parseSettingsGroupPatch(group: SystemSettingsGroup, draft: SystemSettin
   if (group === 'storageRetention') {
     return {
       storageRetention: {
-        deletedAssetRetentionDays: parseNullablePositiveInteger(draft.storageRetention.deletedAssetRetentionDays, '删除资产保留天数'),
+        deletedAssetRetentionDays: draft.storageRetention.enabled
+          ? parsePositiveInteger(draft.storageRetention.deletedAssetRetentionDays, '删除资产保留天数')
+          : null,
       },
     }
   }
   if (group === 'logRetention') {
     return {
       logRetention: {
-        operationLogRetentionDays: parseNullablePositiveInteger(draft.logRetention.operationLogRetentionDays, '操作日志保留天数'),
-        apiCallLogRetentionDays: parseNullablePositiveInteger(draft.logRetention.apiCallLogRetentionDays, 'API 调用日志保留天数'),
-        taskEventRetentionDays: parseNullablePositiveInteger(draft.logRetention.taskEventRetentionDays, '任务事件保留天数'),
+        operationLogRetentionDays: draft.logRetention.operationLogEnabled
+          ? parsePositiveInteger(draft.logRetention.operationLogRetentionDays, '操作日志保留天数')
+          : null,
+        apiCallLogRetentionDays: draft.logRetention.apiCallLogEnabled
+          ? parsePositiveInteger(draft.logRetention.apiCallLogRetentionDays, 'API 调用日志保留天数')
+          : null,
+        taskEventRetentionDays: draft.logRetention.taskEventEnabled
+          ? parsePositiveInteger(draft.logRetention.taskEventRetentionDays, '任务事件保留天数')
+          : null,
       },
     }
   }
   return {
     storageQuota: {
-      maxBytes: parseNullablePositiveInteger(draft.storageQuota.maxBytes, '最大存储字节数'),
+      maxBytes: draft.storageQuota.enabled ? parsePositiveInteger(draft.storageQuota.maxBytes, '最大存储字节数') : null,
     },
   }
 }
@@ -1459,7 +1801,7 @@ function parseTaskDefaultsDraft(draft: TaskDefaultsDraft): SystemSettings['taskD
     }
   }
   if (!defaultProviderId || !defaultModelId) {
-    throw new Error('默认 Provider ID 与默认模型 ID 必须成对填写或同时清空。')
+    throw new Error('默认 Provider 与默认模型必须成对选择或同时清空。')
   }
   return {
     defaultProviderId: defaultProviderId as SystemSettings['taskDefaults']['defaultProviderId'],
@@ -1476,19 +1818,96 @@ function parseTaskConcurrencyDraft(draft: TaskConcurrencyDraft): SystemSettings[
   }
 }
 
-function parseNullablePositiveInteger(value: string, label: string): number | null {
-  if (value.trim() === '') {
-    return null
-  }
-  return parsePositiveInteger(value, label)
-}
-
 function parsePositiveInteger(value: string, label: string): number {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${label}必须是正整数。`)
   }
   return parsed
+}
+
+function mergeSavedSettingsGroup(current: SystemSettings | null, saved: SystemSettings, group: SystemSettingsGroup): SystemSettings {
+  if (!current) {
+    return saved
+  }
+  return {
+    ...current,
+    [group]: saved[group],
+    constraints: saved.constraints,
+  } as SystemSettings
+}
+
+function mergeSavedDraftGroup(current: SystemSettingsDraft, saved: SystemSettingsDraft, group: SystemSettingsGroup): SystemSettingsDraft {
+  return {
+    ...current,
+    [group]: saved[group],
+  } as SystemSettingsDraft
+}
+
+function settingsDraftGroupEquals(current: SystemSettingsDraft, saved: SystemSettingsDraft, group: SystemSettingsGroup): boolean {
+  return JSON.stringify(current[group]) === JSON.stringify(saved[group])
+}
+
+function formatSettingsGroupError(error: unknown): SettingsGroupFeedback {
+  if (isApiClientError(error)) {
+    if (error.status === 422) {
+      const message = error.message === 'Invalid request.' ? '设置内容不符合要求，请检查填写范围。' : error.message
+      return {
+        field: validationFieldFromDetails(error.details),
+        message: error.requestId ? `${message}（请求标识：${error.requestId}）` : message,
+      }
+    }
+    return { message: formatAdminError(error) }
+  }
+  if (error instanceof Error) {
+    return { message: error.message }
+  }
+  return { message: '保存失败，请稍后重试。' }
+}
+
+function validationFieldFromDetails(details: unknown): string | undefined {
+  if (!details || typeof details !== 'object') {
+    return undefined
+  }
+  const field = Reflect.get(details, 'field')
+  return typeof field === 'string' && field ? field : undefined
+}
+
+function fieldError(feedback: SettingsGroupFeedback | undefined, field: string): string | undefined {
+  return feedback?.field === field ? feedback.message : undefined
+}
+
+function formatIntegerRangeHint(range: IntegerRangeConstraint | undefined, unit: string): string | undefined {
+  if (!range) {
+    return undefined
+  }
+  return `允许范围：${formatNumber(range.min)}–${formatNumber(range.max)} ${unit}`
+}
+
+function formatByteRangeHint(range: IntegerRangeConstraint | undefined, currentValue: string): string | undefined {
+  if (!range) {
+    return undefined
+  }
+  const value = Number(currentValue)
+  const currentHint = Number.isFinite(value) && value > 0 ? `；当前约 ${formatBytes(value)}` : ''
+  return `允许范围：${formatNumber(range.min)}–${formatNumber(range.max)} 字节（最大 ${formatBytes(range.max)}）${currentHint}`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${formatNumber(bytes)} B`
+  }
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 'B'
+  for (const candidate of units) {
+    value /= 1024
+    unit = candidate
+    if (value < 1024 || candidate === 'TB') {
+      break
+    }
+  }
+  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)} ${unit}`
 }
 
 function settingsGroupLabel(group: SystemSettingsGroup): string {

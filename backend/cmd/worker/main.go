@@ -83,6 +83,7 @@ func main() {
 		GeneratedOutputMaxBytes: cfg.Provider.MaxOutputImageBytes,
 		ConcurrencyLeaseTTL:     cfg.Queue.ConcurrencyLeaseTTL,
 		GlobalConcurrency:       cfg.Queue.GlobalConcurrency,
+		PolicyMaxConcurrency:    cfg.Queue.PolicyMaxConcurrency,
 		TenantConcurrency:       cfg.Queue.TenantConcurrency,
 		UserConcurrency:         cfg.Queue.UserConcurrency,
 		ProviderConcurrency:     cfg.Queue.ProviderConcurrency,

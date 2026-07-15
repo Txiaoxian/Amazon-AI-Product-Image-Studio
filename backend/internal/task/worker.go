@@ -57,6 +57,7 @@ type WorkerProcessorOptions struct {
 	ConcurrencyLeaseTTL           time.Duration
 	ConcurrencyLeaseRenewInterval time.Duration
 	GlobalConcurrency             int
+	PolicyMaxConcurrency          int
 	TenantConcurrency             int
 	UserConcurrency               int
 	ProviderConcurrency           int
@@ -167,6 +168,9 @@ func NewWorkerProcessor(db *gorm.DB, log *slog.Logger, options WorkerProcessorOp
 	}
 	if options.GlobalConcurrency <= 0 {
 		options.GlobalConcurrency = 1
+	}
+	if options.PolicyMaxConcurrency <= 0 || options.PolicyMaxConcurrency > options.GlobalConcurrency {
+		options.PolicyMaxConcurrency = options.GlobalConcurrency
 	}
 	if options.TenantConcurrency <= 0 {
 		options.TenantConcurrency = 1
@@ -626,12 +630,19 @@ func (p *WorkerProcessor) acquireConcurrency(ctx context.Context, scope tenant.S
 	if p.limiter == nil {
 		return queue.ConcurrencyLease{}, nil
 	}
-	policy, err := settings.LoadTaskConcurrency(ctx, settings.NewRepository(p.db), scope, settings.TaskConcurrency{
+	defaults := settings.TaskConcurrency{
 		TenantLimit:   p.options.TenantConcurrency,
 		UserLimit:     p.options.UserConcurrency,
 		ProviderLimit: p.options.ProviderConcurrency,
 		ModelLimit:    p.options.ModelConcurrency,
-	})
+	}
+	hardCap := settings.TaskConcurrency{
+		TenantLimit:   p.options.PolicyMaxConcurrency,
+		UserLimit:     p.options.PolicyMaxConcurrency,
+		ProviderLimit: p.options.PolicyMaxConcurrency,
+		ModelLimit:    p.options.PolicyMaxConcurrency,
+	}
+	policy, err := settings.LoadTaskConcurrencyWithDefaults(ctx, settings.NewRepository(p.db), scope, defaults, hardCap)
 	if err != nil {
 		if !errors.Is(err, settings.ErrStoredTaskConcurrencyInvalid) {
 			return queue.ConcurrencyLease{}, errTaskConcurrencyPolicyUnavailable

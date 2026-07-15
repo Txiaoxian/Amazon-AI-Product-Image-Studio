@@ -136,7 +136,7 @@ curl -fsS -X POST http://NAS_IP:8080/api/v1/auth/init-admin \
 - 容器长时间处于启动中：查看容器日志，重点检查 MySQL、Redis、MinIO 或 API 初始化错误。新版会把 MySQL 初始化错误的末尾内容直接输出到容器日志；完整日志仍保存在 `/data/mysql/error.log`，初始化尚未完成时保存在 `/data/.mysql-initialize/error.log`。
 - MySQL 报文件系统或权限错误：确认 `/data` 映射为读写，且所在存储支持 Linux 文件所有者、文件锁和同一文件系统内重命名。不要删除 `/data/config/runtime-secrets.env`；如果已经产生业务数据，也不要手工清空 `/data/mysql`。
 - 页面可打开但无法生图：在管理页面检查中转站、模型、用户模型授权和 API 调用日志。
-- 16 GB NAS 默认生成并发为 `2`；如果同时运行很多其他服务，可在极空间容器高级设置中把内存上限设为约 `12 GB`。
+- 16 GB NAS 的租户、用户、Provider 和模型默认生成并发为 `2`，系统设置页面可在 `1–8` 范围内动态调整，保存后无需重启；如果同时运行很多其他服务，建议保持较低并发，并可在极空间容器高级设置中把内存上限设为约 `12 GB`。
 
 可在终端查看内部服务状态：
 

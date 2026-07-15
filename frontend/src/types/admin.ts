@@ -140,6 +140,30 @@ export interface LogRetentionSettings {
   taskEventRetentionDays: number | null
 }
 
+export interface IntegerRangeConstraint {
+  min: number
+  max: number
+}
+
+export interface SystemSettingsConstraints {
+  uploadPolicy: {
+    maxFileSizeBytes: IntegerRangeConstraint
+    maxWidth: IntegerRangeConstraint
+    maxHeight: IntegerRangeConstraint
+    maxPixels: IntegerRangeConstraint
+  }
+  taskConcurrency: {
+    globalCapacity: number
+    tenantLimit: IntegerRangeConstraint
+    userLimit: IntegerRangeConstraint
+    providerLimit: IntegerRangeConstraint
+    modelLimit: IntegerRangeConstraint
+  }
+  storageRetention: IntegerRangeConstraint
+  storageQuota: IntegerRangeConstraint
+  logRetention: IntegerRangeConstraint
+}
+
 export interface SystemSettings {
   uploadPolicy: UploadPolicySettings
   taskDefaults: TaskDefaultsSettings
@@ -147,6 +171,7 @@ export interface SystemSettings {
   storageRetention: StorageRetentionSettings
   storageQuota: StorageQuotaSettings
   logRetention: LogRetentionSettings
+  constraints: SystemSettingsConstraints
 }
 
 export interface UpdateSystemSettingsRequest {

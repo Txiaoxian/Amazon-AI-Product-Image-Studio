@@ -40,6 +40,61 @@ type Response struct {
 	StorageRetention StorageRetention `json:"storageRetention"`
 	StorageQuota     StorageQuota     `json:"storageQuota"`
 	LogRetention     LogRetention     `json:"logRetention"`
+	Constraints      Constraints      `json:"constraints"`
+}
+
+type IntegerRange struct {
+	Min int64 `json:"min"`
+	Max int64 `json:"max"`
+}
+
+type UploadPolicyConstraints struct {
+	MaxFileSizeBytes IntegerRange `json:"maxFileSizeBytes"`
+	MaxWidth         IntegerRange `json:"maxWidth"`
+	MaxHeight        IntegerRange `json:"maxHeight"`
+	MaxPixels        IntegerRange `json:"maxPixels"`
+}
+
+type TaskConcurrencyConstraints struct {
+	GlobalCapacity int64        `json:"globalCapacity"`
+	TenantLimit    IntegerRange `json:"tenantLimit"`
+	UserLimit      IntegerRange `json:"userLimit"`
+	ProviderLimit  IntegerRange `json:"providerLimit"`
+	ModelLimit     IntegerRange `json:"modelLimit"`
+}
+
+type Constraints struct {
+	UploadPolicy     UploadPolicyConstraints    `json:"uploadPolicy"`
+	TaskConcurrency  TaskConcurrencyConstraints `json:"taskConcurrency"`
+	StorageRetention IntegerRange               `json:"storageRetention"`
+	StorageQuota     IntegerRange               `json:"storageQuota"`
+	LogRetention     IntegerRange               `json:"logRetention"`
+}
+
+type ValidationError struct {
+	Field   string
+	Message string
+	Min     *int64
+	Max     *int64
+}
+
+func (e *ValidationError) Error() string {
+	return e.Message
+}
+
+func (e *ValidationError) Unwrap() error {
+	return ErrValidation
+}
+
+func (e *ValidationError) Details() map[string]any {
+	details := map[string]any{"field": e.Field}
+	if e.Min != nil {
+		details["min"] = *e.Min
+	}
+	if e.Max != nil {
+		details["max"] = *e.Max
+	}
+	return details
 }
 
 type UploadPolicy struct {
@@ -170,12 +225,60 @@ func uploadConfigFromPolicy(base config.UploadConfig, policy UploadPolicy) confi
 }
 
 func taskConcurrencyFromQueueConfig(queueConfig config.QueueConfig) TaskConcurrency {
+	return clampTaskConcurrencyToHardCap(taskConcurrencyFromQueueDefaults(queueConfig), taskConcurrencyHardCapFromQueueConfig(queueConfig))
+}
+
+func taskConcurrencyHardCapFromQueueConfig(queueConfig config.QueueConfig) TaskConcurrency {
+	limit := queueConfig.PolicyMaxConcurrency
+	if limit <= 0 {
+		limit = queueConfig.GlobalConcurrency
+	}
+	if limit <= 0 {
+		limit = maxTaskConcurrencyValue(taskConcurrencyFromQueueDefaults(queueConfig))
+	}
+	if queueConfig.GlobalConcurrency > 0 && queueConfig.GlobalConcurrency < limit {
+		limit = queueConfig.GlobalConcurrency
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	return TaskConcurrency{TenantLimit: limit, UserLimit: limit, ProviderLimit: limit, ModelLimit: limit}
+}
+
+func taskConcurrencyFromQueueDefaults(queueConfig config.QueueConfig) TaskConcurrency {
 	return normalizeTaskConcurrencyHardCap(TaskConcurrency{
 		TenantLimit:   queueConfig.TenantConcurrency,
 		UserLimit:     queueConfig.UserConcurrency,
 		ProviderLimit: queueConfig.ProviderConcurrency,
 		ModelLimit:    queueConfig.ModelConcurrency,
 	})
+}
+
+func maxTaskConcurrencyValue(policy TaskConcurrency) int {
+	maximum := policy.TenantLimit
+	for _, value := range []int{policy.UserLimit, policy.ProviderLimit, policy.ModelLimit} {
+		if value > maximum {
+			maximum = value
+		}
+	}
+	return maximum
+}
+
+func clampTaskConcurrencyToHardCap(policy TaskConcurrency, hardCap TaskConcurrency) TaskConcurrency {
+	hardCap = normalizeTaskConcurrencyHardCap(hardCap)
+	if policy.TenantLimit > hardCap.TenantLimit {
+		policy.TenantLimit = hardCap.TenantLimit
+	}
+	if policy.UserLimit > hardCap.UserLimit {
+		policy.UserLimit = hardCap.UserLimit
+	}
+	if policy.ProviderLimit > hardCap.ProviderLimit {
+		policy.ProviderLimit = hardCap.ProviderLimit
+	}
+	if policy.ModelLimit > hardCap.ModelLimit {
+		policy.ModelLimit = hardCap.ModelLimit
+	}
+	return policy
 }
 
 func normalizeTaskConcurrencyHardCap(policy TaskConcurrency) TaskConcurrency {

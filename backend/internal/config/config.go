@@ -19,7 +19,7 @@ const (
 	defaultAPIShutdownTimeout                   = 10 * time.Second
 	defaultWorkerName                           = "backend-worker"
 	defaultWorkerShutdownTimeout                = 10 * time.Second
-	defaultWorkerConcurrency                    = 1
+	defaultWorkerConcurrency                    = 8
 	maxWorkerConcurrency                        = 256
 	defaultWorkerRetentionMaintenanceInterval   = 1 * time.Hour
 	defaultWorkerRetentionMaintenanceBatchLimit = 100
@@ -71,7 +71,9 @@ const (
 	defaultTaskRecoveryInterval                 = 30 * time.Second
 	defaultTaskConcurrencyTTL                   = 10 * time.Minute
 	defaultTaskMaxDeliveries                    = 5
-	defaultTaskGlobalConcurrency                = 4
+	defaultTaskGlobalConcurrency                = 8
+	defaultTaskPolicyMaxConcurrency             = 8
+	maxTaskConcurrency                          = 256
 	defaultTaskTenantConcurrency                = 2
 	defaultTaskUserConcurrency                  = 2
 	defaultTaskProviderConcurrency              = 2
@@ -163,22 +165,23 @@ type ProviderConfig struct {
 }
 
 type QueueConfig struct {
-	RedisAddr           string
-	RedisPassword       string
-	RedisDB             int
-	TaskQueueName       string
-	EnqueueTimeout      time.Duration
-	ClaimTimeout        time.Duration
-	VisibilityTimeout   time.Duration
-	RetryBackoff        time.Duration
-	RecoveryInterval    time.Duration
-	ConcurrencyLeaseTTL time.Duration
-	MaxDeliveries       int
-	GlobalConcurrency   int
-	TenantConcurrency   int
-	UserConcurrency     int
-	ProviderConcurrency int
-	ModelConcurrency    int
+	RedisAddr            string
+	RedisPassword        string
+	RedisDB              int
+	TaskQueueName        string
+	EnqueueTimeout       time.Duration
+	ClaimTimeout         time.Duration
+	VisibilityTimeout    time.Duration
+	RetryBackoff         time.Duration
+	RecoveryInterval     time.Duration
+	ConcurrencyLeaseTTL  time.Duration
+	MaxDeliveries        int
+	GlobalConcurrency    int
+	PolicyMaxConcurrency int
+	TenantConcurrency    int
+	UserConcurrency      int
+	ProviderConcurrency  int
+	ModelConcurrency     int
 }
 
 type CookieConfig struct {
@@ -970,7 +973,12 @@ func queueConfigFromEnv(lookup lookupFunc) (QueueConfig, error) {
 		return QueueConfig{}, err
 	}
 
-	globalConcurrency, err := positiveIntFromEnv(lookup, "TASK_GLOBAL_CONCURRENCY", defaultTaskGlobalConcurrency)
+	globalConcurrency, err := boundedPositiveIntFromEnv(lookup, "TASK_GLOBAL_CONCURRENCY", defaultTaskGlobalConcurrency, maxTaskConcurrency)
+	if err != nil {
+		return QueueConfig{}, err
+	}
+
+	policyMaxConcurrency, err := boundedPositiveIntFromEnv(lookup, "TASK_POLICY_MAX_CONCURRENCY", defaultTaskPolicyMaxConcurrency, maxTaskConcurrency)
 	if err != nil {
 		return QueueConfig{}, err
 	}
@@ -996,22 +1004,23 @@ func queueConfigFromEnv(lookup lookupFunc) (QueueConfig, error) {
 	}
 
 	return QueueConfig{
-		RedisAddr:           redisAddr,
-		RedisPassword:       stringFromEnv(lookup, "REDIS_PASSWORD", ""),
-		RedisDB:             redisDB,
-		TaskQueueName:       taskQueueName,
-		EnqueueTimeout:      enqueueTimeout,
-		ClaimTimeout:        claimTimeout,
-		VisibilityTimeout:   visibilityTimeout,
-		RetryBackoff:        retryBackoff,
-		RecoveryInterval:    recoveryInterval,
-		ConcurrencyLeaseTTL: concurrencyLeaseTTL,
-		MaxDeliveries:       maxDeliveries,
-		GlobalConcurrency:   globalConcurrency,
-		TenantConcurrency:   tenantConcurrency,
-		UserConcurrency:     userConcurrency,
-		ProviderConcurrency: providerConcurrency,
-		ModelConcurrency:    modelConcurrency,
+		RedisAddr:            redisAddr,
+		RedisPassword:        stringFromEnv(lookup, "REDIS_PASSWORD", ""),
+		RedisDB:              redisDB,
+		TaskQueueName:        taskQueueName,
+		EnqueueTimeout:       enqueueTimeout,
+		ClaimTimeout:         claimTimeout,
+		VisibilityTimeout:    visibilityTimeout,
+		RetryBackoff:         retryBackoff,
+		RecoveryInterval:     recoveryInterval,
+		ConcurrencyLeaseTTL:  concurrencyLeaseTTL,
+		MaxDeliveries:        maxDeliveries,
+		GlobalConcurrency:    globalConcurrency,
+		PolicyMaxConcurrency: policyMaxConcurrency,
+		TenantConcurrency:    tenantConcurrency,
+		UserConcurrency:      userConcurrency,
+		ProviderConcurrency:  providerConcurrency,
+		ModelConcurrency:     modelConcurrency,
 	}, nil
 }
 

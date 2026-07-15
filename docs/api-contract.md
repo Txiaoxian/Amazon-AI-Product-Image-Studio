@@ -512,12 +512,48 @@ P14 usage/cost 报告合同：
     "operationLogRetentionDays": null,
     "apiCallLogRetentionDays": null,
     "taskEventRetentionDays": null
+  },
+  "constraints": {
+    "uploadPolicy": {
+      "maxFileSizeBytes": { "min": 1, "max": 26214400 },
+      "maxWidth": { "min": 1, "max": 8192 },
+      "maxHeight": { "min": 1, "max": 8192 },
+      "maxPixels": { "min": 1, "max": 40000000 }
+    },
+    "taskConcurrency": {
+      "globalCapacity": 8,
+      "tenantLimit": { "min": 1, "max": 8 },
+      "userLimit": { "min": 1, "max": 8 },
+      "providerLimit": { "min": 1, "max": 8 },
+      "modelLimit": { "min": 1, "max": 8 }
+    },
+    "storageRetention": { "min": 1, "max": 3650 },
+    "storageQuota": { "min": 1, "max": 109951162777600 },
+    "logRetention": { "min": 1, "max": 3650 }
   }
 }
 ```
 
 - 两条路线都需要租户管理员访问权限加上`system:settings:manage`。
-- `GET /admin/system-settings` 当租户还没有覆盖行时，使用环境配置的上传限制返回有效的租户上传策略。
+- `GET` 和成功的 `PATCH` 都返回 `constraints`。前端应直接使用这些约束展示输入范围，并设置对应输入控件的 `min`/`max`，不能复制一套可能与部署环境不一致的硬编码限制。
+- `constraints.uploadPolicy` 来自上传环境硬上限。`constraints.taskConcurrency.globalCapacity` 是只读的部署级全局安全容量，四个可写字段的最大值取 `TASK_POLICY_MAX_CONCURRENCY` 与全局容量的较小值。保留期和存储配额范围来自后端公共契约。`constraints` 只描述限制，不可通过 `PATCH` 修改。
+- 设置校验失败返回 `422 VALIDATION_ERROR` 和简体中文原因。可以定位到单个字段的错误还会在 `error.details` 中返回 `field`、`min` 和/或 `max`，例如：
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Provider 并发上限必须在 1 到 8 之间。",
+    "details": {
+      "field": "taskConcurrency.providerLimit",
+      "min": 1,
+      "max": 8
+    }
+  }
+}
+```
+
+- `GET /admin/system-settings` 当租户还没有覆盖行时，上传策略使用环境配置，任务并发使用四项 `TASK_*_CONCURRENCY` 首次默认值。
 - `PATCH /admin/system-settings`可能会更新`uploadPolicy`下的一个或多个字段；省略的字段保留其当前有效值。
 - 租户覆盖必须保持积极，并且只能缩小或匹配环境配置的上传硬上限。运行时资产验证仍然是安全边界，并使用有效的租户策略来进行请求正文大小、维度和像素计数检查。
 - 允许的MIME类型保留配置拥有的安全策略；设置 API 不得使 SVG 或任何非允许类型可写。
@@ -533,7 +569,7 @@ P14 usage/cost 报告合同：
 - P13添加了`taskConcurrency`及其Worker运行时消费者：
   - 后端切片合并后，`GET /admin/system-settings`返回有效`tenantLimit`、`userLimit`、`providerLimit`和`modelLimit`。
 - `PATCH /admin/system-settings`可能会更新`taskConcurrency`下的正整数字段；省略的字段保留当前有效值。
-  - 值只能缩小或匹配环境配置的tenant/user/Provider/model硬上限。全局并发不是租户可见或租户可写的字段。
+  - 值可以在响应 `constraints.taskConcurrency` 给出的范围内动态修改；保存后对后续获取租约的任务立即生效，无需重启。全局容量只读且不可由租户修改。
   - Worker在获取新的Redis信号量租约时应用有效值。正的 Provider `concurrencyLimit` 仍然是一个额外的更严格的 Provider 上限。
   - 格式错误的持久化`task_concurrency`配置会导致受影响的合格执行在Provider调用或output/usage/API-call持久化之前发生脱敏任务配置已失败；实际设置存储失败重试而不绕过限制器。
 - P13存储清理基础合并为后端内部清理功能：

@@ -74,6 +74,7 @@ func TestSystemSettingsGetReturnsConfigFallbackWithoutOverride(t *testing.T) {
 	assertStorageRetention(t, response, nil)
 	assertStorageQuota(t, response, nil, 0)
 	assertLogRetention(t, response, nil, nil, nil)
+	assertSystemSettingsConstraints(t, response, upload)
 	assertResponseExcludes(t, response.Body.String(), "tenantConcurrency", "storageQuotaBytes", "allowedMimeTypes")
 
 	var rows int64
@@ -140,6 +141,19 @@ func TestSystemSettingsStorageQuotaGetPatchClearValidationUsageAndAudit(t *testi
 			response := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", tc.body, adminSession.cookies, adminSession.csrfHeader())
 			if response.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+			}
+			if tc.name == "provider over cap" {
+				body := response.Body.String()
+				for _, expected := range []string{
+					`"message":"Provider 并发上限必须在 1 到 6 之间。"`,
+					`"field":"taskConcurrency.providerLimit"`,
+					`"min":1`,
+					`"max":6`,
+				} {
+					if !strings.Contains(body, expected) {
+						t.Fatalf("structured validation response missing %s: %s", expected, body)
+					}
+				}
 			}
 			getResponse := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
 			if getResponse.Code != http.StatusOK {
@@ -482,6 +496,44 @@ func TestSystemSettingsTaskConcurrencyFallbackPatchPartialAndTenantIsolation(t *
 	}
 }
 
+func TestSystemSettingsTaskConcurrencyDefaultsAreNotRuntimeHardCaps(t *testing.T) {
+	queueConfig := config.QueueConfig{
+		GlobalConcurrency:    8,
+		PolicyMaxConcurrency: 8,
+		TenantConcurrency:    2,
+		UserConcurrency:      2,
+		ProviderConcurrency:  2,
+		ModelConcurrency:     2,
+	}
+	router, _, adminSession := newSystemSettingsRouteTestRouter(t, queueConfig)
+
+	fallback := performJSON(router, http.MethodGet, "/api/v1/admin/system-settings", nil, adminSession.cookies, nil)
+	if fallback.Code != http.StatusOK {
+		t.Fatalf("fallback GET status = %d, want %d: %s", fallback.Code, http.StatusOK, fallback.Body.String())
+	}
+	assertTaskConcurrency(t, fallback, 2, 2, 2, 2)
+	constraints := objectField(t, decodeData(t, fallback), "constraints")
+	concurrencyConstraints := objectField(t, constraints, "taskConcurrency")
+	assertNumericField(t, concurrencyConstraints, "globalCapacity", 8)
+	assertIntegerRange(t, objectField(t, concurrencyConstraints, "tenantLimit"), 1, 8)
+	assertIntegerRange(t, objectField(t, concurrencyConstraints, "userLimit"), 1, 8)
+	assertIntegerRange(t, objectField(t, concurrencyConstraints, "providerLimit"), 1, 8)
+	assertIntegerRange(t, objectField(t, concurrencyConstraints, "modelLimit"), 1, 8)
+
+	updated := performJSON(router, http.MethodPatch, "/api/v1/admin/system-settings", map[string]any{
+		"taskConcurrency": map[string]any{
+			"tenantLimit":   8,
+			"userLimit":     6,
+			"providerLimit": 5,
+			"modelLimit":    4,
+		},
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if updated.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want %d: %s", updated.Code, http.StatusOK, updated.Body.String())
+	}
+	assertTaskConcurrency(t, updated, 8, 6, 5, 4)
+}
+
 func TestSystemSettingsTaskConcurrencyRejectsInvalidFieldsAndHardCapViolations(t *testing.T) {
 	hardCaps := config.QueueConfig{
 		TenantConcurrency:   8,
@@ -514,9 +566,9 @@ func TestSystemSettingsTaskConcurrencyRejectsInvalidFieldsAndHardCapViolations(t
 		{name: "global field", body: map[string]any{"taskConcurrency": map[string]any{"globalLimit": 1}}},
 		{name: "empty slice", body: map[string]any{"taskConcurrency": map[string]any{}}},
 		{name: "tenant over cap", body: map[string]any{"taskConcurrency": map[string]any{"tenantLimit": 9}}},
-		{name: "user over cap", body: map[string]any{"taskConcurrency": map[string]any{"userLimit": 8}}},
-		{name: "provider over cap", body: map[string]any{"taskConcurrency": map[string]any{"providerLimit": 7}}},
-		{name: "model over cap", body: map[string]any{"taskConcurrency": map[string]any{"modelLimit": 6}}},
+		{name: "user over cap", body: map[string]any{"taskConcurrency": map[string]any{"userLimit": 9}}},
+		{name: "provider over cap", body: map[string]any{"taskConcurrency": map[string]any{"providerLimit": 9}}},
+		{name: "model over cap", body: map[string]any{"taskConcurrency": map[string]any{"modelLimit": 9}}},
 	}
 
 	for _, tc := range cases {
@@ -888,6 +940,42 @@ func assertTaskConcurrency(t *testing.T, response *httptest.ResponseRecorder, te
 	assertNumericField(t, policy, "userLimit", int64(userLimit))
 	assertNumericField(t, policy, "providerLimit", int64(providerLimit))
 	assertNumericField(t, policy, "modelLimit", int64(modelLimit))
+}
+
+func assertSystemSettingsConstraints(t *testing.T, response *httptest.ResponseRecorder, upload config.UploadConfig) {
+	t.Helper()
+
+	data := decodeData(t, response)
+	constraints := objectField(t, data, "constraints")
+	uploadConstraints := objectField(t, constraints, "uploadPolicy")
+	assertIntegerRange(t, objectField(t, uploadConstraints, "maxFileSizeBytes"), 1, upload.MaxFileSizeBytes)
+	assertIntegerRange(t, objectField(t, uploadConstraints, "maxWidth"), 1, int64(upload.MaxWidth))
+	assertIntegerRange(t, objectField(t, uploadConstraints, "maxHeight"), 1, int64(upload.MaxHeight))
+	assertIntegerRange(t, objectField(t, uploadConstraints, "maxPixels"), 1, upload.MaxPixels)
+
+	concurrencyConstraints := objectField(t, constraints, "taskConcurrency")
+	assertPositiveIntegerRange(t, objectField(t, concurrencyConstraints, "tenantLimit"))
+	assertPositiveIntegerRange(t, objectField(t, concurrencyConstraints, "userLimit"))
+	assertPositiveIntegerRange(t, objectField(t, concurrencyConstraints, "providerLimit"))
+	assertPositiveIntegerRange(t, objectField(t, concurrencyConstraints, "modelLimit"))
+	assertIntegerRange(t, objectField(t, constraints, "storageRetention"), 1, 3650)
+	assertIntegerRange(t, objectField(t, constraints, "storageQuota"), 1, 109951162777600)
+	assertIntegerRange(t, objectField(t, constraints, "logRetention"), 1, 3650)
+}
+
+func assertIntegerRange(t *testing.T, value map[string]any, min int64, max int64) {
+	t.Helper()
+	assertNumericField(t, value, "min", min)
+	assertNumericField(t, value, "max", max)
+}
+
+func assertPositiveIntegerRange(t *testing.T, value map[string]any) {
+	t.Helper()
+	assertNumericField(t, value, "min", 1)
+	maximum, ok := value["max"].(float64)
+	if !ok || maximum < 1 {
+		t.Fatalf("max = %#v, want a positive number", value["max"])
+	}
 }
 
 func assertStorageRetention(t *testing.T, response *httptest.ResponseRecorder, expectedDays *int) {

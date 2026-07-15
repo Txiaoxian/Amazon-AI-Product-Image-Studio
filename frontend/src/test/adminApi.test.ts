@@ -95,6 +95,29 @@ const systemSettings = {
     maxBytes: null,
     usedBytes: 2048,
   },
+  logRetention: {
+    operationLogRetentionDays: null,
+    apiCallLogRetentionDays: null,
+    taskEventRetentionDays: null,
+  },
+  constraints: {
+    uploadPolicy: {
+      maxFileSizeBytes: { min: 1, max: 26214400 },
+      maxWidth: { min: 1, max: 8192 },
+      maxHeight: { min: 1, max: 8192 },
+      maxPixels: { min: 1, max: 40000000 },
+    },
+    taskConcurrency: {
+      globalCapacity: 8,
+      tenantLimit: { min: 1, max: 4 },
+      userLimit: { min: 1, max: 3 },
+      providerLimit: { min: 1, max: 2 },
+      modelLimit: { min: 1, max: 2 },
+    },
+    storageRetention: { min: 1, max: 3650 },
+    storageQuota: { min: 1, max: 109951162777600 },
+    logRetention: { min: 1, max: 3650 },
+  },
 }
 
 function page(records: unknown[], total = records.length) {

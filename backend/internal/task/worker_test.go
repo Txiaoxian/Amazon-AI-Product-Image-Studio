@@ -1603,7 +1603,7 @@ func TestWorkerProcessorUsesStoredTaskConcurrencyPolicyInAllEffectiveDimensions(
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
 	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-policy-concurrency", Status: StatusQueued})
-	seedWorkerTaskConcurrency(t, db, `{"tenantLimit":4,"userLimit":3,"providerLimit":2,"modelLimit":1}`)
+	seedWorkerTaskConcurrency(t, db, `{"tenantLimit":9,"userLimit":8,"providerLimit":7,"modelLimit":6}`)
 	limiter := &recordingLimiter{blocked: true}
 	processor := newWorkerTestProcessor(db, WorkerProcessorOptions{
 		Limiter:             limiter,
@@ -1623,10 +1623,10 @@ func TestWorkerProcessorUsesStoredTaskConcurrencyPolicyInAllEffectiveDimensions(
 	}
 	wantDimensions := []queue.ConcurrencyDimension{
 		{Name: "global", Value: "all", Limit: 9},
-		{Name: "tenant", Value: "tenant-worker", Limit: 4},
-		{Name: "user", Value: "user-worker", Limit: 3},
-		{Name: "provider", Value: "provider-worker", Limit: 2},
-		{Name: "model", Value: "model-worker", Limit: 1},
+		{Name: "tenant", Value: "tenant-worker", Limit: 9},
+		{Name: "user", Value: "user-worker", Limit: 8},
+		{Name: "provider", Value: "provider-worker", Limit: 3},
+		{Name: "model", Value: "model-worker", Limit: 6},
 	}
 	if !reflect.DeepEqual(limiter.lastDimensions, wantDimensions) {
 		t.Fatalf("concurrency dimensions = %#v, want %#v", limiter.lastDimensions, wantDimensions)

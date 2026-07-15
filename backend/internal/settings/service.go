@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,7 +39,9 @@ type Service struct {
 	db                     *gorm.DB
 	repo                   Repository
 	hardCap                config.UploadConfig
+	taskConcurrencyDefault TaskConcurrency
 	taskConcurrencyHardCap TaskConcurrency
+	globalConcurrency      int
 	log                    *slog.Logger
 	now                    func() time.Time
 }
@@ -47,11 +50,17 @@ func NewService(db *gorm.DB, log *slog.Logger, uploadConfig config.UploadConfig,
 	if log == nil {
 		log = slog.Default()
 	}
+	globalConcurrency := queueConfig.GlobalConcurrency
+	if globalConcurrency <= 0 {
+		globalConcurrency = maxTaskConcurrencyValue(taskConcurrencyHardCapFromQueueConfig(queueConfig))
+	}
 	return &Service{
 		db:                     db,
 		repo:                   NewRepository(db),
 		hardCap:                config.NormalizeUploadConfig(uploadConfig),
-		taskConcurrencyHardCap: taskConcurrencyFromQueueConfig(queueConfig),
+		taskConcurrencyDefault: taskConcurrencyFromQueueConfig(queueConfig),
+		taskConcurrencyHardCap: taskConcurrencyHardCapFromQueueConfig(queueConfig),
+		globalConcurrency:      globalConcurrency,
 		log:                    log,
 		now: func() time.Time {
 			return time.Now().UTC()
@@ -91,7 +100,7 @@ func (s *Service) PatchSystemSettings(c *gin.Context) {
 	}
 	patch, err := parsePatchRequest(c.Request.Body)
 	if err != nil {
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "系统设置请求格式不正确。", nil)
 		return
 	}
 
@@ -186,7 +195,7 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	taskConcurrency, err := LoadTaskConcurrency(ctx, s.repo, scope, s.taskConcurrencyHardCap)
+	taskConcurrency, err := LoadTaskConcurrencyWithDefaults(ctx, s.repo, scope, s.taskConcurrencyDefault, s.taskConcurrencyHardCap)
 	if err != nil {
 		return Response{}, err
 	}
@@ -202,7 +211,41 @@ func (s *Service) EffectiveSystemSettings(ctx context.Context, scope tenant.Scop
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{UploadPolicy: policy, TaskDefaults: defaults, TaskConcurrency: taskConcurrency, StorageRetention: storageRetention, StorageQuota: storageQuota, LogRetention: logRetention}, nil
+	return Response{
+		UploadPolicy:     policy,
+		TaskDefaults:     defaults,
+		TaskConcurrency:  taskConcurrency,
+		StorageRetention: storageRetention,
+		StorageQuota:     storageQuota,
+		LogRetention:     logRetention,
+		Constraints:      systemSettingsConstraints(s.hardCap, s.taskConcurrencyHardCap, s.globalConcurrency),
+	}, nil
+}
+
+func systemSettingsConstraints(uploadHardCap config.UploadConfig, concurrencyHardCap TaskConcurrency, globalConcurrency int) Constraints {
+	uploadHardCap = config.NormalizeUploadConfig(uploadHardCap)
+	concurrencyHardCap = normalizeTaskConcurrencyHardCap(concurrencyHardCap)
+	positiveRange := func(max int64) IntegerRange {
+		return IntegerRange{Min: 1, Max: max}
+	}
+	return Constraints{
+		UploadPolicy: UploadPolicyConstraints{
+			MaxFileSizeBytes: positiveRange(uploadHardCap.MaxFileSizeBytes),
+			MaxWidth:         positiveRange(int64(uploadHardCap.MaxWidth)),
+			MaxHeight:        positiveRange(int64(uploadHardCap.MaxHeight)),
+			MaxPixels:        positiveRange(uploadHardCap.MaxPixels),
+		},
+		TaskConcurrency: TaskConcurrencyConstraints{
+			GlobalCapacity: int64(globalConcurrency),
+			TenantLimit:    positiveRange(int64(concurrencyHardCap.TenantLimit)),
+			UserLimit:      positiveRange(int64(concurrencyHardCap.UserLimit)),
+			ProviderLimit:  positiveRange(int64(concurrencyHardCap.ProviderLimit)),
+			ModelLimit:     positiveRange(int64(concurrencyHardCap.ModelLimit)),
+		},
+		StorageRetention: IntegerRange{Min: minStorageRetentionDays, Max: maxStorageRetentionDays},
+		StorageQuota:     IntegerRange{Min: minStorageQuotaBytes, Max: maxStorageQuotaBytes},
+		LogRetention:     IntegerRange{Min: minLogRetentionDays, Max: maxLogRetentionDays},
+	}
 }
 
 func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) (TaskDefaults, error) {
@@ -239,13 +282,18 @@ func LoadTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope) 
 }
 
 func LoadTaskConcurrency(ctx context.Context, repo Repository, scope tenant.Scope, hardCap TaskConcurrency) (TaskConcurrency, error) {
+	return LoadTaskConcurrencyWithDefaults(ctx, repo, scope, hardCap, hardCap)
+}
+
+func LoadTaskConcurrencyWithDefaults(ctx context.Context, repo Repository, scope tenant.Scope, defaults TaskConcurrency, hardCap TaskConcurrency) (TaskConcurrency, error) {
 	hardCap = normalizeTaskConcurrencyHardCap(hardCap)
+	defaults = clampTaskConcurrencyToHardCap(normalizeTaskConcurrencyHardCap(defaults), hardCap)
 	record, ok, err := repo.FindByKey(ctx, scope, KeyTaskConcurrency)
 	if err != nil {
 		return TaskConcurrency{}, err
 	}
 	if !ok {
-		return hardCap, nil
+		return defaults, nil
 	}
 	policy, err := decodeStoredTaskConcurrency(record.ValueJSON)
 	if err != nil {
@@ -547,7 +595,7 @@ func (s *Service) UpdateTaskConcurrency(ctx context.Context, principal auth.Prin
 	if err != nil {
 		return TaskConcurrency{}, err
 	}
-	current, err := LoadTaskConcurrency(ctx, s.repo, scope, s.taskConcurrencyHardCap)
+	current, err := LoadTaskConcurrencyWithDefaults(ctx, s.repo, scope, s.taskConcurrencyDefault, s.taskConcurrencyHardCap)
 	if err != nil {
 		return TaskConcurrency{}, err
 	}
@@ -792,7 +840,12 @@ func (s *Service) requireAdminPermission(c *gin.Context) (auth.Principal, bool) 
 func (s *Service) respondError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrValidation):
-		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request.", nil)
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", validationErr.Message, validationErr.Details())
+			return
+		}
+		httpx.AbortWithError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "系统设置内容不符合要求，请检查后重试。", nil)
 	case errors.Is(err, ErrForbidden):
 		httpx.AbortWithError(c, http.StatusForbidden, "FORBIDDEN", "Forbidden.", nil)
 	default:
@@ -1220,18 +1273,33 @@ func validatePolicyWithinHardCap(policy UploadPolicy, hardCap config.UploadConfi
 	if err := validatePositivePolicy(policy); err != nil {
 		return err
 	}
-	if policy.MaxFileSizeBytes > hardCap.MaxFileSizeBytes ||
-		policy.MaxWidth > hardCap.MaxWidth ||
-		policy.MaxHeight > hardCap.MaxHeight ||
-		policy.MaxPixels > hardCap.MaxPixels {
-		return ErrValidation
+	if policy.MaxFileSizeBytes > hardCap.MaxFileSizeBytes {
+		return newRangeValidationError("uploadPolicy.maxFileSizeBytes", "最大文件大小", 1, hardCap.MaxFileSizeBytes)
+	}
+	if policy.MaxWidth > hardCap.MaxWidth {
+		return newRangeValidationError("uploadPolicy.maxWidth", "最大宽度", 1, int64(hardCap.MaxWidth))
+	}
+	if policy.MaxHeight > hardCap.MaxHeight {
+		return newRangeValidationError("uploadPolicy.maxHeight", "最大高度", 1, int64(hardCap.MaxHeight))
+	}
+	if policy.MaxPixels > hardCap.MaxPixels {
+		return newRangeValidationError("uploadPolicy.maxPixels", "最大像素数", 1, hardCap.MaxPixels)
 	}
 	return nil
 }
 
 func validatePositivePolicy(policy UploadPolicy) error {
-	if policy.MaxFileSizeBytes <= 0 || policy.MaxWidth <= 0 || policy.MaxHeight <= 0 || policy.MaxPixels <= 0 {
-		return ErrValidation
+	if policy.MaxFileSizeBytes <= 0 {
+		return newMinimumValidationError("uploadPolicy.maxFileSizeBytes", "最大文件大小", 1)
+	}
+	if policy.MaxWidth <= 0 {
+		return newMinimumValidationError("uploadPolicy.maxWidth", "最大宽度", 1)
+	}
+	if policy.MaxHeight <= 0 {
+		return newMinimumValidationError("uploadPolicy.maxHeight", "最大高度", 1)
+	}
+	if policy.MaxPixels <= 0 {
+		return newMinimumValidationError("uploadPolicy.maxPixels", "最大像素数", 1)
 	}
 	return nil
 }
@@ -1275,14 +1343,29 @@ func applyTaskConcurrencyPatch(current TaskConcurrency, patch TaskConcurrencyPat
 
 func validateTaskConcurrencyWithinHardCap(policy TaskConcurrency, hardCap TaskConcurrency) error {
 	hardCap = normalizeTaskConcurrencyHardCap(hardCap)
-	if policy.TenantLimit <= 0 || policy.UserLimit <= 0 || policy.ProviderLimit <= 0 || policy.ModelLimit <= 0 {
-		return ErrValidation
+	if policy.TenantLimit <= 0 {
+		return newRangeValidationError("taskConcurrency.tenantLimit", "租户并发上限", 1, int64(hardCap.TenantLimit))
 	}
-	if policy.TenantLimit > hardCap.TenantLimit ||
-		policy.UserLimit > hardCap.UserLimit ||
-		policy.ProviderLimit > hardCap.ProviderLimit ||
-		policy.ModelLimit > hardCap.ModelLimit {
-		return ErrValidation
+	if policy.UserLimit <= 0 {
+		return newRangeValidationError("taskConcurrency.userLimit", "用户并发上限", 1, int64(hardCap.UserLimit))
+	}
+	if policy.ProviderLimit <= 0 {
+		return newRangeValidationError("taskConcurrency.providerLimit", "Provider 并发上限", 1, int64(hardCap.ProviderLimit))
+	}
+	if policy.ModelLimit <= 0 {
+		return newRangeValidationError("taskConcurrency.modelLimit", "模型并发上限", 1, int64(hardCap.ModelLimit))
+	}
+	if policy.TenantLimit > hardCap.TenantLimit {
+		return newRangeValidationError("taskConcurrency.tenantLimit", "租户并发上限", 1, int64(hardCap.TenantLimit))
+	}
+	if policy.UserLimit > hardCap.UserLimit {
+		return newRangeValidationError("taskConcurrency.userLimit", "用户并发上限", 1, int64(hardCap.UserLimit))
+	}
+	if policy.ProviderLimit > hardCap.ProviderLimit {
+		return newRangeValidationError("taskConcurrency.providerLimit", "Provider 并发上限", 1, int64(hardCap.ProviderLimit))
+	}
+	if policy.ModelLimit > hardCap.ModelLimit {
+		return newRangeValidationError("taskConcurrency.modelLimit", "模型并发上限", 1, int64(hardCap.ModelLimit))
 	}
 	return nil
 }
@@ -1313,7 +1396,7 @@ func validateStorageRetention(retention StorageRetention) error {
 		return nil
 	}
 	if *retention.DeletedAssetRetentionDays < minStorageRetentionDays || *retention.DeletedAssetRetentionDays > maxStorageRetentionDays {
-		return ErrValidation
+		return newRangeValidationError("storageRetention.deletedAssetRetentionDays", "删除资产保留天数", minStorageRetentionDays, maxStorageRetentionDays)
 	}
 	return nil
 }
@@ -1344,7 +1427,7 @@ func validateStorageQuota(quota StorageQuota) error {
 		return nil
 	}
 	if *quota.MaxBytes < minStorageQuotaBytes || *quota.MaxBytes > maxStorageQuotaBytes {
-		return ErrValidation
+		return newRangeValidationError("storageQuota.maxBytes", "最大存储容量", minStorageQuotaBytes, maxStorageQuotaBytes)
 	}
 	return nil
 }
@@ -1398,12 +1481,21 @@ func applyLogRetentionPatch(current LogRetention, patch LogRetentionPatch) (LogR
 }
 
 func validateLogRetention(retention LogRetention) error {
-	for _, days := range []*int{retention.OperationLogRetentionDays, retention.APICallLogRetentionDays, retention.TaskEventRetentionDays} {
-		if days == nil {
+	fields := []struct {
+		field string
+		label string
+		days  *int
+	}{
+		{field: "logRetention.operationLogRetentionDays", label: "操作日志保留天数", days: retention.OperationLogRetentionDays},
+		{field: "logRetention.apiCallLogRetentionDays", label: "API 调用日志保留天数", days: retention.APICallLogRetentionDays},
+		{field: "logRetention.taskEventRetentionDays", label: "任务事件保留天数", days: retention.TaskEventRetentionDays},
+	}
+	for _, item := range fields {
+		if item.days == nil {
 			continue
 		}
-		if *days < minLogRetentionDays || *days > maxLogRetentionDays {
-			return ErrValidation
+		if *item.days < minLogRetentionDays || *item.days > maxLogRetentionDays {
+			return newRangeValidationError(item.field, item.label, minLogRetentionDays, maxLogRetentionDays)
 		}
 	}
 	return nil
@@ -1447,17 +1539,23 @@ func normalizeTaskDefaultsPatch(patch TaskDefaultsPatch) (TaskDefaults, error) {
 func validateTaskDefaults(ctx context.Context, repo Repository, scope tenant.Scope, providerID string, modelID string) error {
 	providerRecord, err := repo.FindProvider(ctx, scope, providerID)
 	if err != nil {
+		if errors.Is(err, ErrValidation) {
+			return &ValidationError{Field: "taskDefaults.defaultProviderId", Message: "默认 Provider 不存在或不可用。"}
+		}
 		return err
 	}
 	if providerRecord.Status != providerpkg.StatusEnabled {
-		return ErrValidation
+		return &ValidationError{Field: "taskDefaults.defaultProviderId", Message: "默认 Provider 必须处于启用状态。"}
 	}
 	modelRecord, err := repo.FindModel(ctx, scope, modelID)
 	if err != nil {
+		if errors.Is(err, ErrValidation) {
+			return &ValidationError{Field: "taskDefaults.defaultModelId", Message: "默认模型不存在或不可用。"}
+		}
 		return err
 	}
 	if modelRecord.Status != modelpkg.StatusEnabled || modelRecord.ProviderID != providerRecord.ID {
-		return ErrValidation
+		return &ValidationError{Field: "taskDefaults.defaultModelId", Message: "默认模型必须已启用并且属于所选 Provider。"}
 	}
 	return nil
 }
@@ -1465,17 +1563,23 @@ func validateTaskDefaults(ctx context.Context, repo Repository, scope tenant.Sco
 func validateTaskDefaultsForUpdate(ctx context.Context, repo Repository, scope tenant.Scope, providerID string, modelID string) error {
 	providerRecord, err := repo.LockProvider(ctx, scope, providerID)
 	if err != nil {
+		if errors.Is(err, ErrValidation) {
+			return &ValidationError{Field: "taskDefaults.defaultProviderId", Message: "默认 Provider 不存在或不可用。"}
+		}
 		return err
 	}
 	if providerRecord.Status != providerpkg.StatusEnabled {
-		return ErrValidation
+		return &ValidationError{Field: "taskDefaults.defaultProviderId", Message: "默认 Provider 必须处于启用状态。"}
 	}
 	modelRecord, err := repo.LockModel(ctx, scope, modelID)
 	if err != nil {
+		if errors.Is(err, ErrValidation) {
+			return &ValidationError{Field: "taskDefaults.defaultModelId", Message: "默认模型不存在或不可用。"}
+		}
 		return err
 	}
 	if modelRecord.Status != modelpkg.StatusEnabled || modelRecord.ProviderID != providerRecord.ID {
-		return ErrValidation
+		return &ValidationError{Field: "taskDefaults.defaultModelId", Message: "默认模型必须已启用并且属于所选 Provider。"}
 	}
 	return nil
 }
@@ -1506,6 +1610,23 @@ func cleanTaskDefaultID(value string) (string, error) {
 		return "", ErrValidation
 	}
 	return value, nil
+}
+
+func newRangeValidationError(field string, label string, min int64, max int64) error {
+	return &ValidationError{
+		Field:   field,
+		Message: fmt.Sprintf("%s必须在 %d 到 %d 之间。", label, min, max),
+		Min:     &min,
+		Max:     &max,
+	}
+}
+
+func newMinimumValidationError(field string, label string, min int64) error {
+	return &ValidationError{
+		Field:   field,
+		Message: fmt.Sprintf("%s不能小于 %d。", label, min),
+		Min:     &min,
+	}
 }
 
 func maxIntValue() int64 {

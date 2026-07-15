@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminObservabilitySettingsPanel } from '../components/admin/AdminObservabilitySettingsPanel'
 import { ApiClientError } from '../api/client'
 import type { AdminApi } from '../api/admin'
+import type { ModelApi } from '../api/models'
+import type { ProviderApi } from '../api/providers'
 import type { ApiCallLog, UsageSummary, UsageSummaryQuery } from '../types/admin'
 import type { ApiPage } from '../types/api'
+import type { Model, Provider } from '../types/platform'
 
 const usageSummary = {
   dimension: 'provider',
@@ -145,7 +148,57 @@ const systemSettings = {
     apiCallLogRetentionDays: 60,
     taskEventRetentionDays: null,
   },
+  constraints: {
+    uploadPolicy: {
+      maxFileSizeBytes: { min: 1, max: 26214400 },
+      maxWidth: { min: 1, max: 8192 },
+      maxHeight: { min: 1, max: 8192 },
+      maxPixels: { min: 1, max: 40000000 },
+    },
+    taskConcurrency: {
+      globalCapacity: 8,
+      tenantLimit: { min: 1, max: 4 },
+      userLimit: { min: 1, max: 3 },
+      providerLimit: { min: 1, max: 2 },
+      modelLimit: { min: 1, max: 2 },
+    },
+    storageRetention: { min: 1, max: 3650 },
+    storageQuota: { min: 1, max: 109951162777600 },
+    logRetention: { min: 1, max: 3650 },
+  },
 }
+
+const providers = [
+  {
+    id: 'provider_1',
+    type: 'OPENAI',
+    name: 'OpenAI 主站',
+    status: 'ENABLED',
+  },
+  {
+    id: 'provider_2',
+    type: 'OPENAI_COMPATIBLE',
+    name: '备用中转站',
+    status: 'ENABLED',
+  },
+] as unknown as Provider[]
+
+const models = [
+  {
+    id: 'model_1',
+    providerId: 'provider_1',
+    displayName: 'GPT Image 1',
+    modelName: 'gpt-image-1',
+    status: 'ENABLED',
+  },
+  {
+    id: 'model_2',
+    providerId: 'provider_2',
+    displayName: 'GPT Image 2',
+    modelName: 'gpt-image-2',
+    status: 'ENABLED',
+  },
+] as unknown as Model[]
 
 function page<TRecord>(records: TRecord[], options: Partial<Omit<ApiPage<TRecord>, 'records'>> = {}): ApiPage<TRecord> {
   return {
@@ -167,6 +220,34 @@ function createMockAdminApi(overrides: Partial<AdminApi> = {}): AdminApi {
     updateSystemSettings: vi.fn().mockResolvedValue(systemSettings),
     ...overrides,
   }
+}
+
+function createMockProviderApi(): ProviderApi {
+  return {
+    list: vi.fn().mockResolvedValue(page(providers)),
+  } as unknown as ProviderApi
+}
+
+function createMockModelApi(): ModelApi {
+  return {
+    list: vi.fn().mockResolvedValue(page(models)),
+  } as unknown as ModelApi
+}
+
+function renderSystemSettings(adminApi: AdminApi) {
+  return render(
+    <AdminObservabilitySettingsPanel
+      adminApi={adminApi}
+      canManageSystemSettings
+      canReadAudit={false}
+      canReadUsage={false}
+      csrfToken="csrf_memory_only"
+      isOpen
+      modelApi={createMockModelApi()}
+      onClose={() => undefined}
+      providerApi={createMockProviderApi()}
+    />,
+  )
 }
 
 function deferred<TValue>() {
@@ -794,7 +875,13 @@ describe('AdminObservabilitySettingsPanel', () => {
     const user = userEvent.setup()
     const validationError = new ApiClientError({
       code: 'VALIDATION_ERROR',
-      message: 'Invalid request.',
+      details: {
+        field: 'uploadPolicy.maxWidth',
+        max: 8192,
+        min: 1,
+      },
+      message: '最大宽度必须在 1 到 8192 之间。',
+      requestId: 'req_settings_upload',
       status: 422,
     })
     const updatedSettings = {
@@ -822,35 +909,30 @@ describe('AdminObservabilitySettingsPanel', () => {
       updateSystemSettings: vi.fn().mockRejectedValueOnce(validationError).mockResolvedValueOnce(updatedSettings),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    expect(await screen.findByLabelText('最大文件字节数')).toHaveValue(26214400)
+    await screen.findByLabelText('任务事件保留天数')
+    expect(screen.getByLabelText('最大文件字节数')).toHaveValue(26214400)
     expect(screen.getByLabelText('最大宽度')).toHaveValue(8192)
     expect(screen.getByLabelText('最大高度')).toHaveValue(8192)
     expect(screen.getByLabelText('最大像素数')).toHaveValue(40000000)
-    expect(screen.getByLabelText('默认 Provider ID')).toHaveValue('provider_1')
-    expect(screen.getByLabelText('默认模型 ID')).toHaveValue('model_1')
+    expect(screen.getByLabelText('默认 Provider')).toHaveValue('provider_1')
+    expect(screen.getByLabelText('默认模型')).toHaveValue('model_1')
     expect(screen.getByLabelText('租户并发上限')).toHaveValue(4)
     expect(screen.getByLabelText('用户并发上限')).toHaveValue(3)
     expect(screen.getByLabelText('Provider 并发上限')).toHaveValue(2)
     expect(screen.getByLabelText('模型并发上限')).toHaveValue(1)
+    expect(screen.getByText(/保存后会对新开始的任务立即生效，无需重启/)).toHaveTextContent('当前全局安全容量为 8 个任务')
     expect(screen.getByLabelText('删除资产保留天数')).toHaveValue(30)
     expect(screen.getByLabelText('最大存储字节数')).toHaveValue(1073741824)
-    expect(screen.getByLabelText('已用存储字节数')).toHaveValue('1,048,576')
-    expect(screen.getByLabelText('已用存储字节数')).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('已用存储容量')).toHaveValue('1 MB（1,048,576 字节）')
+    expect(screen.getByLabelText('已用存储容量')).toHaveAttribute('readonly')
     expect(screen.getByLabelText('操作日志保留天数')).toHaveValue(90)
     expect(screen.getByLabelText('API 调用日志保留天数')).toHaveValue(60)
-    expect(screen.getByLabelText('任务事件保留天数')).toHaveValue(null)
+    expect(screen.getByLabelText('任务事件保留天数')).toBeDisabled()
+    expect(screen.getByLabelText('最大宽度')).toHaveAttribute('max', '8192')
+    expect(screen.getByLabelText('租户并发上限')).toHaveAttribute('max', '4')
+    expect(screen.getAllByText('允许范围：1–8,192 像素')).toHaveLength(2)
     expect(screen.queryByText('defaultProviderId')).not.toBeInTheDocument()
     expect(screen.queryByText('defaultModelId')).not.toBeInTheDocument()
     expect(screen.queryByText('tenantConcurrency')).not.toBeInTheDocument()
@@ -870,9 +952,11 @@ describe('AdminObservabilitySettingsPanel', () => {
     await user.type(screen.getByLabelText('最大宽度'), '9000')
     await user.click(screen.getByRole('button', { name: '保存上传策略' }))
 
-    expect(await screen.findByText('表单内容未通过校验：Invalid request.')).toBeInTheDocument()
+    const uploadPolicyForm = screen.getByRole('heading', { name: '上传策略' }).closest('form')
+    expect(uploadPolicyForm).not.toBeNull()
+    expect(await within(uploadPolicyForm!).findByText('最大宽度必须在 1 到 8192 之间。（请求标识：req_settings_upload）')).toBeInTheDocument()
     expect(screen.getByLabelText('最大宽度')).toHaveValue(9000)
-    expect(screen.getByLabelText('默认 Provider ID')).toHaveValue('provider_1')
+    expect(screen.getByLabelText('默认 Provider')).toHaveValue('provider_1')
     expect(screen.getByLabelText('删除资产保留天数')).toHaveValue(30)
     expect(screen.queryByText('上传策略已更新。')).not.toBeInTheDocument()
 
@@ -926,27 +1010,17 @@ describe('AdminObservabilitySettingsPanel', () => {
         }),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    await user.clear(await screen.findByLabelText('默认模型 ID'))
+    await screen.findByLabelText('任务事件保留天数')
+    await user.selectOptions(screen.getByLabelText('默认模型'), '')
     await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
 
-    expect(await screen.findByText('默认 Provider ID 与默认模型 ID 必须成对填写或同时清空。')).toBeInTheDocument()
+    expect(await screen.findByText('默认 Provider 与默认模型必须成对选择或同时清空。')).toBeInTheDocument()
     expect(adminApi.updateSystemSettings).not.toHaveBeenCalled()
 
-    await user.type(screen.getByLabelText('默认模型 ID'), 'model_2')
-    await user.clear(screen.getByLabelText('默认 Provider ID'))
-    await user.type(screen.getByLabelText('默认 Provider ID'), 'provider_2')
+    await user.selectOptions(screen.getByLabelText('默认 Provider'), 'provider_2')
+    await user.selectOptions(screen.getByLabelText('默认模型'), 'model_2')
     await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
 
     expect(await screen.findByText('任务默认模型已更新。')).toBeInTheDocument()
@@ -962,8 +1036,7 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('uploadPolicy')
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('usedBytes')
 
-    await user.clear(screen.getByLabelText('默认 Provider ID'))
-    await user.clear(screen.getByLabelText('默认模型 ID'))
+    await user.selectOptions(screen.getByLabelText('默认 Provider'), '')
     await user.click(screen.getByRole('button', { name: '保存任务默认模型' }))
 
     expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
@@ -992,19 +1065,10 @@ describe('AdminObservabilitySettingsPanel', () => {
       }),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    await user.clear(await screen.findByLabelText('租户并发上限'))
+    await screen.findByLabelText('任务事件保留天数')
+    await user.clear(screen.getByLabelText('租户并发上限'))
     await user.type(screen.getByLabelText('租户并发上限'), '3')
     await user.clear(screen.getByLabelText('用户并发上限'))
     await user.type(screen.getByLabelText('用户并发上限'), '2')
@@ -1026,6 +1090,43 @@ describe('AdminObservabilitySettingsPanel', () => {
     expect(JSON.stringify(vi.mocked(adminApi.updateSystemSettings).mock.calls)).not.toContain('uploadPolicy')
   })
 
+  it('keeps other unsaved groups intact and only locks the group being saved', async () => {
+    const user = userEvent.setup()
+    const save = deferred<typeof systemSettings>()
+    const adminApi = createMockAdminApi({
+      updateSystemSettings: vi.fn().mockReturnValue(save.promise),
+    })
+
+    renderSystemSettings(adminApi)
+    await screen.findByLabelText('任务事件保留天数')
+
+    await user.clear(screen.getByLabelText('最大宽度'))
+    await user.type(screen.getByLabelText('最大宽度'), '4096')
+    await user.clear(screen.getByLabelText('Provider 并发上限'))
+    await user.type(screen.getByLabelText('Provider 并发上限'), '1')
+
+    const uploadSaveButton = screen.getByRole('button', { name: '保存上传策略' })
+    const concurrencySaveButton = screen.getByRole('button', { name: '保存并发限制' })
+    expect(uploadSaveButton).toBeEnabled()
+    expect(concurrencySaveButton).toBeEnabled()
+
+    await user.click(uploadSaveButton)
+    expect(screen.getByRole('button', { name: '正在保存...' })).toBeDisabled()
+    expect(concurrencySaveButton).toBeEnabled()
+
+    save.resolve({
+      ...systemSettings,
+      uploadPolicy: {
+        ...systemSettings.uploadPolicy,
+        maxWidth: 4096,
+      },
+    })
+
+    expect(await screen.findByText('上传策略已更新。')).toBeInTheDocument()
+    expect(screen.getByLabelText('Provider 并发上限')).toHaveValue(1)
+    expect(screen.getByRole('button', { name: '保存并发限制' })).toBeEnabled()
+  })
+
   it('PATCHes storageRetention with a positive integer and null clear', async () => {
     const user = userEvent.setup()
     const adminApi = createMockAdminApi({
@@ -1045,24 +1146,15 @@ describe('AdminObservabilitySettingsPanel', () => {
         }),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    await user.clear(await screen.findByLabelText('删除资产保留天数'))
+    await screen.findByLabelText('任务事件保留天数')
+    await user.clear(screen.getByLabelText('删除资产保留天数'))
     await user.type(screen.getByLabelText('删除资产保留天数'), '45')
     await user.click(screen.getByRole('button', { name: '保存删除资产保留期' }))
     expect(await screen.findByText('删除资产保留期已更新。')).toBeInTheDocument()
 
-    await user.clear(screen.getByLabelText('删除资产保留天数'))
+    await user.click(screen.getByLabelText('启用软删除资产自动清理'))
     await user.click(screen.getByRole('button', { name: '保存删除资产保留期' }))
 
     expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
@@ -1106,19 +1198,10 @@ describe('AdminObservabilitySettingsPanel', () => {
         }),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    expect(await screen.findByLabelText('已用存储字节数')).toHaveAttribute('readonly')
+    await screen.findByLabelText('任务事件保留天数')
+    expect(screen.getByLabelText('已用存储容量')).toHaveAttribute('readonly')
     await user.clear(screen.getByLabelText('最大存储字节数'))
     await user.type(screen.getByLabelText('最大存储字节数'), '2147483648')
     await user.click(screen.getByRole('button', { name: '保存存储配额' }))
@@ -1134,7 +1217,7 @@ describe('AdminObservabilitySettingsPanel', () => {
       'csrf_memory_only',
     )
 
-    await user.clear(screen.getByLabelText('最大存储字节数'))
+    await user.click(screen.getByLabelText('启用租户存储配额'))
     await user.click(screen.getByRole('button', { name: '保存存储配额' }))
 
     expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
@@ -1173,22 +1256,15 @@ describe('AdminObservabilitySettingsPanel', () => {
         }),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    await user.clear(await screen.findByLabelText('操作日志保留天数'))
+    await screen.findByLabelText('任务事件保留天数')
+    await user.clear(screen.getByLabelText('操作日志保留天数'))
     await user.type(screen.getByLabelText('操作日志保留天数'), '120')
     await user.clear(screen.getByLabelText('API 调用日志保留天数'))
     await user.type(screen.getByLabelText('API 调用日志保留天数'), '30')
+    await user.click(screen.getByLabelText('自动清理任务事件'))
+    await user.clear(screen.getByLabelText('任务事件保留天数'))
     await user.type(screen.getByLabelText('任务事件保留天数'), '14')
     await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
 
@@ -1205,9 +1281,9 @@ describe('AdminObservabilitySettingsPanel', () => {
       'csrf_memory_only',
     )
 
-    await user.clear(screen.getByLabelText('操作日志保留天数'))
-    await user.clear(screen.getByLabelText('API 调用日志保留天数'))
-    await user.clear(screen.getByLabelText('任务事件保留天数'))
+    await user.click(screen.getByLabelText('自动清理操作日志'))
+    await user.click(screen.getByLabelText('自动清理 API 调用日志'))
+    await user.click(screen.getByLabelText('自动清理任务事件'))
     await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
 
     expect(adminApi.updateSystemSettings).toHaveBeenNthCalledWith(
@@ -1230,26 +1306,18 @@ describe('AdminObservabilitySettingsPanel', () => {
     const user = userEvent.setup()
     const validationError = new ApiClientError({
       code: 'VALIDATION_ERROR',
-      message: 'Invalid request.',
+      details: { field: 'logRetention.operationLogRetentionDays', max: 3650, min: 1 },
+      message: '操作日志保留天数必须在 1 到 3650 之间。',
       status: 422,
     })
     const adminApi = createMockAdminApi({
       updateSystemSettings: vi.fn().mockRejectedValue(validationError),
     })
 
-    render(
-      <AdminObservabilitySettingsPanel
-        adminApi={adminApi}
-        canManageSystemSettings
-        canReadAudit={false}
-        canReadUsage={false}
-        csrfToken="csrf_memory_only"
-        isOpen
-        onClose={() => undefined}
-      />,
-    )
+    renderSystemSettings(adminApi)
 
-    await user.clear(await screen.findByLabelText('操作日志保留天数'))
+    await screen.findByLabelText('任务事件保留天数')
+    await user.clear(screen.getByLabelText('操作日志保留天数'))
     await user.type(screen.getByLabelText('操作日志保留天数'), '1.5')
     await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
 
@@ -1260,10 +1328,10 @@ describe('AdminObservabilitySettingsPanel', () => {
     await user.type(screen.getByLabelText('操作日志保留天数'), '120')
     await user.click(screen.getByRole('button', { name: '保存日志保留期' }))
 
-    expect(await screen.findByText('表单内容未通过校验：Invalid request.')).toBeInTheDocument()
+    expect(await screen.findByText('操作日志保留天数必须在 1 到 3650 之间。')).toBeInTheDocument()
     expect(screen.getByLabelText('操作日志保留天数')).toHaveValue(120)
     expect(screen.getByLabelText('API 调用日志保留天数')).toHaveValue(60)
-    expect(screen.getByLabelText('任务事件保留天数')).toHaveValue(null)
+    expect(screen.getByLabelText('任务事件保留天数')).toBeDisabled()
     expect(adminApi.updateSystemSettings).toHaveBeenCalledTimes(1)
   })
 })

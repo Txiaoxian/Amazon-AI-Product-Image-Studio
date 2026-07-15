@@ -72,13 +72,25 @@ Redis 信号量或锁可以强制执行活动计数。 MySQL 仍然必须检查�
 
 P13并发策略合约：
 
-- `TASK_GLOBAL_CONCURRENCY` 仍由部署拥有，租户永远不可写入。
-- `TASK_TENANT_CONCURRENCY`、`TASK_USER_CONCURRENCY`、`TASK_PROVIDER_CONCURRENCY`和`TASK_MODEL_CONCURRENCY`仍然是环境硬上限以及租户没有优先权时的后备限制。
-- 租户设置切片`taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`只能缩小或匹配这些硬上限。
-- Worker 必须在加载租户范围的任务执行上下文之后和获取 Redis 信号量租约之前解析租户策略。成功获得的新租约使用有效的政策；现有租赁不会追溯改变。
-- Provider `concurrencyLimit`，当为正时，仍然是一个额外的更严格的Provider维度上限；有效的Provider限制是环境上限、租户政策和Provider限制的最小值。
+- `TASK_GLOBAL_CONCURRENCY` 由部署负责，表示所有租户共享的全局安全容量，租户不可修改。
+- `TASK_POLICY_MAX_CONCURRENCY` 由部署负责，表示系统设置页面允许保存的租户策略安全上限。实际可写上限取它与 `TASK_GLOBAL_CONCURRENCY` 的较小值。
+- `TASK_TENANT_CONCURRENCY`、`TASK_USER_CONCURRENCY`、`TASK_PROVIDER_CONCURRENCY` 和 `TASK_MODEL_CONCURRENCY` 仅作为租户尚未保存策略时的首次默认值，不再作为页面硬上限。
+- 租户管理员可以在系统设置页面修改 `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`。值保存到 MySQL 后，Worker 会在每个任务获取新租约前重新读取，因此无需重启。
+- 降低限制只影响后续获取的新租约，不会中断已经运行的任务；提高限制也只对后续新租约生效。
+- Provider `concurrencyLimit` 为正数时仍是更严格的 Provider 维度上限；有效限制取租户策略与 Provider 限制的较小值。
 - 格式错误的存储并发策略必须在 Provider 执行、输出、使用或 API 调用日志记录之前使符合条件的任务失败，且已脱敏 `TASK_CONFIGURATION_INVALID`。设置 storage/infrastructure 读取失败必须使任务有资格重试，并且不得绕过并发执行。
 - 实施状态：`P13-BE-CONCURRENCY-POLICY`已合并。未来队列或Worker更改必须保留此策略解析顺序、失败关闭行为和租用释放语义。
+
+运行时变更矩阵：
+
+| 场景 | 当前任务 | 后续任务 |
+| --- | --- | --- |
+| 租户未保存并发策略 | 不受影响 | 使用四项环境首次默认值 |
+| 提高租户策略 | 不追溯改变已持有租约 | 获取新租约时使用新值 |
+| 降低租户策略 | 不取消、不打断 | 超出新限制的任务等待重试 |
+| 保存值超过安全上限 | 不受影响 | API 返回 `422 VALIDATION_ERROR`，旧策略继续有效 |
+| 存储策略格式错误 | 不受影响 | 任务失败并记录 `TASK_CONFIGURATION_INVALID`，不得调用 Provider |
+| 设置存储暂时不可用 | 不受影响 | 任务进入可重试流程，不得绕过并发限制 |
 
 ## Worker幂等性
 
