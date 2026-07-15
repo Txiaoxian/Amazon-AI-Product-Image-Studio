@@ -117,6 +117,11 @@ func (s *Service) StreamTasks(c *gin.Context) {
 		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
 		return
 	}
+	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
+		s.log.Error("task SSE write deadline setup failed", slog.String("request_id", httpx.RequestIDFromContext(c)), slog.String("error", err.Error()))
+		httpx.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error.", nil)
+		return
+	}
 	setStreamHeaders(c.Writer.Header())
 	c.Status(http.StatusOK)
 	flusher.Flush()

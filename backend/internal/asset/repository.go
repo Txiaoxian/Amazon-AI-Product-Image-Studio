@@ -15,6 +15,14 @@ type Repository struct {
 	db *gorm.DB
 }
 
+const effectiveImageTypeSQL = `CASE
+	WHEN UPPER(TRIM(image_assets.category)) IN ('MAIN', 'A_PLUS', 'SCENE', 'DETAIL', 'DIMENSION', 'SELLING_POINT', 'PROMOTION', 'COMPARISON')
+		THEN UPPER(TRIM(image_assets.category))
+	WHEN generation_tasks.image_type IN ('MAIN', 'A_PLUS', 'SCENE', 'DETAIL', 'DIMENSION', 'SELLING_POINT', 'PROMOTION', 'COMPARISON')
+		THEN generation_tasks.image_type
+	ELSE 'MAIN'
+END`
+
 type PurgeCandidate struct {
 	ID                 string
 	TenantID           string
@@ -57,15 +65,20 @@ func (r Repository) ListAssets(ctx context.Context, scope tenant.Scope, projectI
 	}
 
 	query := db.Model(&database.ImageAsset{}).
-		Where("tenant_id = ? AND project_id = ? AND deleted_at IS NULL", scope.ID(), projectID)
+		Select("image_assets.*, ("+effectiveImageTypeSQL+") AS image_type").
+		Joins("LEFT JOIN generation_tasks ON generation_tasks.tenant_id = image_assets.tenant_id AND generation_tasks.project_id = image_assets.project_id AND generation_tasks.id = image_assets.source_task_id").
+		Where("image_assets.tenant_id = ? AND image_assets.project_id = ? AND image_assets.deleted_at IS NULL", scope.ID(), projectID)
 	if options.Kind != "" {
-		query = query.Where("kind = ?", options.Kind)
+		query = query.Where("image_assets.kind = ?", options.Kind)
 	}
 	if options.Category != "" {
-		query = query.Where("category = ?", options.Category)
+		query = query.Where("("+effectiveImageTypeSQL+") = ?", options.Category)
 	}
 	if options.Favorite != nil {
-		query = query.Where("is_favorite = ?", *options.Favorite)
+		query = query.Where("image_assets.is_favorite = ?", *options.Favorite)
+	}
+	if options.ImageType != "" {
+		query = query.Where("("+effectiveImageTypeSQL+") = ?", options.ImageType)
 	}
 
 	var total int64
@@ -76,7 +89,7 @@ func (r Repository) ListAssets(ctx context.Context, scope tenant.Scope, projectI
 	var records []database.ImageAsset
 	offset := (options.PageNum - 1) * options.PageSize
 	if err := query.
-		Order("created_at DESC, id DESC").
+		Order("image_assets.created_at DESC, image_assets.id DESC").
 		Limit(options.PageSize).
 		Offset(offset).
 		Find(&records).Error; err != nil {
@@ -98,7 +111,9 @@ func (r Repository) FindAsset(ctx context.Context, scope tenant.Scope, assetID s
 
 	var record database.ImageAsset
 	err = db.Model(&database.ImageAsset{}).
-		Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", scope.ID(), assetID).
+		Select("image_assets.*, ("+effectiveImageTypeSQL+") AS image_type").
+		Joins("LEFT JOIN generation_tasks ON generation_tasks.tenant_id = image_assets.tenant_id AND generation_tasks.project_id = image_assets.project_id AND generation_tasks.id = image_assets.source_task_id").
+		Where("image_assets.tenant_id = ? AND image_assets.id = ? AND image_assets.deleted_at IS NULL", scope.ID(), assetID).
 		First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return database.ImageAsset{}, ErrNotFound

@@ -10,7 +10,10 @@ interface HistoryPanelProps {
   kind?: HistoryKind
   onView: (history: BackendHistoryItem) => void
   onEdit: (history: BackendHistoryItem) => void
+  onRename: (history: BackendHistoryItem) => void
   onDownload: (history: BackendHistoryItem) => void
+  onToggleFavorite: (history: BackendHistoryItem) => void
+  favoriteActionAssetId?: string | null
   onKindChange: (kind?: HistoryKind) => void
   onPageChange: (pageNum: number) => void
   onPageSizeChange: (pageSize: number) => void
@@ -28,7 +31,10 @@ export function HistoryPanel({
   kind,
   onView,
   onEdit,
+  onRename,
   onDownload,
+  onToggleFavorite,
+  favoriteActionAssetId = null,
   onKindChange,
   onPageChange,
   onPageSizeChange,
@@ -66,6 +72,8 @@ export function HistoryPanel({
           <select
             className="h-9 rounded-md border border-ink-200 bg-white px-2 text-sm text-ink-700 focus:border-amazon-500 focus:outline-none focus:ring-2 focus:ring-amazon-500/20"
             disabled={isLoading}
+            id="history-kind-filter"
+            name="historyKind"
             onChange={(event) => onKindChange(toHistoryKind(event.target.value))}
             value={kind ?? 'ALL'}
           >
@@ -80,6 +88,8 @@ export function HistoryPanel({
             <select
               className="h-8 rounded-md border border-ink-200 bg-white px-2 text-sm text-ink-700 focus:border-amazon-500 focus:outline-none focus:ring-2 focus:ring-amazon-500/20"
               disabled={isLoading}
+              id="history-page-size"
+              name="historyPageSize"
               onChange={(event) => onPageSizeChange(Number(event.target.value))}
               value={pageSize}
             >
@@ -139,7 +149,10 @@ export function HistoryPanel({
               key={history.asset.id}
               onDownload={onDownload}
               onEdit={onEdit}
+              onRename={onRename}
+              onToggleFavorite={onToggleFavorite}
               onView={onView}
+              isFavoritePending={favoriteActionAssetId === history.asset.id}
             />
           ))}
         </div>

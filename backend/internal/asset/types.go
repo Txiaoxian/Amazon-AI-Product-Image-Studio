@@ -32,19 +32,21 @@ var (
 )
 
 type ListQuery struct {
-	PageNum  int
-	PageSize int
-	Kind     string
-	Category string
-	Favorite *bool
+	PageNum   int
+	PageSize  int
+	Kind      string
+	Category  string
+	Favorite  *bool
+	ImageType string
 }
 
 type ListOptions struct {
-	PageNum  int
-	PageSize int
-	Kind     string
-	Category string
-	Favorite *bool
+	PageNum   int
+	PageSize  int
+	Kind      string
+	Category  string
+	Favorite  *bool
+	ImageType string
 }
 
 type Page struct {
@@ -68,6 +70,7 @@ type Response struct {
 	ThumbnailURL string `json:"thumbnailUrl"`
 	PreviewURL   string `json:"previewUrl"`
 	IsFavorite   bool   `json:"isFavorite"`
+	ImageType    string `json:"imageType"`
 	CreatedBy    string `json:"createdBy"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
@@ -94,12 +97,19 @@ type uploadInput struct {
 }
 
 func responseFromRecord(record database.ImageAsset) Response {
+	imageType := canonicalImageType(record.ImageType)
+	if imageType == "" {
+		imageType = canonicalImageType(record.Category)
+	}
+	if imageType == "" {
+		imageType = "MAIN"
+	}
 	return Response{
 		ID:           record.ID,
 		TenantID:     record.TenantID,
 		ProjectID:    record.ProjectID,
 		Kind:         record.Kind,
-		Category:     record.Category,
+		Category:     imageType,
 		Filename:     record.Filename,
 		MimeType:     record.MimeType,
 		FileSize:     record.SizeBytes,
@@ -108,10 +118,19 @@ func responseFromRecord(record database.ImageAsset) Response {
 		ThumbnailURL: thumbnailURL(record),
 		PreviewURL:   "/api/v1/assets/" + record.ID + "/download",
 		IsFavorite:   record.IsFavorite,
+		ImageType:    imageType,
 		CreatedBy:    record.CreatedBy,
 		CreatedAt:    formatTime(record.CreatedAt),
 		UpdatedAt:    formatTime(record.UpdatedAt),
 	}
+}
+
+func canonicalImageType(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if validImageType(value) {
+		return value
+	}
+	return ""
 }
 
 func thumbnailURL(record database.ImageAsset) string {

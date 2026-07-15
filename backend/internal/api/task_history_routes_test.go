@@ -127,6 +127,11 @@ func TestTaskHistoryRoutesKindFilterAndPaginationAreDeterministic(t *testing.T) 
 		Update("image_type", "A_PLUS").Error; err != nil {
 		t.Fatalf("set task-c image type: %v", err)
 	}
+	if err := db.Model(&database.ImageAsset{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, "asset-c").
+		Update("category", "A_PLUS").Error; err != nil {
+		t.Fatalf("set asset-c category: %v", err)
+	}
 
 	pageOne := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?pageNum=1&pageSize=2", nil, adminSession.cookies, nil)
 	if pageOne.Code != http.StatusOK {
@@ -168,6 +173,17 @@ func TestTaskHistoryRoutesKindFilterAndPaginationAreDeterministic(t *testing.T) 
 	assertPageMeta(t, aPlusData, 1, 1, 20)
 	aPlusRecords := recordsField(t, aPlusData)
 	assertHistoryRecord(t, aPlusRecords[0].(map[string]any), "asset-c", assetpkg.KindEdited, "task-c")
+
+	if err := db.Model(&database.ImageAsset{}).
+		Where("tenant_id = ? AND id = ?", adminSession.tenantID, "asset-c").
+		Update("category", "DETAIL").Error; err != nil {
+		t.Fatalf("move asset-c category: %v", err)
+	}
+	aPlusAfterMove := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?imageType=A_PLUS", nil, adminSession.cookies, nil)
+	assertPageMeta(t, decodeData(t, aPlusAfterMove), 0, 1, 20)
+	detailAfterMove := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?imageType=DETAIL", nil, adminSession.cookies, nil)
+	assertPageMeta(t, decodeData(t, detailAfterMove), 1, 1, 20)
+	assertHistoryRecord(t, recordsField(t, decodeData(t, detailAfterMove))[0].(map[string]any), "asset-c", assetpkg.KindEdited, "task-c")
 
 	capped := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/history?pageSize=1000", nil, adminSession.cookies, nil)
 	if capped.Code != http.StatusOK {

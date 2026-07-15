@@ -463,7 +463,7 @@ func (s *Service) updateAsset(ctx context.Context, principal auth.Principal, ass
 		updates["category"] = *input.Category
 	}
 	if input.Filename != nil {
-		updates["filename"] = *input.Filename
+		updates["filename"] = filenameForMIME(*input.Filename, record.MimeType)
 	}
 	if input.IsFavorite != nil {
 		updates["is_favorite"] = *input.IsFavorite
@@ -725,9 +725,9 @@ func parseListQuery(c *gin.Context) (ListQuery, error) {
 	if kind != "" && !validKind(kind) {
 		return ListQuery{}, ErrValidation
 	}
-	category, err := cleanOptional(c.Query("category"), maxCategoryRunes)
-	if err != nil {
-		return ListQuery{}, err
+	category := strings.ToUpper(strings.TrimSpace(c.Query("category")))
+	if category != "" && !validImageType(category) {
+		return ListQuery{}, ErrValidation
 	}
 	var favorite *bool
 	if raw := strings.TrimSpace(c.Query("favorite")); raw != "" {
@@ -737,8 +737,21 @@ func parseListQuery(c *gin.Context) (ListQuery, error) {
 		}
 		favorite = &value
 	}
+	imageType := strings.ToUpper(strings.TrimSpace(c.Query("imageType")))
+	if imageType != "" && !validImageType(imageType) {
+		return ListQuery{}, ErrValidation
+	}
 
-	return ListQuery{PageNum: pageNum, PageSize: pageSize, Kind: kind, Category: category, Favorite: favorite}, nil
+	return ListQuery{PageNum: pageNum, PageSize: pageSize, Kind: kind, Category: category, Favorite: favorite, ImageType: imageType}, nil
+}
+
+func validImageType(value string) bool {
+	switch value {
+	case "MAIN", "A_PLUS", "SCENE", "DETAIL", "DIMENSION", "SELLING_POINT", "PROMOTION", "COMPARISON":
+		return true
+	default:
+		return false
+	}
 }
 
 func parsePositiveInt(raw string, fallback int) int {
@@ -760,9 +773,12 @@ func normalizeUploadRequest(c *gin.Context, validated validatedUpload) (uploadIn
 	if kind != KindReference {
 		return uploadInput{}, ErrValidation
 	}
-	category, err := cleanOptional(c.PostForm("category"), maxCategoryRunes)
-	if err != nil {
-		return uploadInput{}, err
+	category := strings.ToUpper(strings.TrimSpace(c.PostForm("category")))
+	if category == "" {
+		category = "MAIN"
+	}
+	if !validImageType(category) {
+		return uploadInput{}, ErrValidation
 	}
 	filename := validated.Filename
 	if rawFilename := strings.TrimSpace(c.PostForm("filename")); rawFilename != "" {
@@ -792,9 +808,9 @@ func normalizeUpdateRequest(request updateRequest) (UpdateInput, []string, error
 	input := UpdateInput{}
 	changedFields := make([]string, 0, 3)
 	if request.Category != nil {
-		value, err := cleanOptional(*request.Category, maxCategoryRunes)
-		if err != nil {
-			return UpdateInput{}, nil, err
+		value := strings.ToUpper(strings.TrimSpace(*request.Category))
+		if !validImageType(value) {
+			return UpdateInput{}, nil, ErrValidation
 		}
 		input.Category = &value
 		changedFields = append(changedFields, "category")

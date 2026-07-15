@@ -105,7 +105,11 @@ func (r Repository) ListHistoryPairs(ctx context.Context, scope tenant.Scope, pr
 		Where("image_assets.deleted_at IS NULL").
 		Where("image_assets.kind IN ?", kinds)
 	if options.ImageType != "" {
-		query = query.Where("generation_tasks.image_type = ?", options.ImageType)
+		query = query.Where(`(CASE
+			WHEN UPPER(TRIM(image_assets.category)) IN ('MAIN', 'A_PLUS', 'SCENE', 'DETAIL', 'DIMENSION', 'SELLING_POINT', 'PROMOTION', 'COMPARISON')
+				THEN UPPER(TRIM(image_assets.category))
+			ELSE generation_tasks.image_type
+		END) = ?`, options.ImageType)
 	}
 
 	var total int64

@@ -108,6 +108,7 @@ export interface Asset {
   previewUrl?: string
   downloadUrl?: string
   isFavorite: boolean
+  imageType?: string
   createdBy: UserId
   createdAt: ISODateTimeString
   updatedAt: ISODateTimeString

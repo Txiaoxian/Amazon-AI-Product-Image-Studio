@@ -137,7 +137,7 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	referenceBytes := validPNG(t, 3, 2)
 	uploadResponse := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "reference.png", "image/png", referenceBytes, map[string]string{
 		"kind":     asset.KindReference,
-		"category": "reference",
+		"category": "MAIN",
 		"filename": "reference.png",
 	}, adminSession.cookies, adminSession.csrfHeader())
 	if uploadResponse.Code != http.StatusCreated {
@@ -150,7 +150,7 @@ func TestP15E2ECoreFlowContractsAcrossAPIWorkerSSEHistoryAndObservability(t *tes
 	}
 
 	updateAsset := performJSON(router, http.MethodPatch, "/api/v1/assets/"+referenceAssetID, map[string]any{
-		"category":   "hero-reference",
+		"category":   "DETAIL",
 		"filename":   "safe-reference.png",
 		"isFavorite": true,
 	}, adminSession.cookies, adminSession.csrfHeader())

@@ -72,12 +72,14 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
         ) : null}
 
         <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
-          <label className="space-y-2">
+          <label className="space-y-2" htmlFor="login-email">
             <span className="field-label">邮箱</span>
             <input
               autoComplete="email"
               className="field-input"
               disabled={isSubmitting}
+              id="login-email"
+              name="email"
               onChange={(event) => setEmail(event.target.value)}
               required
               type="email"
@@ -85,12 +87,14 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
             />
           </label>
 
-          <label className="space-y-2">
+          <label className="space-y-2" htmlFor="login-password">
             <span className="field-label">密码</span>
             <input
               autoComplete="current-password"
               className="field-input"
               disabled={isSubmitting}
+              id="login-password"
+              name="password"
               onChange={(event) => setPassword(event.target.value)}
               required
               type="password"
@@ -120,6 +124,7 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
                 id="login-captcha"
                 inputMode="numeric"
                 maxLength={8}
+                name="captchaCode"
                 onChange={(event) => setCaptchaCode(event.target.value)}
                 placeholder="管理员可留空"
                 value={captchaCode}

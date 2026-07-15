@@ -1,4 +1,4 @@
-import { Download, Eye, Pencil } from 'lucide-react'
+import { Download, Eye, Pencil, PencilLine, Star } from 'lucide-react'
 import { formatBytes } from '../../lib/storageLimit'
 import type { BackendHistoryItem } from '../../types/history'
 
@@ -6,10 +6,13 @@ interface HistoryItemProps {
   history: BackendHistoryItem
   onView: (history: BackendHistoryItem) => void
   onEdit: (history: BackendHistoryItem) => void
+  onRename: (history: BackendHistoryItem) => void
   onDownload: (history: BackendHistoryItem) => void
+  onToggleFavorite: (history: BackendHistoryItem) => void
+  isFavoritePending?: boolean
 }
 
-export function HistoryItem({ history, onView, onEdit, onDownload }: HistoryItemProps) {
+export function HistoryItem({ history, onView, onEdit, onRename, onDownload, onToggleFavorite, isFavoritePending = false }: HistoryItemProps) {
   const createdAt = new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -42,6 +45,19 @@ export function HistoryItem({ history, onView, onEdit, onDownload }: HistoryItem
             </button>
             <button aria-label={`再次编辑 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onEdit(history)} title="再次编辑" type="button">
               <Pencil className="h-4 w-4" />
+            </button>
+            <button aria-label={`重命名 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onRename(history)} title="重命名" type="button">
+              <PencilLine className="h-4 w-4" />
+            </button>
+            <button
+              aria-label={`${history.asset.isFavorite ? '取消收藏' : '收藏'} ${history.asset.filename}`}
+              className={`icon-button h-8 w-8 ${history.asset.isFavorite ? 'border-amazon-400 bg-amazon-500/10 text-amazon-600' : ''}`}
+              disabled={isFavoritePending}
+              onClick={() => onToggleFavorite(history)}
+              title={history.asset.isFavorite ? '取消收藏' : '收藏'}
+              type="button"
+            >
+              <Star className={`h-4 w-4 ${history.asset.isFavorite ? 'fill-current' : ''}`} />
             </button>
             <button aria-label={`下载结果 ${history.asset.filename}`} className="icon-button h-8 w-8" onClick={() => onDownload(history)} title="下载" type="button">
               <Download className="h-4 w-4" />

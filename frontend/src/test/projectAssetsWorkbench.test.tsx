@@ -376,6 +376,7 @@ describe('project asset workbench', () => {
     expect((uploadCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
     expect(uploadCall?.[1]?.body).toBeInstanceOf(FormData)
     expect((uploadCall?.[1]?.body as FormData).get('file')).toBe(file)
+    expect((uploadCall?.[1]?.body as FormData).get('category')).toBe('MAIN')
   })
 
   it('shows project load failures with a recoverable empty project state', async () => {
@@ -590,7 +591,7 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
         return successResponse(page([asset]))
       }
-      if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&category=hero&favorite=true&pageNum=1&pageSize=50') {
+      if (url === '/api/v1/projects/project_1/assets?kind=GENERATED&favorite=true&imageType=MAIN&pageNum=1&pageSize=50') {
         return errorResponse(500, 'ASSET_FILTER_FAILED', 'Asset filter failed.')
       }
 
@@ -605,11 +606,57 @@ describe('project asset workbench', () => {
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('资产类型'), 'GENERATED')
     await user.selectOptions(screen.getByLabelText('收藏'), 'true')
-    await user.type(screen.getByLabelText('筛选分类'), 'hero')
+    await user.selectOptions(screen.getByLabelText('素材图片类型'), 'MAIN')
     await user.click(screen.getByRole('button', { name: '筛选资产' }))
 
     expect(await screen.findByText('资产加载失败')).toBeInTheDocument()
     expect(screen.getAllByText('reference.png').length).toBeGreaterThan(0)
+  })
+
+  it('filters favorite product assets by image type', async () => {
+    const user = userEvent.setup()
+    const favoriteMainAsset = {
+      ...asset,
+      id: 'asset_main_1',
+      kind: 'GENERATED',
+      imageType: 'MAIN',
+      filename: 'main-favorite.png',
+      isFavorite: true,
+    }
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return successResponse(authenticatedSession)
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([model], 100))
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([project]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
+        return successResponse(page([favoriteMainAsset]))
+      }
+      if (url === '/api/v1/projects/project_1/assets?favorite=true&imageType=MAIN&pageNum=1&pageSize=50') {
+        return successResponse(page([favoriteMainAsset]))
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+    await openProductAssets(user)
+
+    await user.selectOptions(screen.getByLabelText('收藏'), 'true')
+    await user.selectOptions(screen.getByLabelText('素材图片类型'), 'MAIN')
+    await user.click(screen.getByRole('button', { name: '筛选资产' }))
+
+    expect(await screen.findByText('main-favorite.png')).toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toContain(
+      '/api/v1/projects/project_1/assets?favorite=true&imageType=MAIN&pageNum=1&pageSize=50',
+    )
   })
 
   it('does not apply asset metadata edits until the backend confirms them', async () => {
@@ -643,7 +690,10 @@ describe('project asset workbench', () => {
 
     await user.click(await screen.findByRole('button', { name: '查看详情 reference.png' }))
     await user.clear(screen.getByLabelText('文件名'))
-    await user.type(screen.getByLabelText('文件名'), 'renamed.png')
+    await user.type(screen.getByLabelText('文件名'), 'renamed.jpg')
+    expect(screen.getByLabelText('文件名')).toHaveValue('renamed')
+    expect(screen.getByText('.png')).toBeInTheDocument()
+    expect(screen.getByText('文件格式由图片实际内容决定，扩展名不可修改。')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '保存元数据' }))
 
     expect((await screen.findAllByText('请求内容未通过校验，请检查产品名称或图片文件。')).length).toBeGreaterThan(0)
@@ -656,7 +706,7 @@ describe('project asset workbench', () => {
     const updatedAsset = {
       ...asset,
       filename: 'renamed.png',
-      category: 'hero',
+      category: 'MAIN',
       isFavorite: true,
       updatedAt: '2026-05-13T00:00:00Z',
     }
@@ -690,8 +740,12 @@ describe('project asset workbench', () => {
     await user.click(await screen.findByRole('button', { name: '查看详情 reference.png' }))
     await user.clear(screen.getByLabelText('文件名'))
     await user.type(screen.getByLabelText('文件名'), 'renamed.png')
-    await user.clear(screen.getByLabelText('分类'))
-    await user.type(screen.getByLabelText('分类'), 'hero')
+    const categorySelect = screen.getByLabelText('分类')
+    expect(categorySelect.tagName).toBe('SELECT')
+    expect(within(categorySelect).getAllByRole('option')).toHaveLength(8)
+    expect(within(categorySelect).queryByRole('option', { name: '未分类' })).not.toBeInTheDocument()
+    expect(within(categorySelect).getByRole('option', { name: '主图' })).toHaveValue('MAIN')
+    await user.selectOptions(categorySelect, 'MAIN')
     await user.click(screen.getByLabelText('收藏资产'))
     await user.click(screen.getByRole('button', { name: '保存元数据' }))
 
@@ -702,7 +756,7 @@ describe('project asset workbench', () => {
     expect((updateCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
     expect(JSON.parse(updateCall?.[1]?.body as string)).toEqual({
       filename: 'renamed.png',
-      category: 'hero',
+      category: 'MAIN',
       isFavorite: true,
     })
   })
@@ -852,12 +906,13 @@ describe('project asset workbench', () => {
     expect(screen.getByText('暂无产品素材')).toBeInTheDocument()
   })
 
-  it('removes an asset from a category-filtered list after category metadata changes', async () => {
+  it('moves an asset out of the current image-type list after its classification changes', async () => {
     const user = userEvent.setup()
     const categoryAsset = {
       ...asset,
       filename: 'category.png',
-      category: 'reference',
+      category: 'MAIN',
+      imageType: 'MAIN',
     }
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
@@ -874,11 +929,11 @@ describe('project asset workbench', () => {
       if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
         return successResponse(page([categoryAsset]))
       }
-      if (url === '/api/v1/projects/project_1/assets?category=reference&pageNum=1&pageSize=50') {
+      if (url === '/api/v1/projects/project_1/assets?imageType=MAIN&pageNum=1&pageSize=50') {
         return successResponse(page([categoryAsset]))
       }
       if (url === '/api/v1/assets/asset_1' && init?.method === 'PATCH') {
-        return successResponse({ ...categoryAsset, category: 'hero' })
+        return successResponse({ ...categoryAsset, category: 'DETAIL', imageType: 'DETAIL' })
       }
 
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
@@ -890,11 +945,10 @@ describe('project asset workbench', () => {
     await openProductAssets(user)
 
     expect(await screen.findByText('category.png')).toBeInTheDocument()
-    await user.type(screen.getByLabelText('筛选分类'), 'reference')
+    await user.selectOptions(screen.getByLabelText('素材图片类型'), 'MAIN')
     await user.click(screen.getByRole('button', { name: '筛选资产' }))
     await user.click(await screen.findByRole('button', { name: '查看详情 category.png' }))
-    await user.clear(screen.getByLabelText('分类'))
-    await user.type(screen.getByLabelText('分类'), 'hero')
+    await user.selectOptions(screen.getByLabelText('分类'), 'DETAIL')
     await user.click(screen.getByRole('button', { name: '保存元数据' }))
 
     expect(await screen.findByText('资产元数据已更新。')).toBeInTheDocument()

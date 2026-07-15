@@ -12,7 +12,12 @@ import {
 } from '../api/projects'
 import { validateImageFile } from '../lib/file'
 import type { Asset, AssetId, AssetKind, Project, ProjectId, ProjectMember, ProjectMemberCandidate, UserId } from '../types/platform'
-import type { AssetReferenceInput } from '../types/workbench'
+import {
+  DEFAULT_WORKBENCH_IMAGE_TYPE,
+  normalizeWorkbenchImageType,
+  type AssetReferenceInput,
+  type WorkbenchImageType,
+} from '../types/workbench'
 
 type RemoteStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -31,6 +36,7 @@ export interface AssetFilters {
   category?: string
   favorite?: boolean
   kind?: AssetKind
+  imageType?: WorkbenchImageType
 }
 
 export function useProjectAssets({
@@ -460,7 +466,7 @@ export function useProjectAssets({
   )
 
   const uploadReferences = useCallback(
-    async (files: File[] | FileList): Promise<UploadReferenceResult> => {
+    async (files: File[] | FileList, category: WorkbenchImageType = DEFAULT_WORKBENCH_IMAGE_TYPE): Promise<UploadReferenceResult> => {
       if (!selectedProjectId) {
         setError('请先选择产品。')
         return { assets: [], skipped: 0 }
@@ -498,7 +504,7 @@ export function useProjectAssets({
             selectedProjectId,
             {
               file,
-              category: 'reference',
+              category,
               filename: file.name,
             },
             csrfToken,
@@ -698,6 +704,7 @@ function normalizeAssetFilters(filters: AssetFilters): AssetFilters {
     category: filters.category?.trim() || undefined,
     favorite: filters.favorite,
     kind: filters.kind,
+    imageType: filters.imageType,
   }
 }
 
@@ -735,7 +742,7 @@ function sortMembers(members: ProjectMember[]): ProjectMember[] {
 
 function normalizeAssetUpdateRequest(request: UpdateAssetRequest): UpdateAssetRequest {
   return {
-    category: request.category?.trim(),
+    category: request.category,
     filename: request.filename?.trim(),
     isFavorite: request.isFavorite,
   }
@@ -754,6 +761,9 @@ function assetMatchesFilters(asset: Asset, filters: AssetFilters): boolean {
     return false
   }
   if (normalizedFilters.favorite !== undefined && asset.isFavorite !== normalizedFilters.favorite) {
+    return false
+  }
+  if (normalizedFilters.imageType && normalizeWorkbenchImageType(asset.category || asset.imageType) !== normalizedFilters.imageType) {
     return false
   }
   return true

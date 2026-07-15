@@ -14,6 +14,17 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe('project and asset API wrappers', () => {
+  it('adds image type to the product asset list query', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ records: [], total: 0, pageNum: 1, pageSize: 50 }))
+    const assetApi = createAssetApi(createApiClient({ fetchImpl }))
+
+    await assetApi.list('project_1', { favorite: true, imageType: 'A_PLUS', pageNum: 1, pageSize: 50 })
+
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      '/api/v1/projects/project_1/assets?favorite=true&imageType=A_PLUS&pageNum=1&pageSize=50',
+    )
+  })
+
   it('lists and creates projects through the authenticated API client', async () => {
     const project = {
       id: 'project_1',
@@ -110,7 +121,7 @@ describe('project and asset API wrappers', () => {
         'project_1',
         {
           file,
-          category: 'reference',
+          category: 'MAIN',
           filename: 'reference.png',
           isFavorite: true,
         },
@@ -132,7 +143,7 @@ describe('project and asset API wrappers', () => {
     expect(headers.has('Content-Type')).toBe(false)
     expect(body.get('file')).toBe(file)
     expect(body.get('kind')).toBe('REFERENCE')
-    expect(body.get('category')).toBe('reference')
+    expect(body.get('category')).toBe('MAIN')
     expect(body.get('filename')).toBe('reference.png')
     expect(body.get('isFavorite')).toBe('true')
   })
@@ -273,7 +284,7 @@ describe('project and asset API wrappers', () => {
         }),
       )
       .mockResolvedValueOnce(jsonResponse(asset))
-      .mockResolvedValueOnce(jsonResponse({ ...asset, filename: 'renamed.png', category: 'hero', isFavorite: true }))
+      .mockResolvedValueOnce(jsonResponse({ ...asset, filename: 'renamed.png', category: 'DETAIL', isFavorite: true }))
       .mockResolvedValueOnce(jsonResponse({ ...asset, isFavorite: true }))
       .mockResolvedValueOnce(jsonResponse({ ...asset, isFavorite: false }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
@@ -288,13 +299,13 @@ describe('project and asset API wrappers', () => {
       )
     const assetApi = createAssetApi(createApiClient({ fetchImpl }))
 
-    await expect(assetApi.list('project_1', { kind: 'REFERENCE', category: 'hero', favorite: false })).resolves.toMatchObject({
+    await expect(assetApi.list('project_1', { kind: 'REFERENCE', category: 'DETAIL', favorite: false })).resolves.toMatchObject({
       records: [asset],
     })
     await expect(assetApi.get('asset_1')).resolves.toEqual(asset)
     await expect(
-      assetApi.update('asset_1', { filename: 'renamed.png', category: 'hero', isFavorite: true }, 'csrf_memory_only'),
-    ).resolves.toMatchObject({ filename: 'renamed.png', category: 'hero', isFavorite: true })
+      assetApi.update('asset_1', { filename: 'renamed.png', category: 'DETAIL', isFavorite: true }, 'csrf_memory_only'),
+    ).resolves.toMatchObject({ filename: 'renamed.png', category: 'DETAIL', isFavorite: true })
     await expect(assetApi.favorite('asset_1', 'csrf_memory_only')).resolves.toMatchObject({ isFavorite: true })
     await expect(assetApi.unfavorite('asset_1', 'csrf_memory_only')).resolves.toMatchObject({ isFavorite: false })
     await expect(assetApi.delete('asset_1', 'csrf_memory_only')).resolves.toEqual({ ok: true })
@@ -304,7 +315,7 @@ describe('project and asset API wrappers', () => {
     expect(await readBlobText(downloaded.blob)).toBe('image-bytes')
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
-      '/api/v1/projects/project_1/assets?kind=REFERENCE&category=hero&favorite=false',
+      '/api/v1/projects/project_1/assets?kind=REFERENCE&category=DETAIL&favorite=false',
       '/api/v1/assets/asset_1',
       '/api/v1/assets/asset_1',
       '/api/v1/assets/asset_1/favorite',
@@ -322,7 +333,7 @@ describe('project and asset API wrappers', () => {
     expect((fetchImpl.mock.calls[5][1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_memory_only')
     expect(JSON.parse(fetchImpl.mock.calls[2][1]?.body as string)).toEqual({
       filename: 'renamed.png',
-      category: 'hero',
+      category: 'DETAIL',
       isFavorite: true,
     })
     expect(fetchImpl.mock.calls[6][1]).toEqual(

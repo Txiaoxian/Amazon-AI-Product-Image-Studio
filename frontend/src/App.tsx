@@ -36,6 +36,7 @@ import type { Asset, Project, ProjectMemberRole, TaskId, UserId } from './types/
 import {
   DEFAULT_WORKBENCH_IMAGE_TYPE,
   normalizeWorkbenchImageType,
+  type AssetReferenceInput,
   type WorkbenchImageType,
   type WorkbenchReferenceInput,
   type WorkbenchTaskInput,
@@ -93,7 +94,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const { refreshProjectMemberCandidates, refreshProjectMembers } = projectAssets
   const workbenchModels = useWorkbenchModels()
   const [imageType, setImageType] = useState<WorkbenchImageType>(DEFAULT_WORKBENCH_IMAGE_TYPE)
-  const history = useHistory({ imageType, projectId: projectAssets.selectedProjectId })
+  const history = useHistory({ csrfToken: session.csrfToken, imageType, projectId: projectAssets.selectedProjectId })
   const refreshHistory = history.refresh
   const generation = useGeneration({
     csrfToken: session.csrfToken,
@@ -141,6 +142,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [isProjectManagementOpen, setProjectManagementOpen] = useState(false)
   const [projectToManage, setProjectToManage] = useState<Project | null>(null)
   const [pendingEditSourceAssetId, setPendingEditSourceAssetId] = useState<Asset['id'] | null>(null)
+  const [editSourceReference, setEditSourceReference] = useState<AssetReferenceInput | null>(null)
   const selectedProjectIdRef = useRef(projectAssets.selectedProjectId)
   const detailRequestVersionRef = useRef(0)
   const refreshedSuccessNotificationIdRef = useRef('')
@@ -176,6 +178,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     setDetailError('')
     setDetailOpen(false)
     setPendingEditSourceAssetId(null)
+    setEditSourceReference(null)
     setDraft(null)
     setReferenceToAdd(null)
     setWorkspaceLibraryOpen(false)
@@ -253,6 +256,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       if (!isAvailable) {
         setNotice('再次编辑所需资产不可用，请刷新历史后重试。')
         setPendingEditSourceAssetId(null)
+        setEditSourceReference(null)
         return
       }
     }
@@ -264,6 +268,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
     if (task) {
       setPendingEditSourceAssetId(null)
+      setEditSourceReference(null)
       setNotice('任务已创建，结果会通过实时事件流更新。')
     }
   }
@@ -327,6 +332,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
         return
       }
       setPendingEditSourceAssetId(backendDetail.asset.id)
+      setEditSourceReference(projectAssets.createReferenceFromAsset(backendDetail.asset))
       setDraft({
         prompt: backendDetail.task.prompt,
         modelId: backendDetail.task.modelId,
@@ -337,6 +343,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
       setNotice('已准备基于后端资产再次编辑。')
     } catch {
       setPendingEditSourceAssetId(null)
+      setEditSourceReference(null)
       setNotice('再次编辑所需资产不可用，请刷新历史后重试。')
     }
   }
@@ -384,7 +391,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleUploadReferences = async (files: FileList) => {
-    const result = await projectAssets.uploadReferences(files)
+    const result = await projectAssets.uploadReferences(files, imageType)
 
     if (result.assets.length > 0) {
       setNotice(`已上传 ${result.assets.length} 张参考图到产品素材库。`)
@@ -412,7 +419,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   const handleSavePendingReferences = async (files: File[]): Promise<WorkbenchReferenceInput[]> => {
-    const result = await projectAssets.uploadReferences(files)
+    const result = await projectAssets.uploadReferences(files, imageType)
     if (result.assets.length > 0) {
       setNotice(`已保存 ${result.assets.length} 张参考图到产品。`)
     }
@@ -457,13 +464,29 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
   const handleUpdateAsset = async (
     asset: Asset,
-    request: { filename?: string; category?: string; isFavorite?: boolean },
+    request: { filename?: string; category?: WorkbenchImageType; isFavorite?: boolean },
   ) => {
     const updated = await projectAssets.updateAsset(asset, request)
 
     if (updated) {
       setAssetDetail(updated)
+      if (pendingEditSourceAssetId === updated.id) {
+        setEditSourceReference(projectAssets.createReferenceFromAsset(updated))
+      }
       setNotice('资产元数据已更新。')
+      await history.refresh()
+    }
+  }
+
+  const handleToggleAssetFavorite = async (asset: Asset) => {
+    const updated = await projectAssets.toggleFavorite(asset)
+
+    if (updated) {
+      if (assetDetail?.id === updated.id) {
+        setAssetDetail(updated)
+      }
+      setNotice(updated.isFavorite ? '图片已收藏。' : '已取消收藏。')
+      await history.refresh()
     }
   }
 
@@ -505,6 +528,22 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     }
 
     void handleOpenBackendDetail(generation.current.result.assetId, generation.current.task.id)
+  }
+
+  const handleRenameCurrent = async () => {
+    if (!generation.current) {
+      return
+    }
+
+    try {
+      const backendDetail = await history.loadBackendDetail(generation.current.result.assetId, generation.current.task.id)
+      if (selectedProjectIdRef.current !== backendDetail.asset.projectId) {
+        return
+      }
+      setAssetDetail(backendDetail.asset)
+    } catch {
+      setNotice('无法读取该图片，可能已被删除或无权访问。')
+    }
   }
 
   const handleViewTask = (taskId: TaskId) => {
@@ -590,11 +629,17 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
                       .filter((asset) => asset.kind === 'REFERENCE')
                       .map((asset) => projectAssets.createReferenceFromAsset(asset))}
                     draft={draft}
+                    editSourceReference={editSourceReference}
                     imageType={imageType}
                     isGenerating={generation.isSubmitting}
                     modelStatus={workbenchModels.status}
                     models={workbenchModels.models}
                     onError={showNotice}
+                    onEditSourceRemoved={() => {
+                      setPendingEditSourceAssetId(null)
+                      setEditSourceReference(null)
+                      setNotice('已取消编辑原图。')
+                    }}
                     onGenerate={handleGenerateTask}
                     onImageTypeChange={setImageType}
                     onPromptChange={updatePromptDraft}
@@ -615,6 +660,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
                     onCancelTask={() => void generation.cancelCurrentTask()}
                     onDownload={() => void handleDownloadCurrent()}
                     onOpenDetail={handleOpenCurrentDetail}
+                    onRename={() => void handleRenameCurrent()}
                     onRetryTask={() => void generation.retryCurrentTask()}
                     onOpenAssets={() => setWorkspaceLibraryOpen(true)}
                     onSelect={generation.selectCurrent}
@@ -636,10 +682,20 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
                     kind={history.kind}
                     onDownload={(item) => void handleDownloadBackendHistory(item)}
                     onEdit={(item) => void handleEditBackendHistory(item)}
+                    onRename={(item) => setAssetDetail(item.asset)}
+                    favoriteActionAssetId={history.favoriteActionAssetId}
                     onKindChange={history.setKind}
                     onPageChange={history.setPageNum}
                     onPageSizeChange={history.setPageSize}
                     onRefresh={() => void history.refresh()}
+                    onToggleFavorite={(item) => {
+                      void history.toggleFavorite(item).then((updated) => {
+                        if (updated) {
+                          setNotice(updated.isFavorite ? '图片已收藏。' : '已取消收藏。')
+                          void projectAssets.refreshAssets()
+                        }
+                      })
+                    }}
                     onView={(item) => void handleOpenBackendDetail(item.asset.id, item.task.id)}
                     pageNum={history.pageNum}
                     pageSize={history.pageSize}
@@ -744,7 +800,7 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           onDownloadAsset={handleDownloadAsset}
           onOpenAsset={setAssetDetail}
           onRefreshAssets={() => void projectAssets.refreshAssets()}
-          onToggleFavorite={(asset) => void projectAssets.toggleFavorite(asset)}
+          onToggleFavorite={(asset) => void handleToggleAssetFavorite(asset)}
           onUpdateAssetFilters={projectAssets.updateAssetFilters}
           onUploadReferences={(files) => void handleUploadReferences(files)}
           onUseAssetAsReference={(asset) => void handleUseAssetAsReference(asset)}

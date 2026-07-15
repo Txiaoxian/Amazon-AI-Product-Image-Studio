@@ -2,6 +2,7 @@ import { Download, Eye, ImagePlus, Loader2, RefreshCw, Star, Trash2, UploadCloud
 import { useEffect, useRef, useState } from 'react'
 import { formatBytes } from '../../lib/storageLimit'
 import type { Asset, AssetKind, ProjectId } from '../../types/platform'
+import { WORKBENCH_IMAGE_TYPE_OPTIONS, type WorkbenchImageType } from '../../types/workbench'
 import { Button } from '../ui/Button'
 
 interface ProjectAssetsPanelProps {
@@ -13,16 +14,16 @@ interface ProjectAssetsPanelProps {
   assetStatus: 'idle' | 'loading' | 'success' | 'error'
   selectedProjectId: ProjectId | null
   assetFilters: {
-    category?: string
     favorite?: boolean
     kind?: AssetKind
+    imageType?: WorkbenchImageType
   }
   onDeleteAsset: (asset: Asset) => void
   onDownloadAsset: (asset: Asset) => void
   onOpenAsset: (asset: Asset) => void
   onRefreshAssets: () => void
   onToggleFavorite: (asset: Asset) => void
-  onUpdateAssetFilters: (filters: { category?: string; favorite?: boolean; kind?: AssetKind }) => void
+  onUpdateAssetFilters: (filters: { favorite?: boolean; kind?: AssetKind; imageType?: WorkbenchImageType }) => void
   onUploadReferences: (files: FileList) => void
   onUseAssetAsReference: (asset: Asset) => void
 }
@@ -47,8 +48,8 @@ export function ProjectAssetsPanel({
 }: ProjectAssetsPanelProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const [kind, setKind] = useState<AssetKind | ''>(assetFilters.kind ?? '')
-  const [category, setCategory] = useState(assetFilters.category ?? '')
   const [favorite, setFavorite] = useState(assetFilters.favorite === undefined ? '' : String(assetFilters.favorite))
+  const [imageType, setImageType] = useState<WorkbenchImageType | ''>(assetFilters.imageType ?? '')
   const referenceAssets = assets.filter((asset) => asset.kind === 'REFERENCE')
 
   useEffect(() => {
@@ -56,12 +57,12 @@ export function ProjectAssetsPanel({
   }, [assetFilters.kind])
 
   useEffect(() => {
-    setCategory(assetFilters.category ?? '')
-  }, [assetFilters.category])
-
-  useEffect(() => {
     setFavorite(assetFilters.favorite === undefined ? '' : String(assetFilters.favorite))
   }, [assetFilters.favorite])
+
+  useEffect(() => {
+    setImageType(assetFilters.imageType ?? '')
+  }, [assetFilters.imageType])
 
   const applyKind = (nextKind: AssetKind | '') => {
     setKind(nextKind)
@@ -74,8 +75,8 @@ export function ProjectAssetsPanel({
   const applyFilters = () => {
     onUpdateAssetFilters({
       kind: kind || undefined,
-      category: category.trim() || undefined,
       favorite: favorite === '' ? undefined : favorite === 'true',
+      imageType: imageType || undefined,
     })
   }
 
@@ -186,13 +187,15 @@ export function ProjectAssetsPanel({
         </div>
 
         <div className="grid gap-2 rounded-md border border-ink-200 bg-ink-50 p-3">
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-3">
             <label className="grid gap-1 text-xs font-semibold text-ink-500">
               资产类型
               <select
                 aria-label="资产类型"
                 className="field-input bg-white"
                 disabled={!selectedProjectId || isLoadingAssets}
+                id="product-assets-kind"
+                name="assetKind"
                 onChange={(event) => setKind(event.target.value as AssetKind | '')}
                 value={kind}
               >
@@ -208,6 +211,8 @@ export function ProjectAssetsPanel({
                 aria-label="收藏"
                 className="field-input bg-white"
                 disabled={!selectedProjectId || isLoadingAssets}
+                id="product-assets-favorite"
+                name="assetFavorite"
                 onChange={(event) => setFavorite(event.target.value)}
                 value={favorite}
               >
@@ -216,18 +221,26 @@ export function ProjectAssetsPanel({
                 <option value="false">未收藏</option>
               </select>
             </label>
+            <label className="grid gap-1 text-xs font-semibold text-ink-500">
+              图片类型
+              <select
+                aria-label="素材图片类型"
+                className="field-input bg-white"
+                disabled={!selectedProjectId || isLoadingAssets}
+                id="product-assets-image-type"
+                name="assetImageType"
+                onChange={(event) => setImageType(event.target.value as WorkbenchImageType | '')}
+                value={imageType}
+              >
+                <option value="">全部图片类型</option>
+                {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <label className="grid gap-1 text-xs font-semibold text-ink-500">
-            筛选分类
-            <input
-              aria-label="筛选分类"
-              className="field-input bg-white"
-              disabled={!selectedProjectId || isLoadingAssets}
-              onChange={(event) => setCategory(event.target.value)}
-              placeholder="例如 reference、hero、a-plus"
-              value={category}
-            />
-          </label>
           <Button disabled={!selectedProjectId || isLoadingAssets} onClick={applyFilters} variant="secondary">
             筛选资产
           </Button>
@@ -321,7 +334,7 @@ function AssetListItem({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-ink-900">{asset.filename}</p>
           <p className="mt-1 text-xs text-ink-500">
-            {assetKindLabel(asset.kind)} · {asset.width} x {asset.height}
+            {assetKindLabel(asset.kind)}{asset.imageType ? ` · ${imageTypeLabel(asset.imageType)}` : ''} · {asset.width} x {asset.height}
           </p>
           <p className="mt-1 text-xs text-ink-400">
             {createdAt} · {formatBytes(asset.fileSize)}
@@ -375,6 +388,10 @@ function AssetListItem({
       </div>
     </article>
   )
+}
+
+function imageTypeLabel(imageType: string): string {
+  return WORKBENCH_IMAGE_TYPE_OPTIONS.find((option) => option.value === imageType)?.label ?? imageType
 }
 
 function assetKindLabel(kind: AssetKind): string {

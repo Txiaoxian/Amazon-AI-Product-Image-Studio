@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -479,12 +479,103 @@ describe('backend history asset source', () => {
 
     await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
     expect(await screen.findByText('已准备基于后端资产再次编辑。')).toBeInTheDocument()
+    const editSource = screen.getByText('编辑原图').parentElement
+    expect(editSource).not.toBeNull()
+    expect(within(editSource as HTMLElement).getByRole('img', { name: 'hero.png' })).toHaveAttribute(
+      'src',
+      '/api/v1/assets/asset_generated_1/download',
+    )
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
     expect(await screen.findByText('再次编辑所需资产不可用，请刷新历史后重试。')).toBeInTheDocument()
     expect(
       fetchImpl.mock.calls.filter(([url, init]) => url === '/api/v1/projects/project_1/tasks' && init?.method === 'POST'),
     ).toHaveLength(0)
+  })
+
+  it('favorites a generated history image and updates the history action after backend confirmation', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = createHistoryFetch({
+      favoriteAsset: () => successResponse({ ...generatedAsset, isFavorite: true }),
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+    await openHistoryTab(user)
+
+    await user.click(await screen.findByRole('button', { name: '收藏 hero.png' }))
+
+    expect(await screen.findByRole('button', { name: '取消收藏 hero.png' })).toBeInTheDocument()
+    const favoriteCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/assets/asset_generated_1/favorite' && init?.method === 'POST',
+    )
+    expect(favoriteCall).toBeDefined()
+    expect((favoriteCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+  })
+
+  it('renames a generated image from history and refreshes the visible filename', async () => {
+    const user = userEvent.setup()
+    let currentAsset = generatedAsset
+    const fetchImpl = createHistoryFetch({
+      listProjectOneAssets: () => successResponse(page([referenceAsset, currentAsset])),
+      listProjectOneHistory: () => successResponse(page([{ asset: currentAsset, task }], 10)),
+      updateAsset: (init) => {
+        const request = JSON.parse(String(init?.body)) as { filename?: string }
+        currentAsset = {
+          ...currentAsset,
+          filename: request.filename ?? currentAsset.filename,
+          updatedAt: '2026-05-19T00:00:00Z',
+        }
+        return successResponse(currentAsset)
+      },
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+    await openHistoryTab(user)
+
+    await user.click(await screen.findByRole('button', { name: '重命名 hero.png' }))
+    const dialog = await screen.findByRole('dialog', { name: '资产详情' })
+    const filenameInput = within(dialog).getByLabelText('文件名')
+    await user.clear(filenameInput)
+    await user.type(filenameInput, 'amazon-main-image.png')
+    await user.click(within(dialog).getByRole('button', { name: '保存元数据' }))
+
+    expect(await screen.findByRole('button', { name: '重命名 amazon-main-image.png' })).toBeInTheDocument()
+    const updateCall = fetchImpl.mock.calls.find(
+      ([url, init]) => url === '/api/v1/assets/asset_generated_1' && init?.method === 'PATCH',
+    )
+    expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({ filename: 'amazon-main-image.png' })
+    expect((updateCall?.[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf_from_me')
+  })
+
+  it('syncs a favorite change from product assets back to generation history without reloading', async () => {
+    const user = userEvent.setup()
+    let currentAsset = { ...generatedAsset, isFavorite: true }
+    const fetchImpl = createHistoryFetch({
+      listProjectOneAssets: () => successResponse(page([referenceAsset, currentAsset])),
+      listProjectOneHistory: () => successResponse(page([{ asset: currentAsset, task }], 10)),
+      unfavoriteAsset: () => {
+        currentAsset = { ...currentAsset, isFavorite: false }
+        return successResponse(currentAsset)
+      },
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+    await openHistoryTab(user)
+    expect(await screen.findByRole('button', { name: '取消收藏 hero.png' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '产品素材' }))
+    const dialog = await screen.findByRole('dialog', { name: '产品素材' })
+    await user.click(within(dialog).getByRole('button', { name: '取消收藏 hero.png' }))
+
+    const historyPanel = screen.getByRole('complementary', { name: '图片生成历史' })
+    expect(await within(historyPanel).findByRole('button', { name: '收藏 hero.png' })).toBeInTheDocument()
+    expect(fetchImpl.mock.calls).toContainEqual([
+      '/api/v1/assets/asset_generated_1/favorite',
+      expect.objectContaining({ method: 'DELETE' }),
+    ])
   })
 
   it('opens the current backend result with real asset and task detail data instead of a no-op', async () => {
@@ -523,6 +614,11 @@ describe('backend history asset source', () => {
       mimeType: 'image/png',
       sizeBytes: 2048,
     }, 'evt_1')
+
+    await user.click(await screen.findByRole('button', { name: '重命名' }))
+    const renameDialog = await screen.findByRole('dialog', { name: '资产详情' })
+    expect(within(renameDialog).getByLabelText('文件名')).toHaveValue('hero')
+    await user.click(within(renameDialog).getByRole('button', { name: '关闭' }))
 
     await user.click(await screen.findByRole('button', { name: '打开当前结果详情' }))
 
@@ -603,10 +699,14 @@ class FakeEventSource {
 function createHistoryFetch(overrides: {
   createTask?: () => Promise<Response> | Response
   downloadAsset?: () => Promise<Response> | Response
+  favoriteAsset?: () => Promise<Response> | Response
   getAsset?: () => Promise<Response> | Response
+  listProjectOneAssets?: (url: string) => Promise<Response> | Response
   listProjects?: () => Promise<Response> | Response
   listProjectOneHistory?: (url: string) => Promise<Response> | Response
   listProjectTwoHistory?: (url: string) => Promise<Response> | Response
+  unfavoriteAsset?: () => Promise<Response> | Response
+  updateAsset?: (init?: RequestInit) => Promise<Response> | Response
 } = {}) {
   return vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input)
@@ -621,7 +721,7 @@ function createHistoryFetch(overrides: {
       return await (overrides.listProjects?.() ?? successResponse(page(projects)))
     }
     if (url === '/api/v1/projects/project_1/assets?pageNum=1&pageSize=50') {
-      return successResponse(page([referenceAsset, generatedAsset]))
+      return await (overrides.listProjectOneAssets?.(url) ?? successResponse(page([referenceAsset, generatedAsset])))
     }
     if (url === '/api/v1/projects/project_2/assets?pageNum=1&pageSize=50') {
       return successResponse(page([]))
@@ -632,8 +732,17 @@ function createHistoryFetch(overrides: {
     if (url.startsWith('/api/v1/projects/project_2/history?')) {
       return await (overrides.listProjectTwoHistory?.(url) ?? successResponse(page([], 10)))
     }
-    if (url === '/api/v1/assets/asset_generated_1') {
+    if (url === '/api/v1/assets/asset_generated_1' && (!init?.method || init.method === 'GET')) {
       return await (overrides.getAsset?.() ?? successResponse(generatedAsset))
+    }
+    if (url === '/api/v1/assets/asset_generated_1/favorite' && init?.method === 'POST') {
+      return await (overrides.favoriteAsset?.() ?? successResponse({ ...generatedAsset, isFavorite: true }))
+    }
+    if (url === '/api/v1/assets/asset_generated_1/favorite' && init?.method === 'DELETE') {
+      return await (overrides.unfavoriteAsset?.() ?? successResponse({ ...generatedAsset, isFavorite: false }))
+    }
+    if (url === '/api/v1/assets/asset_generated_1' && init?.method === 'PATCH') {
+      return await (overrides.updateAsset?.(init) ?? successResponse(generatedAsset))
     }
     if (url === '/api/v1/tasks/task_1') {
       return successResponse(task)

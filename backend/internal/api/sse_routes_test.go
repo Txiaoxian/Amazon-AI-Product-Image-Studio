@@ -304,6 +304,24 @@ func TestTaskSSEDisconnectCleansSubscription(t *testing.T) {
 	waitForSubscribers(t, broker, 0)
 }
 
+func TestTaskSSESurvivesHTTPServerWriteTimeoutPastHeartbeat(t *testing.T) {
+	router, server, _, _, adminSession := newSSERouteTestServer(t, 20*time.Millisecond)
+	server.Close()
+
+	timedServer := httptest.NewUnstartedServer(router)
+	timedServer.Config.WriteTimeout = 5 * time.Millisecond
+	timedServer.Start()
+	t.Cleanup(timedServer.Close)
+
+	response, cancel := openTaskSSE(t, timedServer, "/api/v1/events/tasks", adminSession.cookies, nil)
+	defer closeSSE(response, cancel)
+
+	frame := readSSEFrame(t, bufio.NewReader(response.Body))
+	if !strings.Contains(frame, "event: HEARTBEAT") {
+		t.Fatalf("SSE frame = %q, want heartbeat after server write timeout", frame)
+	}
+}
+
 func newSSERouteTestServer(t *testing.T, heartbeat time.Duration) (http.Handler, *httptest.Server, *gorm.DB, *sse.Broker, projectRouteSession) {
 	return newSSERouteTestServerWithMaxReplay(t, heartbeat, 0)
 }

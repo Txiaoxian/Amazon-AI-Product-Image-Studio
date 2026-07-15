@@ -41,7 +41,7 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	imageBytes := validPNG(t, 2, 2)
 	uploadResponse := performMultipart(router, http.MethodPost, "/api/v1/projects/"+projectID+"/assets/uploads", "file", "../hero.png", "image/png", imageBytes, map[string]string{
 		"kind":       asset.KindReference,
-		"category":   "reference",
+		"category":   "MAIN",
 		"filename":   "../display.png",
 		"isFavorite": "true",
 	}, editorSession.cookies, editorSession.csrfHeader())
@@ -88,7 +88,7 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 		t.Fatal("uploaded thumbnail was not written to thumbnails storage")
 	}
 
-	listResponse := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?kind=REFERENCE&category=reference&favorite=true&pageNum=1&pageSize=10", nil, editorSession.cookies, nil)
+	listResponse := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?kind=REFERENCE&category=MAIN&favorite=true&pageNum=1&pageSize=10", nil, editorSession.cookies, nil)
 	if listResponse.Code != http.StatusOK {
 		t.Fatalf("list status = %d, want %d: %s", listResponse.Code, http.StatusOK, listResponse.Body.String())
 	}
@@ -110,19 +110,25 @@ func TestAssetRoutesUploadListUpdateFavoriteDownloadDeleteAndAudit(t *testing.T)
 	}
 
 	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/assets/"+assetID, map[string]any{
-		"category":   "hero",
-		"filename":   "safe-name.png",
+		"category":   "DETAIL",
+		"filename":   "safe-name.jpg",
 		"isFavorite": false,
 		"objectKey":  "client/must/not/win",
 	}, editorSession.cookies, editorSession.csrfHeader())
 	if updateResponse.Code != http.StatusOK {
 		t.Fatalf("update status = %d, want %d: %s", updateResponse.Code, http.StatusOK, updateResponse.Body.String())
 	}
-	if stringField(t, decodeData(t, updateResponse), "category") != "hero" {
+	if stringField(t, decodeData(t, updateResponse), "category") != "DETAIL" {
 		t.Fatalf("updated category response = %s", updateResponse.Body.String())
+	}
+	if stringField(t, decodeData(t, updateResponse), "filename") != "safe-name.png" {
+		t.Fatalf("updated filename must keep MIME extension: %s", updateResponse.Body.String())
 	}
 	if err := db.Where("tenant_id = ? AND id = ?", adminSession.tenantID, assetID).First(&record).Error; err != nil {
 		t.Fatalf("reload updated asset: %v", err)
+	}
+	if record.Filename != "safe-name.png" {
+		t.Fatalf("stored filename = %q, want safe-name.png", record.Filename)
 	}
 	if record.ObjectKey != expectedObjectKey {
 		t.Fatal("PATCH must not modify object_key")
@@ -384,7 +390,7 @@ func TestAssetRoutesAuthorizeTenantRBACAndProjectMembership(t *testing.T) {
 	if uploadResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer upload status = %d, want %d", uploadResponse.Code, http.StatusForbidden)
 	}
-	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/assets/"+assetID, map[string]any{"category": "blocked"}, viewerSession.cookies, viewerSession.csrfHeader())
+	updateResponse := performJSON(router, http.MethodPatch, "/api/v1/assets/"+assetID, map[string]any{"category": "DETAIL"}, viewerSession.cookies, viewerSession.csrfHeader())
 	if updateResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer update status = %d, want %d", updateResponse.Code, http.StatusForbidden)
 	}
@@ -490,7 +496,7 @@ func TestAssetRoutesCrossTenantObjectActionsAreInvisibleAndSideEffectFree(t *tes
 		{name: "detail", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b"},
 		{name: "download", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b/download"},
 		{name: "thumbnail", method: http.MethodGet, path: "/api/v1/assets/asset-tenant-b/thumbnail"},
-		{name: "update", method: http.MethodPatch, path: "/api/v1/assets/asset-tenant-b", body: map[string]string{"category": "stolen"}},
+		{name: "update", method: http.MethodPatch, path: "/api/v1/assets/asset-tenant-b", body: map[string]string{"category": "DETAIL"}},
 		{name: "favorite", method: http.MethodPost, path: "/api/v1/assets/asset-tenant-b/favorite"},
 		{name: "unfavorite", method: http.MethodDelete, path: "/api/v1/assets/asset-tenant-b/favorite"},
 		{name: "delete", method: http.MethodDelete, path: "/api/v1/assets/asset-tenant-b"},
@@ -720,6 +726,98 @@ func TestAssetRoutesExistingAssetWithoutThumbnailKeepsEmptyThumbnailURLAnd404Thu
 		t.Fatalf("legacy thumbnail status = %d, want %d: %s", thumbnail.Code, http.StatusNotFound, thumbnail.Body.String())
 	}
 	assertResponseExcludes(t, thumbnail.Body.String(), "legacy-asset-no-thumbnail", "tenants/", "objectKey", "thumbnailObjectKey", "product-thumbnails", "minio")
+}
+
+func TestAssetRoutesListFiltersGeneratedAssetsByImageType(t *testing.T) {
+	router, db, _, adminSession := newAssetRouteTestRouter(t, config.UploadConfig{})
+	projectID := createAssetTestProject(t, router, adminSession, "Image Type Asset Project")
+	now := time.Now().UTC()
+	mainTaskID := "asset-filter-main-task"
+	aPlusTaskID := "asset-filter-aplus-task"
+
+	for _, taskRecord := range []database.GenerationTask{
+		{
+			ID: mainTaskID, TenantID: adminSession.tenantID, ProjectID: projectID,
+			Type: "IMAGE_GENERATION", ProviderID: "provider-main", ModelID: "model-main", Status: "SUCCEEDED",
+			Prompt: "main", ImageType: "MAIN", ParamsJSON: `{}`, InputAssetIDsJSON: `[]`,
+			Attempt: 1, MaxAttempts: 3, CreatedBy: adminSession.userID, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: aPlusTaskID, TenantID: adminSession.tenantID, ProjectID: projectID,
+			Type: "IMAGE_GENERATION", ProviderID: "provider-aplus", ModelID: "model-aplus", Status: "SUCCEEDED",
+			Prompt: "a-plus", ImageType: "A_PLUS", ParamsJSON: `{}`, InputAssetIDsJSON: `[]`,
+			Attempt: 1, MaxAttempts: 3, CreatedBy: adminSession.userID, CreatedAt: now.Add(-time.Minute), UpdatedAt: now,
+		},
+	} {
+		if err := db.Create(&taskRecord).Error; err != nil {
+			t.Fatalf("seed generation task %s: %v", taskRecord.ID, err)
+		}
+	}
+
+	for index, input := range []struct {
+		id     string
+		taskID string
+		name   string
+	}{
+		{id: "asset-filter-main", taskID: mainTaskID, name: "main.png"},
+		{id: "asset-filter-aplus", taskID: aPlusTaskID, name: "a-plus.png"},
+	} {
+		taskID := input.taskID
+		if err := db.Create(&database.ImageAsset{
+			ID: input.id, TenantID: adminSession.tenantID, ProjectID: projectID, Kind: asset.KindGenerated,
+			Category: "generated", Filename: input.name, ObjectKey: "assets/" + input.id + ".png",
+			MimeType: "image/png", SizeBytes: 1, Width: 1, Height: 1, SHA256: strings.Repeat(fmt.Sprint(index+1), 64),
+			IsFavorite: true, SourceTaskID: &taskID, CreatedBy: adminSession.userID, CreatedAt: now.Add(-time.Duration(index) * time.Minute), UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatalf("seed generated asset %s: %v", input.id, err)
+		}
+	}
+
+	response := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?favorite=true&imageType=MAIN&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("image type filtered list status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	records := recordsField(t, decodeData(t, response))
+	if len(records) != 1 {
+		t.Fatalf("image type filtered records = %d, want 1", len(records))
+	}
+	record := records[0].(map[string]any)
+	if got := stringField(t, record, "filename"); got != "main.png" {
+		t.Fatalf("filtered filename = %q, want main.png", got)
+	}
+	if got := stringField(t, record, "imageType"); got != "MAIN" {
+		t.Fatalf("filtered imageType = %q, want MAIN", got)
+	}
+
+	moveResponse := performJSON(router, http.MethodPatch, "/api/v1/assets/asset-filter-main", map[string]any{
+		"category": "DETAIL",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if moveResponse.Code != http.StatusOK {
+		t.Fatalf("move asset category status = %d, want %d: %s", moveResponse.Code, http.StatusOK, moveResponse.Body.String())
+	}
+	if got := stringField(t, decodeData(t, moveResponse), "imageType"); got != "DETAIL" {
+		t.Fatalf("moved asset imageType = %q, want DETAIL", got)
+	}
+
+	oldCategory := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?imageType=MAIN", nil, adminSession.cookies, nil)
+	assertPageMeta(t, decodeData(t, oldCategory), 0, 1, 20)
+	newCategory := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?imageType=DETAIL", nil, adminSession.cookies, nil)
+	assertPageMeta(t, decodeData(t, newCategory), 1, 1, 20)
+	if got := stringField(t, recordsField(t, decodeData(t, newCategory))[0].(map[string]any), "id"); got != "asset-filter-main" {
+		t.Fatalf("moved category asset id = %q, want asset-filter-main", got)
+	}
+
+	invalid := performJSON(router, http.MethodGet, "/api/v1/projects/"+projectID+"/assets?imageType=NOT_ALLOWED", nil, adminSession.cookies, nil)
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid image type status = %d, want %d: %s", invalid.Code, http.StatusUnprocessableEntity, invalid.Body.String())
+	}
+
+	invalidCategory := performJSON(router, http.MethodPatch, "/api/v1/assets/asset-filter-main", map[string]any{
+		"category": "NOT_ALLOWED",
+	}, adminSession.cookies, adminSession.csrfHeader())
+	if invalidCategory.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid category status = %d, want %d: %s", invalidCategory.Code, http.StatusUnprocessableEntity, invalidCategory.Body.String())
+	}
 }
 
 type fakeObjectStore struct {

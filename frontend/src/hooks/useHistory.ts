@@ -9,6 +9,7 @@ import type { WorkbenchImageType } from '../types/workbench'
 
 interface UseHistoryOptions {
   assetApi?: AssetApi
+  csrfToken?: string
   imageType?: WorkbenchImageType
   projectId?: ProjectId | null
   taskApi?: TaskApi
@@ -18,6 +19,7 @@ const DEFAULT_HISTORY_PAGE_SIZE = 10
 
 export function useHistory({
   assetApi = defaultAssetApi,
+  csrfToken,
   imageType,
   projectId = null,
   taskApi = defaultTaskApi,
@@ -29,6 +31,7 @@ export function useHistory({
   const [pageSize, setPageSizeState] = useState(DEFAULT_HISTORY_PAGE_SIZE)
   const [kind, setKindState] = useState<HistoryKind | undefined>(undefined)
   const [total, setTotal] = useState(0)
+  const [favoriteActionAssetId, setFavoriteActionAssetId] = useState<AssetId | null>(null)
   const refreshVersionRef = useRef(0)
   const projectIdRef = useRef<ProjectId | null | undefined>(undefined)
   const imageTypeRef = useRef<WorkbenchImageType | undefined>(undefined)
@@ -145,6 +148,35 @@ export function useHistory({
     [assetApi, projectId],
   )
 
+  const toggleFavorite = useCallback(
+    async (item: BackendHistoryItem): Promise<Asset | null> => {
+      if (!csrfToken) {
+        setError('缺少安全校验信息，请刷新页面后重试。')
+        return null
+      }
+
+      setFavoriteActionAssetId(item.asset.id)
+      setError('')
+      try {
+        const updated = sanitizeAsset(
+          item.asset.isFavorite
+            ? await assetApi.unfavorite(item.asset.id, csrfToken)
+            : await assetApi.favorite(item.asset.id, csrfToken),
+        )
+        setItems((current) => current.map((candidate) => (
+          candidate.asset.id === updated.id ? { ...candidate, asset: updated } : candidate
+        )))
+        return updated
+      } catch (err) {
+        setError(getHistoryFavoriteErrorMessage(err))
+        return null
+      } finally {
+        setFavoriteActionAssetId(null)
+      }
+    },
+    [assetApi, csrfToken],
+  )
+
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -161,6 +193,7 @@ export function useHistory({
 
   return {
     downloadBackendAsset,
+    favoriteActionAssetId,
     ensureBackendAssetAvailable,
     items,
     error,
@@ -174,6 +207,7 @@ export function useHistory({
     setPageNum,
     setPageSize,
     total,
+    toggleFavorite,
   }
 }
 
@@ -203,6 +237,7 @@ function sanitizeAsset(asset: Asset): Asset {
     previewUrl,
     downloadUrl: undefined,
     isFavorite: asset.isFavorite,
+    imageType: asset.imageType,
     createdBy: asset.createdBy,
     createdAt: asset.createdAt,
     updatedAt: asset.updatedAt,
@@ -287,4 +322,20 @@ function getBackendHistoryErrorMessage(error: unknown, fallback: string): string
   }
 
   return fallback
+}
+
+function getHistoryFavoriteErrorMessage(error: unknown): string {
+  if (!isApiClientError(error)) {
+    return '收藏状态更新失败，请稍后重试。'
+  }
+  if (error.status === 401) {
+    return '登录状态已失效，请重新登录。'
+  }
+  if (error.status === 403) {
+    return '没有权限修改该图片的收藏状态。'
+  }
+  if (error.status === 404) {
+    return '图片不存在或已被删除，请刷新历史记录。'
+  }
+  return '收藏状态更新失败，请稍后重试。'
 }

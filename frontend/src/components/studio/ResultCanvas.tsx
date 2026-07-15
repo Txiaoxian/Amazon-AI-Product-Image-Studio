@@ -1,4 +1,4 @@
-import { AlertCircle, Download, ImageIcon, Images, Info, Loader2, RotateCcw, XCircle } from 'lucide-react'
+import { AlertCircle, Download, ImageIcon, Images, Info, Loader2, PencilLine, RotateCcw, XCircle } from 'lucide-react'
 import type { WorkbenchGeneration } from '../../hooks/useGeneration'
 import { formatBytes } from '../../lib/storageLimit'
 import type { TaskStatus } from '../../types/platform'
@@ -16,6 +16,7 @@ interface ResultCanvasProps {
   canRetryTask?: boolean
   onSelect: (index: number) => void
   onOpenDetail: () => void
+  onRename: () => void
   onDownload: () => void
   onCancelTask?: () => void
   onRetryTask?: () => void
@@ -34,6 +35,7 @@ export function ResultCanvas({
   canRetryTask,
   onSelect,
   onOpenDetail,
+  onRename,
   onDownload,
   onCancelTask,
   onRetryTask,
@@ -167,6 +169,9 @@ export function ResultCanvas({
               ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap justify-center gap-2 pb-1" data-testid="result-canvas-actions">
+              <Button icon={<PencilLine className="h-4 w-4" />} onClick={onRename}>
+                重命名
+              </Button>
               <Button icon={<Download className="h-4 w-4" />} onClick={onDownload} variant="primary">
                 下载原图
               </Button>

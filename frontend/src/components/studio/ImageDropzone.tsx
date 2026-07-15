@@ -1,7 +1,7 @@
 import { Check, ImagePlus, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { validateImageFile } from '../../lib/file'
-import type { WorkbenchReferenceInput } from '../../types/workbench'
+import type { AssetReferenceInput, WorkbenchReferenceInput } from '../../types/workbench'
 
 interface ImageDropzoneProps {
   availableReferences?: WorkbenchReferenceInput[]
@@ -11,6 +11,8 @@ interface ImageDropzoneProps {
   onError: (message: string) => void
   disabled?: boolean
   allowUpload?: boolean
+  editSourceReference?: AssetReferenceInput | null
+  onEditSourceRemoved?: () => void
 }
 
 export function ImageDropzone({
@@ -21,6 +23,8 @@ export function ImageDropzone({
   onError,
   disabled,
   allowUpload = true,
+  editSourceReference,
+  onEditSourceRemoved,
 }: ImageDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -45,7 +49,8 @@ export function ImageDropzone({
       return
     }
 
-    const availableSlots = maxReferences === undefined ? nextReferences.length : Math.max(maxReferences - references.length, 0)
+    const selectedCount = references.length + (editSourceReference ? 1 : 0)
+    const availableSlots = maxReferences === undefined ? nextReferences.length : Math.max(maxReferences - selectedCount, 0)
     if (availableSlots === 0) {
       nextReferences.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
       onError(maxReferences === 1 ? '当前模型仅支持 1 张参考图。' : `当前模型最多支持 ${maxReferences} 张参考图。`)
@@ -79,7 +84,7 @@ export function ImageDropzone({
       return
     }
 
-    if (maxReferences !== undefined && references.length >= maxReferences) {
+    if (maxReferences !== undefined && references.length + (editSourceReference ? 1 : 0) >= maxReferences) {
       onError(maxReferences === 1 ? '当前模型仅支持 1 张参考图。' : `当前模型最多支持 ${maxReferences} 张参考图。`)
       return
     }
@@ -93,7 +98,7 @@ export function ImageDropzone({
         <label className="field-label" htmlFor="reference-images">
           参考图（可选）
         </label>
-        <span className="text-xs text-ink-400">{references.length} 张</span>
+        <span className="text-xs text-ink-400">{references.length + (editSourceReference ? 1 : 0)} 张</span>
       </div>
 
       {availableReferences.length > 0 ? (
@@ -176,9 +181,27 @@ export function ImageDropzone({
         </>
       ) : (
         <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-4 text-sm leading-6 text-ink-500">
-          请先在产品素材库上传参考图，再点击“作为参考图”加入当前任务。
+          {editSourceReference ? '当前模型不支持图片编辑，请切换到支持编辑的模型。' : '请先在产品素材库上传参考图，再点击“作为参考图”加入当前任务。'}
         </div>
       )}
+
+      {editSourceReference ? (
+        <div className="rounded-lg border border-amazon-300 bg-amazon-50 p-2">
+          <p className="mb-2 text-xs font-semibold text-amazon-700">编辑原图</p>
+          <div className="group relative aspect-square max-w-28 overflow-hidden rounded-md border border-amazon-300 bg-ink-100">
+            <img alt={editSourceReference.filename} className="h-full w-full object-cover" src={editSourceReference.previewUrl} />
+            <button
+              aria-label={`取消编辑 ${editSourceReference.filename}`}
+              className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-ink-700 opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+              disabled={disabled}
+              onClick={onEditSourceRemoved}
+              type="button"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {references.length > 0 ? (
         <div className="grid grid-cols-3 gap-2">

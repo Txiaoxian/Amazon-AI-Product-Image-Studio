@@ -209,11 +209,11 @@ Asset payload rules for P5:
 
 - Upload uses `multipart/form-data`.
 - Required file field: `file`.
-- Optional fields: `kind`, `category`, `filename`, `isFavorite`.
+- Optional fields: `kind`, `category`, `filename`, `isFavorite`. `category` is the asset's current image type and accepts only `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`; uploads default to `MAIN` when omitted.
 - P5 upload accepts `kind=REFERENCE` only. Generated and edited assets are created by later task/worker flows.
-- Asset response fields: `id`, `tenantId`, `projectId`, `kind`, `category`, `filename`, `mimeType`, `fileSize`, `width`, `height`, `thumbnailUrl`, `previewUrl`, `isFavorite`, `createdBy`, `createdAt`, `updatedAt`.
-- Asset list supports `kind`, `category`, `favorite`, `pageNum`, and `pageSize` query params.
-- `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; it must not change `tenantId`, `projectId`, `objectKey`, or image dimensions.
+- Asset response fields: `id`, `tenantId`, `projectId`, `kind`, `category`, `filename`, `mimeType`, `fileSize`, `width`, `height`, `thumbnailUrl`, `previewUrl`, `isFavorite`, `imageType`, `createdBy`, `createdAt`, `updatedAt`. `category` and `imageType` both expose the asset's current image type. For legacy rows with an invalid or empty category, the backend falls back to the source task image type, then to `MAIN`.
+- Asset list supports `kind`, `category`, `favorite`, `imageType`, `pageNum`, and `pageSize` query params. `category` is retained as a compatibility alias of `imageType`; both filter by the asset's current classification and can be combined with `favorite=true`.
+- `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; changing `category` immediately moves the asset between product-material and generation-history image-type filters without rewriting the source task. It must not change `tenantId`, `projectId`, `objectKey`, image dimensions, MIME type, or the underlying file format. When `filename` is updated, the backend always replaces its extension with the extension determined from the stored MIME type (`.jpg`, `.png`, or `.webp`).
 - `DELETE /assets/{assetId}` is soft delete.
 - `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
 - `GET /assets/{assetId}/thumbnail` must require the same tenant/object authorization envelope as asset reads. If no thumbnail exists, return a sanitized 404 and keep `thumbnailUrl` empty in list/detail/history payloads until thumbnail generation is available for that asset.

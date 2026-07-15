@@ -11,6 +11,7 @@ import {
   DEFAULT_WORKBENCH_IMAGE_TYPE,
   WORKBENCH_IMAGE_TYPE_OPTIONS,
   normalizeWorkbenchImageType,
+  type AssetReferenceInput,
   type WorkbenchImageType,
   type WorkbenchReferenceInput,
   type WorkbenchTaskInput,
@@ -40,11 +41,13 @@ interface BackendControlPanelProps {
   imageType?: WorkbenchImageType
   prompt?: string
   referenceToAdd?: WorkbenchReferenceInput | null
+  editSourceReference?: AssetReferenceInput | null
   onImageTypeChange?: (imageType: WorkbenchImageType) => void
   onPromptChange?: (prompt: string) => void
   onError: (message: string) => void
   onGenerate: (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => Promise<void>
   onReferenceAdded?: () => void
+  onEditSourceRemoved?: () => void
   onRefreshModels: () => void
   onSavePendingReferences?: (files: File[]) => Promise<WorkbenchReferenceInput[]>
   resetKey?: string | null
@@ -59,12 +62,14 @@ export function BackendControlPanel({
   prompt: controlledPrompt,
   draft,
   referenceToAdd,
+  editSourceReference,
   onImageTypeChange,
   onPromptChange,
   onGenerate,
   onError,
   onRefreshModels,
   onReferenceAdded,
+  onEditSourceRemoved,
   onSavePendingReferences,
   resetKey,
 }: BackendControlPanelProps) {
@@ -197,7 +202,7 @@ export function BackendControlPanel({
 
   const workbenchInput = selectedModel ? buildCurrentWorkbenchInput(selectedModel, references) : null
 
-  const canSubmit = Boolean(workbenchInput) && !isSelectedModelUnavailable && !isGenerating
+  const canSubmit = Boolean(workbenchInput) && !isSelectedModelUnavailable && !isGenerating && (!editSourceReference || selectedModel?.supportsEdit === true)
 
   return (
     <PanelShell
@@ -228,14 +233,17 @@ export function BackendControlPanel({
         ))}
       </select>
 
-      {selectedModel?.supportsEdit ? (
+      {selectedModel?.supportsEdit || editSourceReference ? (
         <div className="grid gap-3">
           <ImageDropzone
+            allowUpload={selectedModel?.supportsEdit === true}
             availableReferences={availableReferences}
-            disabled={isGenerating}
-            maxReferences={selectedModel.supportsMultiReference ? undefined : 1}
+            disabled={isGenerating || selectedModel?.supportsEdit !== true}
+            editSourceReference={editSourceReference}
+            maxReferences={selectedModel?.supportsMultiReference ? undefined : 1}
             onChange={setReferences}
             onError={onError}
+            onEditSourceRemoved={onEditSourceRemoved}
             references={references}
           />
           {references.some((reference) => reference.kind === 'pending') ? (

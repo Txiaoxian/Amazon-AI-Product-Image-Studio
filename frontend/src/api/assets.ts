@@ -1,24 +1,26 @@
 import type { ApiPage, QueryParamRecord } from '../types/api'
 import type { Asset, AssetId, AssetKind, ProjectId } from '../types/platform'
+import type { WorkbenchImageType } from '../types/workbench'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface ListAssetsParams {
   kind?: AssetKind
   category?: string
   favorite?: boolean
+  imageType?: WorkbenchImageType
   pageNum?: number
   pageSize?: number
 }
 
 export interface UploadReferenceAssetRequest {
   file: File
-  category?: string
+  category?: WorkbenchImageType
   filename?: string
   isFavorite?: boolean
 }
 
 export interface UpdateAssetRequest {
-  category?: string
+  category?: WorkbenchImageType
   filename?: string
   isFavorite?: boolean
 }
@@ -83,6 +85,7 @@ function assetListQuery(params: ListAssetsParams): QueryParamRecord {
     kind: params.kind,
     category: params.category,
     favorite: params.favorite,
+    imageType: params.imageType,
     pageNum: params.pageNum,
     pageSize: params.pageSize,
   }

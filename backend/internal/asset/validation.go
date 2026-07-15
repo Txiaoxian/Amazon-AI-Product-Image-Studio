@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	maxCategoryRunes  = 128
 	maxFilenameRunes  = 255
 	multipartOverhead = 10 * 1024 * 1024
 )
@@ -200,6 +199,17 @@ func sanitizeFilename(raw string, fallbackExt string) string {
 		raw = "upload." + fallbackExt
 	}
 	return truncateRunes(raw, maxFilenameRunes)
+}
+
+func filenameForMIME(raw string, mimeType string) string {
+	extension := extensionForMIME(mimeType)
+	filename := sanitizeFilename(raw, extension)
+	stem := strings.TrimSpace(strings.TrimSuffix(filename, path.Ext(filename)))
+	if stem == "" {
+		stem = "image"
+	}
+	suffix := "." + extension
+	return truncateRunes(stem, maxFilenameRunes-utf8.RuneCountInString(suffix)) + suffix
 }
 
 func truncateRunes(value string, maxRunes int) string {
