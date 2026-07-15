@@ -1,10 +1,10 @@
-# Backend Rules
+# 后端规则
 
-## Stack
+## 技术栈
 
-Use Go + Gin + GORM for backend services.
+后端服务使用 Go + Gin + GORM。
 
-Expected backend layout:
+后端预期目录结构：
 
 ```text
 backend/
@@ -29,44 +29,44 @@ backend/
     database/
 ```
 
-Explicit migrations currently live in `backend/internal/database/migrations.go`; do not introduce a second migration source unless a later task deliberately changes the migration strategy.
+当前显式迁移位于 `backend/internal/database/migrations.go`；除非后续任务明确调整迁移策略，否则不得引入第二套迁移来源。
 
-## API service
+## API 服务
 
-- Use Gin route groups under `/api/v1`.
-- Add middleware for request ID, logging, panic recovery, security headers, authentication, tenant context, and RBAC.
-- Use consistent response and error shapes documented in `docs/api-contract.md`.
-- Validate request bodies and query params at route boundaries.
-- Never expose internal stack traces or raw third-party error payloads to clients.
-- Prefer Simplified Chinese for human-readable API validation and error messages returned to the platform frontend when practical. Keep machine-readable error codes stable and in English-style uppercase identifiers.
-- Do not pass raw Provider, database, or internal runtime error messages through to users; return a Simplified Chinese summary and keep detailed sanitized context in logs/audit records.
+- 在 `/api/v1` 下使用 Gin 路由组。
+- 添加请求 ID、日志、panic 恢复、安全响应头、身份认证、租户上下文和 RBAC 中间件。
+- 使用 `docs/api-contract.md` 中定义的统一响应和错误结构。
+- 在路由边界校验请求体和查询参数。
+- 绝不向客户端暴露内部堆栈或第三方原始错误载荷。
+- 返回平台前端的人类可读 API 校验和错误信息应尽量使用简体中文。机器可读错误码保持稳定，并使用英文风格的大写标识符。
+- 不得将 Provider、数据库或内部运行时原始错误直接传给用户；应返回简体中文摘要，并在日志/审计记录中保留已脱敏的详细上下文。
 
-## Database
+## 数据库
 
-- Use MySQL 8 as the final source of truth.
-- Use GORM with explicit model definitions and migrations.
-- Every business table must include `tenant_id`.
-- Tenant-scoped repositories must require tenant context and include `tenant_id` filters.
-- Use transactions for state transitions involving tasks, outputs, usage, and events.
+- 使用 MySQL 8 作为最终事实来源。
+- 使用 GORM，并显式定义模型和迁移。
+- 每张业务表都必须包含 `tenant_id`。
+- 租户范围 Repository 必须要求租户上下文，并包含 `tenant_id` 过滤条件。
+- 涉及任务、输出、用量和事件的状态转换必须使用事务。
 
 ## Worker
 
-- Worker processes jobs from Redis and persists state transitions to MySQL.
-- Worker must be idempotent. Duplicate queue deliveries must not duplicate outputs, usage records, or terminal events.
-- Task state transitions must follow the documented state machine.
-- Cancellation, retry, timeout, and recovery must read MySQL state before acting.
-- Worker, queue, auth, Provider, and other stateful backend tasks must define a failure-mode or state-transition matrix before implementation and add tests for each in-scope branch.
-- If a high-risk branch is intentionally deferred, the task package and final handoff must say so explicitly.
+- Worker 从 Redis 处理作业，并将状态转换持久化到 MySQL。
+- Worker 必须具备幂等性。队列重复投递不得产生重复输出、用量记录或终态事件。
+- 任务状态转换必须遵循文档定义的状态机。
+- 取消、重试、超时和恢复操作必须先读取 MySQL 状态再执行。
+- Worker、队列、认证、Provider 和其他有状态后端任务在实施前必须定义失败模式或状态转换矩阵，并为范围内的每个分支添加测试。
+- 如果有意推迟高风险分支，必须在任务包和最终交付说明中明确指出。
 
 ## Redis
 
-Redis may be used for:
+Redis 可用于：
 
-- Job queues.
-- Locks.
-- Concurrency semaphores.
-- Rate limits.
-- Cache.
-- Temporary task delivery acceleration.
+- 作业队列。
+- 锁。
+- 并发信号量。
+- 限流。
+- 缓存。
+- 临时任务投递加速。
 
-Redis must not be treated as the final source of task state.
+不得将 Redis 视为任务状态的最终事实来源。

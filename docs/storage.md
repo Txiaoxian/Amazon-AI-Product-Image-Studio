@@ -1,180 +1,180 @@
-# Storage Plan
+# 存储计划
 
-## Principles
+## 原则
 
-- MinIO stores all image bytes.
-- MySQL stores metadata and `object_key`.
-- MySQL never stores image blobs.
-- Downloads require backend authorization.
-- SVG upload is forbidden.
+- MinIO存储所有图像字节。
+- MySQL存储元数据和`object_key`。
+- MySQL从不存储图像二进制数据。
+- 下载需要后端授权。
+- SVG禁止上传。
 
-## Buckets
+## 桶
 
-Recommended buckets:
+推荐桶：
 
-- `product-images`: original reference, generated, and edited images.
-- `product-image-thumbnails`: generated thumbnails.
+- `product-images`：原始参考、生成和编辑的图像。
+- `product-image-thumbnails`：生成的缩略图。
 
-Buckets may be separated by environment using prefixes or environment-specific bucket names.
+存储桶可以使用前缀或特定于环境的存储桶名称按环境分隔。
 
-P5 should use the existing MinIO environment variables and the shared local `dev-minio` service for routine validation. Do not create project-specific MinIO containers or volumes for ordinary P5 development.
+P5 应使用现有的 MinIO 环境变量和共享本地 `dev-minio` 服务进行例行验证。不要为普通的 P5 开发创建特定于项目的 MinIO 容器或卷。
 
-Current P5 implementation uses the configured originals bucket, defaulting to `product-originals`, for uploaded reference images. Bucket creation is not performed by request handlers; shared local and deployment environments must create or verify required buckets before upload tests.
+当前P5实现使用配置的原始存储桶（默认为`product-originals`）来上传参考图像。存储桶创建不是由请求处理程序执行的；共享本地和部署环境必须在上传测试之前创建或验证所需的存储桶。
 
-## Object key naming
+## 对象键命名
 
-Use deterministic, non-guessable object keys:
+使用确定性的、不可猜测的对象键：
 
 ```text
 tenants/{tenantId}/projects/{projectId}/assets/{assetId}/original.{ext}
 tenants/{tenantId}/projects/{projectId}/assets/{assetId}/thumbnail.jpg
 ```
 
-Never trust user file names for object keys. Original file names may be stored as metadata after sanitization.
+永远不要相信对象密钥的用户文件名。原始文件名在清理后可以存储为元数据。
 
-## Upload validation
+## 上传验证
 
-Validate:
+需要校验：
 
-- Declared MIME type.
-- Magic bytes.
-- Extension after MIME validation.
-- File size.
-- Width and height.
-- Pixel count.
+- 声明 MIME 类型。
+- 文件魔数。
+- MIME验证后扩展。
+- 文件大小。
+- 宽度和高度。
+- 像素数。
 
-Allowed types:
+允许的类型：
 
-- JPEG.
-- PNG.
-- WebP.
+- JPEG。
+- PNG。
+- WebP。
 
-Forbidden:
+禁止的类型：
 
-- SVG.
-- Unknown binary files.
-- Files with image extensions but invalid image magic.
+- SVG。
+- 未知的二进制文件。
+- 带有图像扩展名但图像魔法无效的文件。
 
-P5 validation must happen before any object is written. If validation fails, no image metadata row or MinIO object should remain. If a DB write fails after object upload, the implementation must either delete the just-uploaded object or record enough information for deterministic cleanup.
+P5 验证必须在写入任何对象之前进行。如果验证失败，则不应保留任何图像元数据行或 MinIO 对象。如果对象上传后 DB 写入失败，则实现必须删除刚刚上传的对象或记录足够的信息以进行确定性清理。
 
-Current backend behavior validates before object write and uses the P13 cleanup foundation after object upload. If metadata persistence fails, cleanup uses an independent bounded context so request cancellation cannot prevent best-effort removal; deterministic retention/orphan cleanup paths remain available for later recovery.
+当前后端行为在对象写入之前进行验证，并在对象上传后使用 P13 清理基础。如果元数据持久化失败，清理将使用独立的有界上下文，因此请求取消无法阻止尽力删除；确定性的retention/orphan清理路径仍然可用于以后的恢复。
 
-Current P5 frontend behavior uploads reference images through the backend multipart endpoint only. The browser never uploads directly to MinIO, and frontend MIME/size checks are only UX hints; backend validation is authoritative.
+当前P5前端行为仅通过后端多部分端点上传参考图像。浏览器不会直接上传到MinIO，前端MIME/size检查只是UX提示；后台验证权威。
 
-## Metadata
+## 元数据
 
-`image_assets` stores:
+`image_assets`商店：
 
-- Tenant ID.
-- Project ID.
-- Asset kind.
-- Category.
-- Object key.
-- Thumbnail object key.
-- MIME type.
-- Size.
-- Width and height.
-- SHA-256.
-- Favorite flag.
-- Source task ID.
-- Created by.
+- 租户ID。
+- 项目ID。
+- 资产种类。
+- 类别。
+- 对象键。
+- 缩略图对象键。
+- MIME类型。
+- 尺寸。
+- 宽度和高度。
+- SHA-256。
+- 最喜欢的旗帜。
+- 源任务ID。
+- 创建者。
 
-## Download
+## 下载
 
-Downloads must:
+下载必须：
 
-1. Authenticate user.
-2. Check tenant.
-3. Check project or asset permission.
-4. Stream object through backend or issue a short-lived signed URL.
+1. 验证用户身份。
+2. 检查租户。
+3. 检查项目或资产权限。
+4. 通过后端流式传输对象或发出短暂的签名URL。
 
-Public permanent object URLs are not allowed for private tenant assets.
+私有租户资产不允许使用公共永久对象 URL。
 
-P5 may stream through the backend as the default implementation. Short-lived signed URLs are allowed only after authentication, tenant filtering, and object-level authorization pass.
+P5 可以作为默认实现通过后端进行流式传输。仅在身份验证、租户过滤和对象级授权通过后才允许使用短期签名 URL。
 
-Current P5 backend behavior streams downloads through the backend after `asset -> project` authorization. Public permanent MinIO URLs remain forbidden.
+当前P5后端行为在`asset -> project`授权后通过后端流式下载。公共永久 MinIO URL 仍然被禁止。
 
-Current P5 frontend behavior downloads through `GET /assets/{assetId}/download` and handles the response as a browser blob. Frontend code must not construct MinIO URLs or expose object keys as downloadable URLs.
+当前的 P5 前端行为通过 `GET /assets/{assetId}/download` 下载并将响应作为浏览器 blob 进行处理。前端代码不得构造 MinIO URL 或将对象键公开为可下载 URL。
 
-P8 frontend migration rule:
+P8前端迁移规则：
 
-- Generated and edited workbench results must be read from backend task outputs / authorized asset downloads, not from IndexedDB image blobs.
-- Existing browser history blobs may remain only for an explicit compatibility/import flow if one is later approved. They are not platform assets and must not be silently promoted into MinIO-backed tenant storage.
+- 生成和编辑的工作台结果必须从后端任务输出/授权资产下载中读取，而不是从IndexedDB图片二进制数据读取。
+- 如果稍后获得批准，现有的浏览器历史记录 blob 可能仅保留用于显式 compatibility/import 流。它们不是平台资产，不得默默提升为 MinIO 支持的租户存储。
 
-## Generated and edited outputs
+## 生成和编辑的输出
 
-P7 Worker output handling must:
+P7 Worker 输出处理必须：
 
-1. Receive normalized image bytes from a backend Provider Adapter.
-2. Validate MIME, dimensions, and pixel count before persistence when possible.
-3. Write output objects to MinIO using backend-generated object keys.
-4. Create `image_assets` rows with `kind=GENERATED` or `kind=EDITED`, `task_id`, `project_id`, and `tenant_id`.
-5. Create `task_outputs` rows with `task_id`, `asset_id`, and stable `output_index`.
-6. Write `IMAGE_OUTPUT` task events after metadata is committed.
+1. 从后端Provider适配器接收标准化图像字节。
+2. 如果可能，在持久化之前验证MIME、尺寸和像素数。
+3. 使用后端生成的对象键将输出对象写入MinIO。
+4. 使用 `kind=GENERATED` 或 `kind=EDITED`、`task_id`、`project_id` 和 `tenant_id` 创建 `image_assets` 行。
+5. 使用 `task_id`、`asset_id` 和稳定的 `output_index` 创建 `task_outputs` 行。
+6. 提交元数据后写入`IMAGE_OUTPUT`任务事件。
 
-Worker retries and duplicate queue delivery must not create duplicate output assets for the same task/output index.
+Worker 重试和重复队列传递不得为同一 task/output 索引创建重复的输出资产。
 
-## Thumbnail generation
+## 缩略图生成
 
-Reference uploads and generated/edited Worker outputs create thumbnails as part of the backend persistence path for new assets.
+参考上传和 generated/edited Worker 输出创建缩略图作为新资产后端持久路径的一部分。
 
-P16 thumbnail policy status:
+P16缩略图政策状态：
 
-- Backend now generates bounded JPEG thumbnails from already validated image bytes.
-- Store thumbnail bytes in the configured thumbnails bucket, defaulting to `product-thumbnails`.
-- Store only `thumbnail_object_key` in MySQL. Do not store thumbnail blobs in MySQL.
-- Expose thumbnail access only through `GET /api/v1/assets/{assetId}/thumbnail`, which uses the same authenticated tenant/object authorization envelope as asset reads.
-- Keep `thumbnailUrl` empty for assets that do not have `thumbnail_object_key`; do not expose MinIO bucket names, object keys, permanent public URLs, or browser-generated thumbnail data.
-- New reference uploads and new Worker outputs either persist original object, thumbnail object, metadata, task output, and task event consistently or roll back uploaded objects. Asset metadata must not point at a missing thumbnail.
-- Existing assets without thumbnails are not backfilled. Backfill and orphan discovery remain storage-governance work.
-- Thumbnail bytes are intentionally bounded operational overhead in this phase. Quota enforcement still uses the existing metadata source of truth until a later schema/counter task explicitly adds thumbnail-byte accounting.
+- 后端现在从已验证的图像字节生成有界的 JPEG 缩略图。
+- 将缩略图字节存储在配置的缩略图存储桶中，默认为`product-thumbnails`。
+- 仅将`thumbnail_object_key`存储在MySQL中。不要将缩略图块存储在MySQL中。
+- 仅通过`GET /api/v1/assets/{assetId}/thumbnail`公开缩略图访问，它使用与资产读取相同的经过身份验证的tenant/object授权信封。
+- 对于没有`thumbnail_object_key`的资产，将`thumbnailUrl`留空；不要公开 MinIO 存储桶名称、对象键、永久公共 URL 或浏览器生成的缩略图数据。
+- 新的参考上传和新的Worker输出要么一致地保留原始对象、缩略图对象、元数据、任务输出和任务事件，要么回滚上传的对象。资产元数据不得指向丢失的缩略图。
+- 不回填没有缩略图的现有资源。回填和孤儿发现仍然是存储治理工作。
+- 缩略图字节是有意限制此阶段的操作开销。配额执行仍使用现有元数据最终事实来源，直到稍后的 schema/counter 任务显式添加缩略图字节记帐。
 
-P17 orphan cleanup status:
+P17孤儿清理状态：
 
-- Orphan cleanup is backend-owned and conservative by default.
-- Dry-run and execution use recognized backend object-key patterns plus MySQL metadata, not bucket listing alone, to identify candidates.
-- Cleanup is tenant-scoped, batch-limited, retry-safe, auditable, and sanitized.
-- Responses and logs must not expose full bucket names, object keys, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.
+- 默认情况下，孤立清理由后端拥有且保守。
+- 试运行和执行使用已识别的后端对象键模式加上MySQL元数据（而不是单独的存储桶列表）来识别候选者。
+- 清理是租户范围内的、批次限制的、重试安全的、可审计的且已脱敏。
+- 响应和日志不得公开完整的存储桶名称、对象键、MinIO URL、签名 URL、图像 base64、授权、Cookie、JWT 或 Provider 秘密。
 
-## Deletion
+## 删除
 
-Default deletion is soft delete in MySQL. Physical MinIO deletion must be handled by controlled backend cleanup paths after retention rules are enabled for a tenant.
+MySQL中默认删除是软删除。为租户启用保留规则后，必须通过受控后端清理路径来处理物理 MinIO 删除。
 
-Current backend behavior soft-deletes asset metadata for normal deletes. `P13-BE-STORAGE-CLEANUP-FOUNDATION` adds the internal cleanup foundation for physically deleting already soft-deleted asset objects, and `P13-BE-STORAGE-RETENTION-RUNTIME` adds Worker maintenance scheduling when a tenant explicitly enables retention.
+当前后端行为软删除资产元数据以进行正常删除。 `P13-BE-STORAGE-CLEANUP-FOUNDATION` 添加了内部清理基础，用于物理删除已软删除的资产对象，`P13-BE-STORAGE-RETENTION-RUNTIME` 添加了 Worker 当租户明确启用保留时的维护计划。
 
-P13 storage cleanup foundation status:
+P13存储清理基础状态：
 
-- Upload rollback cleanup no longer depends on the HTTP request context after the object has been written. If metadata persistence fails after object upload, backend attempts object cleanup with an independent bounded context.
-- Physical cleanup is tenant scoped and metadata driven. Cleanup code must never accept an object key from the browser or another untrusted caller as the source of truth for deletion.
-- Cleanup may delete only assets that are already soft deleted and older than a caller-supplied cutoff.
-- Cleanup is batch limited and idempotent. Missing MinIO objects count as successful cleanup; non-not-found storage errors leave the asset eligible for retry.
-- `image_assets.purged_at` records physical cleanup completion, so repeated cleanup runs do not repeatedly delete already purged objects.
-- Do not hard-delete image asset rows in this foundation task. Metadata remains useful for audit/history and future accounting.
+- 对象写入后，上传回滚清理不再依赖于HTTP请求上下文。如果对象上传后元数据持久化失败，后端会尝试使用独立的有界上下文进行对象清理。
+- 物理清理是租户范围和元数据驱动的。清理代码绝不能接受来自浏览器或其他不受信任的调用者的对象密钥作为删除的最终事实来源。
+- 清理可能仅删除已软删除且早于调用者提供的截止时间的资产。
+- 清理是批量有限且幂等的。丢失 MinIO 对象算作成功清理；非未找到存储错误使资产有资格重试。
+- `image_assets.purged_at` 记录物理清理完成情况，因此重复的清理运行不会重复删除已清除的对象。
+- 不要在此基础任务中硬删除图像资产行。元数据对于audit/history和未来的会计仍然有用。
 
-P13 retention runtime rules:
+P13 保留运行时规则：
 
-- `storageRetention.deletedAssetRetentionDays` is nullable. `null` disables automatic physical cleanup for that tenant.
-- The Worker maintenance loop is the runtime consumer for `storageRetention`. It computes a tenant cutoff from the configured day count and calls the cleanup foundation.
-- Worker must skip tenants with absent, null, malformed, or unsupported retention settings. It must not delete anything for those tenants.
-- Storage quota accounting/enforcement is active in the backend. Frontend may display or edit quota only through the system-settings API and only for tenant admins with `system:settings:manage`.
-- Database log retention, conservative orphan cleanup, and frontend runtime-backed settings are implemented. Raw MinIO listing and unrestricted manual cleanup triggers remain intentionally unexposed.
+- `storageRetention.deletedAssetRetentionDays` 可为空。 `null` 禁用该租户的自动物理清理。
+- Worker维护循环是`storageRetention`的运行时使用者。它根据配置的天数计算租户截止时间并调用清理基础。
+- Worker 必须跳过保留设置不存在、为空、格式错误或不受支持的租户。它不得删除这些租户的任何内容。
+- 存储配额accounting/enforcement在后端处于活动状态。前端只能通过系统设置API显示或编辑配额，并且仅适用于具有`system:settings:manage`的租户管理员。
+- 实现了数据库日志保留、保守的孤立清理和前端运行时支持的设置。原始MinIO列表和不受限制的手动清理触发器故意不公开。
 
-P13/P17 storage quota rules:
+P13/P17存储配额规则：
 
-- `storageQuota.maxBytes` is nullable. `null` means no tenant storage quota is enforced.
-- `storageQuota.usedBytes` is read-only and reflects the tenant-scoped quota counter after initialization or reconciliation from `image_assets` metadata. Soft-deleted but not yet purged assets still count; rows with `purged_at IS NOT NULL` do not count.
-- Quota enforcement must run before creating new reference upload assets and before Worker persists generated/edited output assets. Exceeding quota must fail without successful asset metadata, successful task output events, or leaked object keys.
-- Quota accounting must not use MinIO bucket listing as its source of truth. MySQL metadata remains the authoritative reconciliation source.
-- P17 strict reservation/counter behavior is active for reference uploads and Worker generated/edited outputs, so concurrent writers cannot independently pass an optimistic metadata-sum check and exceed `storageQuota.maxBytes`.
+- `storageQuota.maxBytes` 可为空。 `null` 表示不强制执行租户存储配额。
+- `storageQuota.usedBytes` 是只读的，反映初始化或与 `image_assets` 元数据协调后的租户范围的配额计数器。软删除但尚未清除的资产仍然有效；带有 `purged_at IS NOT NULL` 的行不算数。
+- 配额强制执行必须在创建新的参考上传资产之前以及在 Worker 持续存在 generated/edited 输出资产之前运行。如果没有成功的资产元数据、成功的任务输出事件或泄漏的对象密钥，则超出配额必须失败。
+- 配额核算不得使用MinIO存储桶列表作为其最终事实来源。 MySQL 元数据仍然是权威的协调来源。
+- P17严格reservation/counter行为对于参考上传和Workergenerated/edited输出处于活动状态，因此并发编写者无法独立通过乐观元数据总和检查并超过`storageQuota.maxBytes`。
 
-P17 storage quota reservation result:
+P17存储配额预留结果：
 
-- Tenant-scoped `storage_quota_counters` and `storage_quota_reservations` exist for strict reservation/finalization/release.
-- Reference uploads and Worker generated/edited outputs reserve original image bytes before MinIO writes.
-- Successful metadata transactions finalize reservations with `image_assets` / `task_outputs` creation, so successful rows and quota counters stay aligned under normal operation.
-- Validation, storage, DB transaction, duplicate-output, cancellation, timeout, and cleanup failure paths release or avoid reservations and do not leave successful asset/task-output side effects.
-- Reconciliation rebuilds quota counters from MySQL metadata because MySQL remains the authoritative source for expected object ownership. MinIO listing must not become quota truth.
-- Soft delete does not decrement used bytes. Physical purge after retention cleanup decrements or reconciles used bytes only when objects are no longer expected to exist.
-- `storageQuota.usedBytes` reflects the authoritative counter after initialization/reconciliation and remains read-only in the API/UI.
-- Released, stale, malformed, or mismatched reservations fail closed without creating successful asset metadata.
-- Responses, logs, audit metadata, and task events must not expose internal reservation IDs, object keys, bucket names, MinIO URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.
+- 租户范围 `storage_quota_counters` 和 `storage_quota_reservations` 存在严格的 reservation/finalization/release.
+- 参考上传和Workergenerated/edited输出在MinIO写入之前保留原始图像字节。
+- 成功的元数据事务通过 `image_assets` / `task_outputs` 创建完成预留，因此成功的行和配额计数器在正常操作下保持对齐。
+- 验证、存储、DB交易、重复输出、取消、超时和清理失败路径释放或避免保留，并且不会留下成功的asset/task-output副作用。
+- 协调从MySQL元数据重建配额计数器，因为MySQL仍然是预期对象所有权的权威来源。 MinIO 上市不能成为配额真理。
+- 软删除不会减少已用字节。仅当对象不再存在时，保留清理后的物理清除才会减少或协调已使用的字节。
+- `storageQuota.usedBytes`反映了initialization/reconciliation之后的权威计数器，并且在API/UI.中保持只读状态
+- 已发布、过时、格式错误或不匹配的预留在未创建成功的资产元数据的情况下以失败方式关闭（fail closed）。
+- 响应、日志、审计元数据和任务事件不得暴露内部预留 ID、对象键、存储桶名称、MinIO URL、图像 base64、授权、Cookie、JWT 或 Provider 秘密。

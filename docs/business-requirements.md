@@ -1,72 +1,72 @@
-# Business Requirements
+# 业务需求
 
-## Objective
+## 目标
 
-Build a multi-user platform for Amazon sellers to generate, edit, organize, and audit AI product images.
+为亚马逊卖家构建一个多用户平台，用于生成、编辑、组织和审核AI产品图片。
 
-The product is primarily used by Chinese-speaking operators in this repository context. User-facing UI copy, configuration help text, validation feedback, and platform-owned error messages should use Simplified Chinese whenever practical. Technical identifiers such as API field names, enum values, model IDs, MIME types, and Provider type codes may remain in their canonical form.
+该产品主要由中文运维人员在该存储库环境中使用。面向用户的UI副本、配置帮助文本、验证反馈和平台拥有的错误消息应尽可能使用简体中文。 API字段名称、枚举值、模型 ID、MIME类型和Provider类型代码等技术标识符可能会保留其规范形式。
 
-## Users and tenants
+## 用户和租户
 
-- The platform supports multiple tenants or teams.
-- Users belong to a tenant.
-- Tenant data is isolated by `tenant_id`.
-- Roles include at least admin, seller, and viewer.
-- Operators can provision second and later tenants safely without reopening the one-time first-admin bootstrap endpoint.
-- Tenant administrators can update their own tenant name and manage custom roles without gaining platform-wide access.
-- Later expansion should support multiple stores or seller teams under the same platform.
+- 该平台支持多个租户或团队。
+- 用户属于租户。
+- 租户数据由`tenant_id`隔离。
+- 角色至少包括管理员、卖家和查看者。
+- 运维人员可以安全地配置第二个及以后的租户，而无需重新打开一次性的第一管理引导初始化端点。
+- 租户管理员可以更新自己的租户名称并管理自定义角色，而无需获得平台范围的访问权限。
+- 后期扩展应支持同一平台下的多个商店或卖家团队。
 
-## Product projects
+## 产品项目
 
-Each Amazon product should map to a project. A project stores:
+每个亚马逊产品都应该映射到一个项目。项目商店：
 
-- Product name.
-- Brand.
-- ASIN.
-- Marketplace/site.
-- Notes.
-- Members and permissions.
-- Sort order and active/archive status.
-- Reference images.
-- Generated images.
-- Edited images.
-- Task history.
-- Prompt history or prompt templates.
+- 产品名称。
+- 品牌。
+- ASIN。
+- Marketplace/站点。
+- 注释。
+- 成员和权限。
+- 排序顺序和启用（`active`）/归档（`archive`）状态。
+- 参考图像。
+- 生成的图像。
+- 编辑图像。
+- 任务历史记录。
+- 提示历史记录或提示模板。
 
-## Image workbench
+## 图像工作台
 
-The workbench must support:
+工作台必须支持：
 
-- Project selection.
-- Reference image upload or selection from asset library.
-- Project tabs at the top of the workspace, showing project name and brand in project sort order.
-- Prompt input.
-- Each image type provides several built-in recommended prompts. A recommendation is copied into the editor and remains fully editable before submission.
-- User-saved prompt templates are isolated by image type. Switching between main, A+, scene, detail, dimension, selling-point, promotion, and comparison images must not mix saved templates.
-- Recommended prompts that contain dimensions, specifications, performance claims, promotions, or comparisons must require user-supplied facts and must not instruct the model to invent missing data.
-- Provider selection.
-- Model selection.
-- Dynamic parameters based on model capabilities.
-- Image type selection: main image, A+ image, scene image, detail image, selling-point image, size chart, comparison image.
-- Size, quality, output format, and output count selection.
-- Task submission.
+- 项目选择。
+- 参考图像上传或从资源库中选择。
+- 工作区顶部的项目选项卡，按项目排序顺序显示项目名称和品牌。
+- 提示输入。
+- 每种图像类型均提供多种内置推荐提示。推荐被复制到编辑器中，并在提交之前保持完全可编辑状态。
+- 用户保存的提示模板按图像类型隔离。主图、A+图、场景图、细节图、尺寸图、卖点图、促销图、对比图之间的切换不得混合保存的模板。
+- 包含尺寸、规格、性能声明、促销或比较的推荐提示必须需要用户提供的事实，并且不得指示模型发明缺失的数据。
+- Provider选择。
+- 型号选择。
+- 基于模型功能的动态参数。
+- 图片类型选择：主图、A+图、场景图、细节图、卖点图、尺码表、对比图。
+- 尺寸、质量、输出格式和输出数量选择。
+- 任务提交。
 
-## Asset management
+## 资产管理
 
-Images must support:
+图片必须支持：
 
-- Reference, generated, and edited categories.
-- Thumbnail display.
-- Favorite flag.
-- Soft delete.
-- Download through backend authorization.
-- Detail view.
-- Use as reference for another edit.
-- Project-level filtering.
+- 参考、生成和编辑的类别。
+- 缩略图显示。
+- 最喜欢的旗帜。
+- 软删除。
+- 通过后台授权下载。
+- 细节视图。
+- 用作其他编辑的参考。
+- 项目级过滤。
 
-## Task management
+## 任务管理
 
-Generation and edit requests are durable tasks with these statuses:
+生成和编辑请求是具有以下状态的持久任务：
 
 - `QUEUED`
 - `RUNNING`
@@ -76,49 +76,49 @@ Generation and edit requests are durable tasks with these statuses:
 - `RETRYING`
 - `TIMED_OUT`
 
-Users can cancel and retry eligible tasks. Task state must be visible in real time through SSE.
+用户可以取消并重试符合条件的任务。任务状态必须通过SSE实时可见。
 
-## Provider and model management
+## Provider 和模型管理
 
-Admins manage:
+管理员管理：
 
-- OpenAI official Providers.
-- Gemini official Providers.
-- OpenAI-compatible relay Providers.
-- Custom relay Providers.
-- Encrypted API keys.
-- Base URLs.
-- Enable/disable state.
-- Timeout settings.
-- Concurrency limits.
-- Provider health tests.
+- OpenAI官方Provider。
+- Gemini官方Provider。
+- OpenAI兼容继电器Provider。
+- 自定义继电器Provider。
+- 加密的API密钥。
+- 基本 URL。
+- 启用/禁用状态。
+- 超时设置。
+- 并发限制。
+- Provider健康测试。
 
-Admins manage models and capabilities:
+管理员管理模型和功能：
 
-- Provider ownership.
-- Model name and display name.
-- Generate support.
-- Edit support.
-- Multiple reference image support.
-- `n` parameter support.
-- Maximum output count.
-- Supported sizes.
-- Supported quality values.
-- Supported output formats.
+- Provider 所有权。
+- 型号名称和显示名称。
+- 产生支持。
+- 编辑支持。
+- 多个参考图像支持。
+- `n`参数支持。
+- 最大输出数量。
+- 支持的尺寸。
+- 支持的质量值。
+- 支持的输出格式。
 
-Model size/aspect-ratio and quality configuration should be manageable through reusable preset choices rather than requiring admins to type every supported value manually. OpenAI `gpt-image-2` presets use official quality values (`auto`, `low`, `medium`, `high`) and the platform's ordered product aspect ratios; Gemini Nano Banana 2 presets keep aspect ratio independent from `1K`, `2K`, and `4K` output resolution.
-- Pricing config.
-- Enable/disable state.
+模型尺寸、宽高比和质量配置应通过可复用的预设选项管理，而不是要求管理员手动输入每个支持值。OpenAI `gpt-image-2` 预设使用官方质量值（`auto`、`low`、`medium`、`high`）和平台预设的产品宽高比；Gemini Nano Banana 2 预设则将宽高比与 `1K`、`2K`、`4K` 输出分辨率分开配置。
+- 定价配置。
+- 启用/禁用状态。
 
-## Usage and audit
+## 使用和审核
 
-The platform must record:
+平台必须记录：
 
-- API call logs for every Provider call.
-- Token usage when available.
-- Image count.
-- Estimated cost.
-- Raw usage payload.
-- Operation logs for security and audit-sensitive actions.
+- API每个Provider调用的调用日志。
+- 可用时使用令牌。
+- 图像计数。
+- 预计费用。
+- 原始使用负载。
+- 安全和审计敏感操作的操作日志。
 
-Sensitive data must be redacted from all logs.
+敏感数据必须从所有日志中已脱敏。

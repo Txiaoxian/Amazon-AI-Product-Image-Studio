@@ -151,11 +151,11 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 ### 第一批有限并行
 
-1. `P21-DEPLOY-PRODUCTION-ENV-AND-LOG-HARDENING`
+1.`P21-DEPLOY-PRODUCTION-ENV-AND-LOG-HARDENING`
    - 已完成并合并。生产 env 文件贯穿 Compose config/build/up/down/health/logs 与 delegated release validation；健康失败日志统一脱敏；长期容器 stdout/stderr 增加有限轮转；production env preflight 强制 `CSRF_ENABLED=true`。
-2. `P21-BE-CSRF-PRODUCTION-GUARD`
+2.`P21-BE-CSRF-PRODUCTION-GUARD`
    - 已完成并合并。统一配置层在 `APP_ENV=production` 时拒绝 `CSRF_ENABLED=false`；非 production 保持兼容。
-3. `P21-FE-WORKBENCH-IMAGE-TYPE`
+3.`P21-FE-WORKBENCH-IMAGE-TYPE`
    - 已完成并合并。工作台补齐亚马逊电商图片类型选择，并把合法值通过 task API `imageType` 字段提交；历史再次编辑保留后端任务图片类型，非法 draft 回退到 `MAIN`。
 
 ### 后续串行与有限并行
@@ -196,13 +196,13 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 建议任务：
 
-1. `P11-BE-USER-ROLE-ADMIN`
+1.`P11-BE-USER-ROLE-ADMIN`
    - 后端用户管理、禁用/启用、角色分配、角色/权限读取。
    - 已完成并合并。后端合同已稳定，可供前端接入。
-2. `P11-FE-USER-ROLE-ADMIN`
+2.`P11-FE-USER-ROLE-ADMIN`
    - 前端用户与角色管理 UI。
    - 已完成并合并。前端按 `user:*` / `role:*` 权限展示入口、加载数据和开放写操作；创建用户密码只作为瞬时表单输入；禁用/启用和角色分配走后端 CSRF 写接口。
-3. `R11`
+3.`R11`
    - 已完成整批 review 和回归，未发现阻塞问题。
    - 已通过前端 lint/type-check/test/build、后端 test/race/vet/build、Compose config、whitespace 检查和 P11 敏感模式扫描。
 
@@ -212,16 +212,16 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 建议任务：
 
-1. `P12-FE-UNIFIED-HISTORY`
+1.`P12-FE-UNIFIED-HISTORY`
    - 将前端历史切换到后端统一历史接口。
    - 已完成并合并。历史列表不再由浏览器 join tasks/assets 生成。
-2. `P12-FE-PROJECT-WORKFLOW-POLISH`
+2.`P12-FE-PROJECT-WORKFLOW-POLISH`
    - 改进项目选择、编辑、成员入口和资产管理体验。
    - 已完成并合并。前端项目/资产工作流已接入真实后端项目成员 API，并修复项目切换与筛选状态一致性问题。
-3. `P12-BE-PROJECT-MEMBER-HARDENING`
+3.`P12-BE-PROJECT-MEMBER-HARDENING`
    - 根据产品规则补齐项目成员约束，例如最后一个 `OWNER` 保护。
    - 已完成并合并。后端 member update/delete 路径会保留至少一个项目 `OWNER`，并验证被拒绝的写入不会记录成功 operation log。
-4. `R12`
+4.`R12`
    - 卖家工作流 review 和回归。
    - 已完成。未发现阻塞问题；通过前端 lint/type-check/test/build、后端 test/race/vet/build、Compose config、whitespace 检查和前端禁止模式扫描。
 
@@ -231,21 +231,21 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 建议任务：
 
-1. `P13-BE-RUNTIME-DEFAULTS`
+1.`P13-BE-RUNTIME-DEFAULTS`
    - 已完成并合并。`taskDefaults.{defaultProviderId,defaultModelId}` 已通过系统设置 API 读写；任务创建仅在两个 ID 同时省略时解析默认配置，且继续执行现有 Provider/模型/能力/资产校验。
-2. `P13-BE-RUNTIME-DEFAULTS-HARDENING`
+2.`P13-BE-RUNTIME-DEFAULTS-HARDENING`
    - 已完成并合并。非法持久化默认配置在缺省创建路径安全返回 `422` 且无副作用，显式 Provider/模型请求不受未使用的损坏默认配置影响。
-3. `P13-BE-CONCURRENCY-POLICY`
+3.`P13-BE-CONCURRENCY-POLICY`
    - 已完成并合并。租户并发策略只允许收紧环境 hard caps，并已由 Worker Redis semaphore acquisition 实际消费；global 并发仍由环境配置控制。
-4. `P13-BE-STORAGE-CLEANUP-FOUNDATION`
+4.`P13-BE-STORAGE-CLEANUP-FOUNDATION`
    - 已完成并合并。上传后 metadata 失败 cleanup 不再依赖 request context；soft-delete 资产已有 tenant/cutoff/batch/idempotent 的内部物理清理基础和 `purged_at` 标记。
-5. `P13-BE-STORAGE-RETENTION-RUNTIME`
+5.`P13-BE-STORAGE-RETENTION-RUNTIME`
    - 已完成并合并。`storageRetention.deletedAssetRetentionDays` 默认 `null`/disabled，Worker maintenance loop 只消费合法 active-tenant 设置并调用 cleanup foundation。
-6. `P13-BE-STORAGE-QUOTA-ACCOUNTING`
+6.`P13-BE-STORAGE-QUOTA-ACCOUNTING`
    - 已完成并合并。`storageQuota.maxBytes` 默认 `null`/unlimited，`storageQuota.usedBytes` 从 tenant-scoped 未 purged 资产 metadata 计算；引用图上传和 Worker 输出资产持久化都会在写入前执行配额校验。
-7. `P13-FE-SYSTEM-SETTINGS`
+7.`P13-FE-SYSTEM-SETTINGS`
    - 已完成并合并。前端 admin settings tab 仅展示 active runtime-backed 设置，并按分组发送 CSRF-protected patch；未暴露 log retention、orphan cleanup、manual cleanup、MinIO listing 或 Provider secrets。
-8. `R13`
+8.`R13`
    - 已完成。完整 P13 范围通过前端 lint/type-check/test/build、后端 test/race/vet/build、Compose config、whitespace 检查，以及前端 Provider 直连、Provider Key 存储、task polling、deferred settings、bucket/object key 和敏感 auth 字符串扫描。
 
 ### P14：Provider、模型、用量与成本运营
@@ -254,13 +254,13 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 建议任务：
 
-1. `P14-BE-PROVIDER-MODEL-INTEGRITY`
+1.`P14-BE-PROVIDER-MODEL-INTEGRITY`
    - 已完成并合并。Provider delete/disable、model create/update/enable 和 taskDefaults 读取现在会保持 Provider/model 生命周期一致性；同 Provider `model_name` 唯一约束暂不落地。
-2. `P14-BE-USAGE-COST-REPORTING`
+2.`P14-BE-USAGE-COST-REPORTING`
    - 已完成并合并。后端成本估算确定、非负、8 位小数稳定；usage summary 支持 tenant/user/project/Provider/model 聚合、过滤、分页、多币种和 exact decimal cost。
-3. `P14-FE-COST-OBSERVABILITY`
+3.`P14-FE-COST-OBSERVABILITY`
    - 已完成并合并。前端成本/用量看板现在消费后端 tenant/user/project/Provider/model summary，支持 tenant totals、filters、drilldown、多币种展示和 stale response 防护。
-4. `R14`
+4.`R14`
    - 已完成。完整 P14 范围通过 frontend/backend/Compose/whitespace/禁止模式回归，未发现阻塞问题。
 
 ### P15：发布硬化与端到端 QA
@@ -269,13 +269,13 @@ P0-P20 已完成。P20 已合并固定 `X-CSRF-Token` 合同、Provider 主密�
 
 建议任务：
 
-1. `P15-E2E-CORE-FLOWS`
+1.`P15-E2E-CORE-FLOWS`
    - 已完成并合并。核心 API/Worker/SSE/history/usage/log 自动化集成路径已落地，且使用 fake Worker/Provider，不调用真实 AI Provider。
-2. `P15-SECURITY-FINAL-REGRESSION`
+2.`P15-SECURITY-FINAL-REGRESSION`
    - 已完成并合并。最终禁止模式扫描、安全回归入口和安全失败模式到测试的映射已落地。
-3. `P15-DEPLOY-RUNBOOK-FINAL`
+3.`P15-DEPLOY-RUNBOOK-FINAL`
    - 已完成并合并。Compose 发布验证、运维手册、备份/恢复说明和健康检查最终化已落地。
-4. `R15`
+4.`R15`
    - 已完成。最终发布就绪 review 已通过。
 
 ## 最近已完成任务包：P15-SECURITY-FINAL-REGRESSION
@@ -516,13 +516,13 @@ fi
 
 本任务已合并到 `main`，保留在本文档中仅作为部署 runbook 任务包审计记录。新的下一个任务是 `R15`，由主 agent 直接执行，不创建子 agent worktree。
 
-## R15：最终发布就绪 Review
+## R15：最终发布就绪评审
 
 ### 调度决策
 
 - 本任务为主 agent 串行 review，不创建新分支，不交给子 agent。
-- Review 范围是完整 P15 代码范围：`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL` 及其配套 docs。
-- Review 后由主 agent 更新公共文档中的实际结果和遗留风险。
+- 评审范围是完整的 P15 代码：`P15-E2E-CORE-FLOWS`、`P15-SECURITY-FINAL-REGRESSION`、`P15-DEPLOY-RUNBOOK-FINAL` 及其配套文档。
+- 评审后由主 Agent 更新公共文档中的实际结果和遗留风险。
 
 ### 必须检查
 
@@ -560,7 +560,7 @@ git diff --check
 
 ### R15 实际结果
 
-- Review 范围：完整 P15 range `3db7980..HEAD`。
+- 评审范围：完整 P15 提交范围 `3db7980..HEAD`。
 - 总体结论：通过，未发现阻塞 release-readiness 问题。
 - 已通过验证：
   - `bash scripts/security-regression.sh`
@@ -583,49 +583,49 @@ P15 已达到 release candidate 状态。稳定生产上线还需要 P16-P18 三
 
 建议串行开始，第一任务为部署脚本硬化：
 
-1. `P16-DEPLOY-SCRIPT-HARDENING`
+1.`P16-DEPLOY-SCRIPT-HARDENING`
    - 给 `scripts/deploy-release-validation.sh --up --down` 增加失败 cleanup trap。
    - 补充脚本级回归，证明失败时不会遗留项目 Compose 容器或卷。
    - 不修改业务前后端代码。
    - 已完成并合并。
-2. `P16-BE-LOG-RETENTION`
+2.`P16-BE-LOG-RETENTION`
    - 实现 operation logs、api call logs、task events/error logs 的 retention runtime consumer。
    - 未接入真实 consumer 前不得暴露新的 active writable settings。
    - 已完成并合并。
-3. `P16-BE-THUMBNAIL-POLICY`
+3.`P16-BE-THUMBNAIL-POLICY`
    - 明确并落地缩略图策略，推荐生成 MinIO thumbnail object 并经后端鉴权访问。
    - 已完成并合并。
-4. `R16`
+4.`R16`
    - 主 agent review P16 全部代码和回归。
    - 已完成。未发现阻塞问题。
 
 ### P17：存储治理与生产观测
 
-1. `P17-BE-ORPHAN-CLEANUP`
+1.`P17-BE-ORPHAN-CLEANUP`
    - MinIO orphan discovery、dry-run、执行、审计、批量限制和失败重试。
    - 已完成并合并。
-2. `P17-BE-STORAGE-QUOTA-RESERVATION`
+2.`P17-BE-STORAGE-QUOTA-RESERVATION`
    - 为并发上传和 Worker 输出增加严格 quota reservation/counter 与 reconciliation。
    - 已完成并合并。
-3. `P17-BE-OBSERVABILITY-METRICS`
+3.`P17-BE-OBSERVABILITY-METRICS`
    - 增加 admin-only JSON diagnostics：queue depth、running/failed tasks、Provider failure rate、storage usage、maintenance job result 等。
    - 已完成并合并。
-4. `R17`
+4.`R17`
    - 主 agent review P17 全部代码和回归。
    - 已完成。未发现阻塞问题。
 
 ### P18：真实上线信心与 Go/No-Go
 
-1. `P18-BE-PROVIDER-MODEL-SERIALIZATION`
+1.`P18-BE-PROVIDER-MODEL-SERIALIZATION`
    - 强化 Provider/model enable/disable/delete/update 与默认设置交互的事务序列化。
    - 已完成并合并。
-2. `P18-E2E-REAL-PROVIDER-SMOKE`
+2.`P18-E2E-REAL-PROVIDER-SMOKE`
    - 新增可选真实 Provider smoke 脚本；不进默认 CI，不提交真实 key，必须有费用控制。
    - 已完成并合并。
-3. `P18-PROD-DRY-RUN`
+3.`P18-PROD-DRY-RUN`
    - 按 runbook 在目标或准生产环境执行完整上线 dry-run。
    - 已完成仓库可控范围：safe default、production-env preflight、live Compose rehearsal 和 scoped cleanup 均通过。
-4. `R18-STABLE-PRODUCTION-READINESS`
+4.`R18-STABLE-PRODUCTION-READINESS`
    - 主 agent 执行最终 Go/No-Go review。
    - 审计后转入 P19/P20 运营收口，发现并继续解决 TLS、CI、主密钥轮换、租户开通和备份恢复演练缺口。
 
@@ -1215,24 +1215,24 @@ git diff --check main...HEAD
    - 使用现有认证、tenant、admin/RBAC 中间件模式。
    - 要求 tenant admin 加 `audit:read` 权限；无权限返回现有 `403 FORBIDDEN` 形状。
    - 响应走现有统一 envelope。
-2. Task diagnostics：
+2. 任务诊断：
    - 返回当前 tenant 的 task counts by status，至少覆盖 queued/running/retrying/cancelling/succeeded/failed/cancelled/timed_out。
    - 返回 bounded recent failures，字段只允许 taskId、status、errorCode、sanitized errorMessage、updatedAt/finishedAt。
    - 支持 bounded `windowHours` 和 `limit`，默认值必须小且安全，最大值必须受限。
-3. Queue diagnostics：
+3. 队列诊断：
    - 新增只读 queue depth inspector，读取 pending/processing/delayed/dead counts。
    - 不返回 Redis key 名称、payload、claim ID、task ID 列表或 Redis 原始错误。
    - Redis 不可用时 diagnostics endpoint 不应泄漏内部错误；返回 queue section `status="unavailable"` 和 `reason="queue_unavailable"`。
-4. Provider diagnostics：
+4. Provider 诊断：
    - 基于 `api_call_logs` 做 tenant-scoped aggregate。
    - 返回固定/请求窗口内 totalCalls、failedCalls、failureRate，以及 bounded by Provider 聚合。
    - Provider sample 只能包含 providerId、providerName 或 display-safe name、totalCalls、failedCalls、failureRate。
    - 不返回 raw request/response JSON、request ID 列表、Provider error raw body、API key hint 以外的任何 secret。
-5. Storage diagnostics：
+5. 存储诊断：
    - 返回 `storageQuota.maxBytes`、read-only `usedBytes`、asset counts、softDeleted count、purged count。
    - 不返回 reservation IDs、counter internals、bucket、object key、MinIO URL、signed URL。
    - 不使用 MinIO listing 计算 quota 或 asset usage；MySQL metadata / settings quota helper 仍是 truth。
-6. Maintenance diagnostics：
+6. 维护诊断：
    - 基于现有 operation logs 的 sanitized aggregate metadata 返回 latest maintenance summaries when available。
    - 至少覆盖 `storage.orphan_cleanup` 和 `log_retention.cleanup`；storage retention cleanup 如没有 operation log，只返回 `status="not_recorded"` 或省略，不要伪造成功状态。
    - 不返回 operation log raw metadata 中的敏感或过大字段；只提取安全的 processed/deleted/failed/candidates/status/counts/timestamps。
@@ -1283,7 +1283,7 @@ git diff --check main...HEAD
 | Maintenance metadata 含敏感字段 | response 不包含敏感字段或超长 raw metadata | 是 |
 
 必须新增或更新的回归测试：
-- `backend/internal/api/**`：diagnostics auth/RBAC、tenant isolation、response shape、query validation、Redis unavailable、DB failure sanitization。
+- `backend/internal/api/**`：诊断接口的身份认证/RBAC、租户隔离、响应结构、查询校验、Redis 不可用和数据库故障脱敏。
 - `backend/internal/queue/**`：queue depth inspector 只读读取 pending/processing/delayed/dead counts，错误脱敏。
 - `backend/internal/api/**` 或相关 backend tests：Provider failure aggregate、task status aggregate、storage usage aggregate、maintenance latest result aggregate。
 - forbidden response tests：断言不包含 `tenants/`、bucket name、objectKey、Redis key、Authorization、Cookie、JWT、base64、raw request/response JSON、Provider key marker。
@@ -1429,7 +1429,7 @@ git diff --check main...HEAD
    - 如需要 reservation 明细表，可新增 `storage_quota_reservations`，必须包含 `tenant_id`、reservation id、bytes、status、expires_at、created_at、updated_at。
    - 所有业务表必须包含 `tenant_id`，并建立必要唯一索引/查询索引。
    - 迁移必须可重复运行，不能破坏已有 `image_assets`、`system_settings` 或任务数据。
-2. Reservation service：
+2. 预留服务：
    - 增加明确的后端 API/内部接口，例如 `ReserveStorageQuota`、`FinalizeStorageQuotaReservation`、`ReleaseStorageQuotaReservation`、`ReconcileStorageQuotaCounter`。
    - Reserve 必须在 DB transaction 中锁定 tenant counter row，读取有效 `storage_quota.maxBytes`，校验 `used + reserved + pending <= maxBytes`。
    - `maxBytes=null` 时应保持 unlimited 行为；可以 no-op reservation，但接口行为必须清晰。
@@ -1450,7 +1450,7 @@ git diff --check main...HEAD
    - Soft delete 不改变 quota used bytes。
    - P13 physical purge 成功后必须 decrement counter 或触发 reconciliation；missing object idempotent success 要保持一致。
    - Orphan cleanup 删除非 metadata 对象时不得改变 quota counter。
-6. Reconciliation：
+6. 对账：
    - 增加从 MySQL metadata 重建 tenant quota counter 的能力，至少用于测试和 repair path。
    - `storageQuota.usedBytes` 应反映 counter used bytes；如果 counter 不存在，应先基于 metadata 初始化或安全回退。
    - Reconciliation 不能使用 MinIO listing 作为 truth。
@@ -1514,7 +1514,7 @@ git diff --check main...HEAD
 - `backend/internal/database/**`：migration/schema/index/idempotency 覆盖 quota counter/reservation 表。
 - `backend/internal/settings/**`：reserve/finalize/release/reconcile、malformed counter fail-closed、usedBytes 来源、并发 reservation。
 - `backend/internal/asset/**` 或 `backend/internal/api/asset_routes_test.go`：reference upload 成功、quota exceeded、并发超额、thumbnail/storage/metadata failure release。
-- `backend/internal/task/worker_test.go`：Worker multi-output reservation、quota exceeded、storage/DB failure release、duplicate output idempotency。
+- `backend/internal/task/worker_test.go`：Worker 多输出预留、超出配额、存储/数据库失败时释放预留，以及重复输出幂等性。
 - `backend/internal/asset/cleanup_test.go`：physical purge 后 counter/reconcile 正确，orphan cleanup 不影响 quota counter。
 - 现有 `system_settings` quota API 测试需继续证明 public contract 不变。
 
@@ -1653,7 +1653,7 @@ git diff --check main...HEAD
 - `backend/internal/audit/recorder.go`
 
 具体开发内容：
-1. Storage listing abstraction：
+1. 存储列表抽象：
    - 为 ObjectStore 增加受控 listing 能力，或新增最小接口，只允许后端代码按 bucket/prefix/cursor/batch limit 列出对象 metadata。
    - MinIO 实现必须支持 bounded listing，不得一次性加载整个 bucket。
    - fake/in-memory store 测试实现必须覆盖 list cursor、not-found delete、delete failure 等情况。
@@ -1665,13 +1665,13 @@ git diff --check main...HEAD
    - 解析失败、tenant/project/asset ID 异常、bucket kind 不匹配、对象过新、tenant 不匹配、对象仍被 `image_assets.object_key` 或 `image_assets.thumbnail_object_key` 引用时，一律 skip。
    - 候选必须 older-than configurable/default grace period。建议默认最小 24 小时；测试可注入更小时间。
    - MySQL metadata 是可信 truth。不要以 MinIO listing 反推资产存在。
-3. Admin API：
+3. 管理 API：
    - 新增 `POST /api/v1/admin/storage/orphans/scan`，dry-run only。
    - 新增 `POST /api/v1/admin/storage/orphans/cleanup`，默认 dry-run；只有 `dryRun=false` 且 `confirm="DELETE_ORPHANS"` 时才执行删除。
    - 要求 tenant admin 或 `system:settings:manage` 权限；不引入新权限码，除非发现现有 RBAC 无法表达并先报告。
    - Tenant admin 只能操作自己的 tenant；如果请求中带其他 tenant ID，必须拒绝或忽略为当前 tenant，不能跨租户扫描/删除。
    - Response 只返回 aggregate counts、bucket kind、tenantId、skipped/error categories、candidate hashes/opaque IDs。禁止返回 raw bucket/object key/MinIO endpoint。
-4. Execution / retry / audit：
+4. 执行/重试/审计：
    - Cleanup 必须 batch-limited；达到 batch limit 时返回 `hasMore` 或 cursor 信息，供后续调用继续。
    - 删除 missing object 应视为 idempotent success。
    - 删除失败必须记录 sanitized error kind，不能中断已完成对象的结果，但整体响应要体现 failed count。
@@ -1733,9 +1733,9 @@ git diff --check main...HEAD
 | batch limit 达到 | 返回 hasMore/cursor，不超量删除 | 是 |
 
 必须新增或更新的回归测试：
-- `backend/internal/storage/**`：listing abstraction/fake store cursor、delete not-found/delete failure。
-- `backend/internal/asset/**`：orphan candidate parsing、metadata exclusion、age gate、tenant scope、dry-run no delete、execute delete、failed delete retry-safe、audit metadata sanitized。
-- `backend/internal/api/**`：admin scan/cleanup auth/RBAC、CSRF、dry-run default、explicit confirm execute、cross-tenant denial、response no raw object key/bucket/MinIO URL。
+- `backend/internal/storage/**`：列表抽象、假存储游标、删除时未找到和删除失败。
+- `backend/internal/asset/**`：孤儿候选项解析、元数据排除、时间门槛、租户范围、试运行不删除、执行删除、失败删除可安全重试，以及审计元数据脱敏。
+- `backend/internal/api/**`：管理员扫描/清理的身份认证与 RBAC、CSRF、默认试运行、显式确认执行、跨租户拒绝，以及响应不包含原始对象键、存储桶或 MinIO URL。
 - 如修改 config，补 `backend/internal/config/**` 测试。
 
 测试命令：
@@ -1895,7 +1895,7 @@ git diff --check main...HEAD
    - `IMAGE_OUTPUT` 事件中的 `thumbnailUrl` 应在有缩略图时返回 `/api/v1/assets/{assetId}/thumbnail`。
    - 如果 DB transaction 失败、任务状态已变化、输出已存在或只部分持久化，cleanup 必须同时覆盖 generated original bucket 和 thumbnails bucket 中未持久化对象。
    - 不改变 Worker claim/cancel/retry/timeout 状态机。
-4. Thumbnail endpoint：
+4. 缩略图端点：
    - 注册 `GET /assets/:assetId/thumbnail`。
    - 复用 asset authorization；最低应满足 `asset:read` 与 project viewer 权限。不要要求更高权限导致列表缩略图不可用。
    - 如果 asset 不存在、已删除、跨租户、无权限或无 thumbnail object，返回现有 sanitized error shape，不泄漏 object key/bucket/MinIO URL。
@@ -2106,7 +2106,7 @@ git diff --check main...HEAD
    - 任一字段可单独 patch；未知字段、非整数、0、负数、超过 3650、空对象等必须返回现有 settings validation error。
    - 权限继续沿用 tenant admin + `system:settings:manage`。
    - settings update operation log 只能记录 key、changedFields、数值/null，不得记录请求原文或敏感上下文。
-2. Worker runtime consumer：
+2. Worker 运行时消费者：
    - 新增或扩展 Worker maintenance runner，读取 active tenants 的 `log_retention` 设置。
    - 对 malformed stored `log_retention` fail closed：跳过该 tenant，记录 sanitized `error_kind`，不清理任何日志。
    - 对每个 enabled tenant/category 计算 cutoff 并删除旧 rows。
@@ -2115,7 +2115,7 @@ git diff --check main...HEAD
    - `task_events`：只删除同 tenant、`created_at < cutoff`、且对应 `generation_tasks.status` 为 terminal 的 events。不要删除 queued/running/cancelling/retrying 等非终态任务事件。
    - 每类清理必须 batch-limited。单次 run 不需要清空所有历史，只要按 batch 逐步推进。
    - 清理必须幂等；重复执行不会报错或越租户删除。
-3. Worker lifecycle：
+3. Worker 生命周期：
    - 将 log-retention runner 接入 `backend/cmd/worker/main.go`。
    - 可以复用现有 `WORKER_RETENTION_MAINTENANCE_INTERVAL` 与 `WORKER_RETENTION_MAINTENANCE_BATCH_LIMIT`，除非有充分理由新增环境变量。
    - shutdown 必须尊重 context，不能阻塞 Worker 停止。
@@ -2219,7 +2219,7 @@ git diff --check main...HEAD
 ### 验收标准
 
 - `logRetention` 只在 backend settings/API 和 Worker runtime consumer 同时落地后变为 active。
-- Worker cleanup tenant-safe、batch-limited、idempotent、context-aware、sanitized。
+- Worker清理租户安全、批量限制、幂等、上下文感知、已脱敏。
 - `task_events` cleanup 不破坏非终态任务的 SSE replay。
 - settings 更新有 sanitized operation log，cleanup run 有 aggregate audit trace。
 - 所有现有 settings 行为不回归。
@@ -2301,7 +2301,7 @@ git diff --check main...HEAD
 2. 保持现有 CLI 行为：
    - `--help` 只输出帮助。
    - 默认模式：config、proxy scan、build、security regression，不启动 stack，不 cleanup。
-   - `--down`：cleanup-only。
+- `--down`：仅清理。
    - `--up`：启动并验证，保留 stack。
    - `--up --down`：启动并验证，成功或失败都 cleanup。
 3. 增加脚本级回归：

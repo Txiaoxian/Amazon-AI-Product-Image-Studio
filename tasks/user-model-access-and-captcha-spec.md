@@ -89,8 +89,8 @@
 ### `POST /api/v1/auth/captcha`
 
 - 权限：无需登录。
-- Request body：无。
-- Response：
+- 请求体：无。
+- 响应：
 
 ```json
 {
@@ -109,13 +109,13 @@
 ### `GET /api/v1/auth/captcha/{captchaId}/image`
 
 - 权限：无需登录。
-- Response：`image/png` 二进制流。
+- 响应：`image/png` 二进制流。
 - 错误：无效或过期返回 `404 NOT_FOUND`。
 - 安全：禁止缓存，不返回验证码答案或 Redis 键。
 
 ### `POST /api/v1/auth/login`
 
-- Request body：
+- 请求体：
 
 ```json
 {
@@ -129,20 +129,20 @@
 
 - 普通用户：`captchaId` 与 `captchaCode` 必填且一次性有效。
 - 管理员：两字段可省略；若提供也不把验证码结果作为管理员登录前置条件。
-- Response：保持现有 `AuthSession` 不变。
+- 响应：保持现有 `AuthSession` 不变。
 - 错误：邮箱、密码或验证码不正确统一使用 `401 INVALID_CREDENTIALS` 和中文通用提示；限流保持 `429 RATE_LIMITED`。
 - 前端影响：移除租户输入，增加验证码图片、输入框、刷新按钮、加载/失效/错误状态。
 
 ### `GET /api/v1/users/{userId}/ai-access`
 
 - 权限：仅租户管理员。
-- Response：返回目标 `userId` 与已授权 `modelIds`；可分配模型目录由管理员现有模型列表接口加载并在前端按中转站分组。
+- 响应：返回目标 `userId` 与已授权 `modelIds`；可分配模型目录由管理员现有模型列表接口加载并在前端按中转站分组。
 - 跨租户用户 ID：`404 NOT_FOUND`。
 
 ### `PUT /api/v1/users/{userId}/ai-access`
 
 - 权限：仅租户管理员，Cookie + CSRF。
-- Request body：
+- 请求体：
 
 ```json
 {

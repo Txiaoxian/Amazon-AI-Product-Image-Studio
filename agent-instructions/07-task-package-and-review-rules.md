@@ -1,12 +1,12 @@
-# Task Package and Review Rules
+# 任务包与评审规则
 
-## Goal
+## 目标
 
-Task packages are implementation contracts, not only feature checklists. Future worktrees must make hidden constraints explicit before coding starts.
+任务包是实施契约，而不只是功能清单。后续 worktree 必须在开始编码前明确隐藏约束。
 
-## Required task-package sections
+## 任务包必需章节
 
-Every new worktree task from P8 onward must include:
+从 P8 开始，每个新 worktree 任务都必须包含：
 
 1. `必须保持的现有行为`
 2. `允许的中间态`
@@ -14,72 +14,72 @@ Every new worktree task from P8 onward must include:
 4. `失败模式与边界场景`
 5. `必须新增或更新的回归测试`
 
-These sections are required in addition to the normal fields: task name, goal, allowed files, forbidden files, dependencies, development content, security requirements, acceptance criteria, and test commands.
+除常规字段外，还必须包含以上章节。常规字段包括：任务名称、目标、允许修改的文件、禁止修改的文件、依赖、开发内容、安全要求、验收标准和测试命令。
 
-## Migration-task rules
+## 迁移任务规则
 
-For frontend or backend migration tasks, the package must state:
+前端或后端迁移任务的任务包必须说明：
 
-- The old production path that still exists.
-- The intermediate state allowed after the task.
-- The final target path owned by later tasks.
-- Which old behaviors must remain functional until the replacement path is live.
-- Which half-migrated states are forbidden.
+- 仍然存在的旧生产路径。
+- 任务完成后允许的中间态。
+- 由后续任务负责的最终目标路径。
+- 替代路径启用前必须保持正常的旧行为。
+- 禁止的半迁移状态。
 
-If the replacement path is not live yet, a task must not silently break or misrepresent the old path. A prepared backend path may exist beside the old path, but the user-visible production flow must remain truthful.
+如果替代路径尚未启用，任务不得暗中破坏或错误呈现旧路径。准备中的后端路径可以与旧路径共存，但用户可见的生产流程必须真实反映当前行为。
 
-Frontend migration packages must include a three-column table:
+前端迁移任务包必须包含三列表格：
 
-| Old path | Allowed intermediate state | Target path |
+| 旧路径 | 允许的中间态 | 目标路径 |
 | --- | --- | --- |
 
-## High-risk backend rules
+## 高风险后端规则
 
-Worker, queue, auth, RBAC, Provider, security, and state-machine tasks must include a failure-mode or state-transition matrix before coding begins.
+Worker、队列、认证、RBAC、Provider、安全和状态机任务在开始编码前必须包含失败模式或状态转换矩阵。
 
-The matrix must cover the relevant cases, such as:
+矩阵必须覆盖相关场景，例如：
 
-- happy path
-- duplicate delivery
-- cancellation
-- timeout
-- retry
-- stale claim or stale lock recovery
-- enqueue failure
-- third-party failure
-- cross-tenant or unauthorized access
-- sensitive-data redaction edge cases
+- 正常路径
+- 重复投递
+- 取消
+- 超时
+- 重试
+- 过期领取或过期锁恢复
+- 入队失败
+- 第三方失败
+- 跨租户或未授权访问
+- 敏感数据脱敏边界场景
 
-If a case is intentionally out of scope, the package must say so explicitly.
+如果某个场景有意不在范围内，任务包必须明确说明。
 
-## Control-plane and settings rules
+## 控制面与设置规则
 
-Any task that adds settings, policy, or other control-plane APIs must include an explicit table that maps:
+任何新增设置、策略或其他控制面 API 的任务，都必须包含明确的映射表，列出：
 
-- each externally visible field
-- the backend runtime consumer that makes it effective
-- whether that consumer is already in scope for the task
+- 每个外部可见字段
+- 使其生效的后端运行时消费者
+- 该消费者是否已包含在任务范围内
 
-If a field has no runtime consumer yet, it must not be exposed as active writable state. If making a field real requires changing a runtime consumer outside the allowed file scope, the task package is invalid as written and must be split or widened by the main agent before implementation starts.
+如果某字段尚无运行时消费者，就不得将其暴露为有效的可写状态。如果要让字段真正生效必须修改允许文件范围之外的运行时消费者，则当前任务包无效，主 Agent 必须在实施前拆分任务或扩大范围。
 
-Examples include default Provider/model selection, upload limits, concurrency limits, retention rules, feature flags, and billing policies.
+示例包括默认 Provider/模型选择、上传限制、并发限制、保留规则、功能开关和计费策略。
 
-## Child-agent responsibilities
+## 子 Agent 职责
 
-- Do not treat unstated destructive behavior as permission. If the task would break an existing production path before its replacement exists, stop and report the conflict.
-- Add tests for the named failure modes and migration invariants, not only happy paths.
-- In the final handoff, map each required regression scenario to the actual test file and test name that covers it.
-- State what was intentionally not changed and why.
-- If a required invariant cannot be preserved inside the allowed file scope, report it instead of widening scope without approval.
+- 不得将未明确说明的破坏性行为视为已获授权。如果任务会在替代路径就绪前破坏现有生产路径，应停止并报告冲突。
+- 为指定失败模式和迁移不变量添加测试，而不只是正常路径测试。
+- 最终交付时，将每个必需回归场景映射到实际覆盖它的测试文件和测试名称。
+- 说明有意未修改的内容及原因。
+- 如果无法在允许文件范围内保留必需不变量，应报告问题，不得未经批准扩大范围。
 
-## Main-agent review responsibilities
+## 主 Agent 评审职责
 
-Review must explicitly check:
+评审必须明确检查：
 
-- whether required existing behavior was preserved
-- whether the allowed intermediate state matches the task package
-- whether any forbidden half-migrated state exists
-- whether every named failure mode has a matching test or an explicit deferral
-- whether the child-agent handoff maps required scenarios to real tests
+- 是否保留了必需的现有行为
+- 允许的中间态是否与任务包一致
+- 是否存在任何禁止的半迁移状态
+- 每个指定失败模式是否都有对应测试或明确的延期说明
+- 子 Agent 交付说明是否将必需场景映射到真实测试
 
-When review finds a repeated class of omission, update the next task packages and these instructions so the rule becomes durable.
+评审发现重复出现的遗漏类型时，应更新后续任务包和本说明，使规则长期生效。

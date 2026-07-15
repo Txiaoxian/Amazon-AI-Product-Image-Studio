@@ -1,49 +1,49 @@
-# Design QA
+# 设计质量检查
 
-- Source visual truth: 用户在任务会话中提供的问题截图（临时附件，不纳入仓库）
-- Implementation screenshot: `tasks/product-navigation-refined.png`
-- Focused interaction screenshot: `tasks/product-add-form.png`
-- Viewport: 1904 × 882 CSS pixels (requested browser viewport 1919 × 882; 15px scrollbar gutter)
-- State: authenticated desktop workbench, first product selected, 主图 selected, no active generation task
+- 视觉事实来源：用户在任务会话中提供的问题截图（临时附件，不纳入仓库）
+- 实施截图：`tasks/product-navigation-refined.png`
+- 聚焦交互截图：`tasks/product-add-form.png`
+- 视口：1904 × 882 CSS 像素（请求的浏览器视口为 1919 × 882；滚动条占用 15px）
+- 状态：已登录的桌面工作台、已选中第一个产品、已选中主图、无正在生成的任务
 
-## Full-view comparison evidence
+## 完整视图对比证据
 
-The source screenshot is the reported problem state rather than a target to clone exactly. The user's requested deltas are the visual truth: product and image-type controls should use content-sized dimensions, selected states should avoid the harsh navy/orange fills, and the plus action should open a blank create form.
+来源截图展示的是用户报告的问题状态，而不是需要完全复刻的目标。用户要求的差异才是视觉事实：产品和图片类型控件应根据内容确定尺寸，选中状态应避免刺眼的深蓝色/橙色填充，点击加号应打开空白的新建表单。
 
-The final implementation keeps the same product/header/workbench/history information architecture while changing only those areas:
+最终实施保留相同的产品栏、页头、工作台和历史记录信息架构，只调整以下区域：
 
-- Product tabs measure 160–187px for the current data instead of dividing the full row equally.
-- The image-type navigation measures 104px wide and 434px high; each option is 44px high instead of stretching across the full workbench height.
-- Selected product and image type use a neutral `ink-100` surface, `ink-300` border, dark text, and a neutral focus ring.
-- The plus action opens `新建产品` with an empty product-name field; the settings action remains the edit entry.
-- No page-level horizontal overflow was observed at 320, 768, 1024, or 1440px.
+- 当前数据下的产品标签宽度为 160–187px，不再平均分配整行宽度。
+- 图片类型导航宽 104px、高 434px；每个选项高 44px，不再拉伸占满工作台高度。
+- 选中的产品和图片类型使用中性的 `ink-100` 表面、`ink-300` 边框、深色文本和中性焦点环。
+- 加号操作打开 `新建产品`，产品名称字段为空；设置操作继续作为编辑入口。
+- 在 320、768、1024 和 1440px 宽度下均未发现页面级横向溢出。
 
-## Focused region comparison evidence
+## 聚焦区域对比证据
 
-- Top product region: source shows the first product occupying most of the row with a dark fill; implementation shows two content-sized tabs followed immediately by the plus action, leaving intentional flexible space before settings.
-- Left image-type region: source shows eight equally stretched rows with a bright orange selected state; implementation shows eight compact 44px controls with a neutral selected state and unused space below the navigation.
-- Add-product interaction: `tasks/product-add-form.png` shows the blank `新建产品` form, empty `产品名称`, and disabled create action before required input.
+- 顶部产品区域：来源截图中第一个产品使用深色填充并占据大部分行；实施后显示两个内容自适应标签，其后紧跟加号操作，并在设置按钮前保留弹性空间。
+- 左侧图片类型区域：来源截图中八行等高拉伸，选中状态为明亮橙色；实施后为八个紧凑的 44px 控件，使用中性选中状态，导航下方保留未使用空间。
+- 新增产品交互：`tasks/product-add-form.png` 展示空白的 `新建产品` 表单、空的 `产品名称`，以及填写必填项前处于禁用状态的新建操作。
 
-## Findings
+## 检查结果
 
-- No actionable P0, P1, or P2 differences remain against the requested design changes.
-- Typography, spacing scale, radii, icons, copy, and existing product imagery remain consistent with the current application design system.
-- Image assets were not changed; the browser capture briefly showed loading placeholders after reload, but authorized thumbnails continue to load through the existing asset path.
+- 对照请求的设计变更，不再存在需要处理的 P0、P1 或 P2 差异。
+- 字体、间距尺度、圆角、图标、文案和现有产品图片均与当前应用设计系统保持一致。
+- 图片资产未修改；浏览器截图在重新加载后曾短暂显示加载占位符，但授权缩略图仍通过现有资产路径正常加载。
 
-## Comparison history
+## 对比历史
 
-### Iteration 1
+### 第 1 次迭代
 
-- [P1] Product tabs used `flex: 1`, forcing them to fill the row. Fixed with content-sized `flex-none`, minimum and maximum widths.
-- [P1] Image-type options used equal fractional rows and forced the navigation to full height. Fixed with a compact vertical flex stack and `self-start` alignment.
-- [P1] Plus action fell back to the selected product and opened edit mode. Fixed by initializing modal selection only from an explicit edit target.
-- [P2] Selected states used high-contrast navy/orange fills. Fixed with neutral surface, border, text, and focus tokens.
+- [P1] 产品标签使用 `flex: 1`，被强制铺满整行。已改为内容自适应的 `flex-none`，并设置最小和最大宽度。
+- [P1] 图片类型选项使用等比例行，强制导航占满高度。已改为紧凑的纵向 flex 堆栈和 `self-start` 对齐。
+- [P1] 加号操作回退到已选产品并打开编辑模式。已修复为仅在有明确编辑目标时初始化弹窗选中项。
+- [P2] 选中状态使用高对比度深蓝色/橙色填充。已改用中性表面、边框、文本和焦点 Token。
 
-### Post-fix evidence
+### 修复后证据
 
-- Automated regression tests cover all four fixes and pass.
-- Browser measurements confirm product widths of 160–187px, image-type heights of 44px, and no responsive horizontal overflow.
-- Browser interaction confirms one `新建产品` heading, zero `编辑产品` headings, and an empty product-name value after clicking plus.
-- Browser console errors and warnings: none.
+- 自动化回归测试覆盖以上四项修复并全部通过。
+- 浏览器测量确认产品宽度为 160–187px、图片类型高度为 44px，且响应式布局无横向溢出。
+- 浏览器交互确认点击加号后出现一个 `新建产品` 标题、零个 `编辑产品` 标题，且产品名称值为空。
+- 浏览器控制台错误和警告：无。
 
-final result: passed
+最终结果：通过

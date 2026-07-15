@@ -1,291 +1,291 @@
-# Security Plan
+# 安全计划
 
-## Current Transition Risks During P21 Operational Hardening
+## P21 运营强化期间的当前转型风险
 
-The current `main` branch has completed P15 release hardening, P16 production-launch hardening, P17 storage governance/diagnostics, P18 production dry-run, the merged P19/P20 operational hardening slices, and multiple P21 production reliability slices. Browser AI Provider execution, browser Provider credential persistence, and IndexedDB-backed generated image/history production paths are no longer acceptable platform behavior. The following table records the resolved transition risks and their current status so future agents do not reintroduce them:
+当前 `main` 分支已完成 P15 发布强化、P16 生产启动强化、P17 存储治理与诊断、P18 生产试运行、合并 P19/P20 操作强化分片，以及多个 P21 生产可靠性分片。浏览器端 AI Provider 执行、浏览器端 Provider 凭据持久化，以及由 IndexedDB 支撑生成图片和历史记录的生产路径，均不再是可接受的平台行为。下表记录了已解决的转型风险及其当前状态，以避免未来再次引入这些问题：
 
-| Risk | Previous location | Current status | Acceptance check |
+|风险|以前的位置 |现状 |验收检查|
 | --- | --- | --- | --- |
-| Frontend stores Provider API keys in localStorage | `frontend/src/hooks/useSettings.ts` | Resolved. Normal Provider settings were removed; Provider keys are submitted only through backend Provider management forms and are not persisted in browser storage. | Static scan and tests must continue to show no Provider API key/API URL persistence in localStorage, sessionStorage, IndexedDB, URL params, or client-visible config. |
-| Frontend directly calls OpenAI, Gemini, and relay APIs | `frontend/src/providers/**`, old browser Provider adapters | Resolved. Browser Provider adapter files and frontend Provider registry/types were removed; workbench generation creates backend tasks only. | Browser generation flow creates backend tasks only; no Provider `Authorization` header or direct Provider host appears in production frontend code. |
-| Image blobs and history are primary data in IndexedDB | `frontend/src/db/**` | Resolved. Backend project assets and task history are the source of truth; remaining IndexedDB use is limited to prompt templates. Dexie v2 deletes retired image/history stores during upgrade. | Project assets and task history APIs are the primary data source; old local blobs are not silently uploaded and must not re-enter the production history path. |
-| Legacy local upload validation is client-side and MIME-based only | `frontend/src/lib/file.ts` and old local generation path | Resolved for generation path. Reference uploads go through backend asset upload validation; frontend precheck remains UX only. | Backend asset upload rejects forged MIME, invalid magic bytes, SVG, oversized dimensions, and excessive pixel count. |
+|前端商店 Provider API 输入 localStorage | `frontend/src/hooks/useSettings.ts` |已解决。删除了正常的Provider设置； Provider密钥仅通过后端Provider管理表单提交，不会持久保存在浏览器存储中。 |静态扫描和测试必须继续显示 Provider API key/API URL 持久存在于 localStorage、sessionStorage、IndexedDB、 URL params，或客户端可见的配置。 |
+|前端直接调用OpenAI、Gemini、relay API | `frontend/src/providers/**`，旧浏览器Provider适配器 |已解决。浏览器Provider适配器文件和前端Providerregistry/types已删除；工作台生成仅创建后端任务。 |浏览器生成流程仅创建后端任务；生产前端代码中没有 Provider `Authorization` 标头或直接 Provider 主机出现。 |
+| 图片二进制数据和历史是IndexedDB中的原始数据 | `frontend/src/db/**` |已解决。后端项目资产和任务历史是最终事实来源；剩余IndexedDB使用仅限于提示模板。 Dexie v2 在升级过程中删除了已停用的 image/history 存储。 |项目资产和任务历史API是主要数据源；旧的本地 blob 不会以静默方式上传，并且不得重新进入生产历史路径。 |
+|旧版本地上传验证是客户端且仅基于 MIME | `frontend/src/lib/file.ts` 和本地老一代路径 |解决了生成路径。参考上传经过后端资产上传验证；前端预检查仅保留UX。 |后端资源上传拒绝伪造MIME、无效魔法字节、SVG、尺寸过大、像素数过多。 |
 
-Remaining security and hardening risks:
+剩余的安全和强化风险：
 
-- Provider/model lifecycle integrity is now hardened: Provider deletion is blocked while same-tenant non-deleted linked models exist, Provider disable is blocked while enabled linked models exist, model write paths reject unavailable Providers, failed lifecycle writes do not record successful operation logs, and P18 write-path serialization rejects duplicate same-tenant same-Provider non-deleted `model_name` values without a destructive migration.
-- Provider/model administration is tenant-admin-only. Ordinary users can discover and use only explicitly assigned models, and task creation rechecks the assignment before durable or queue side effects.
-- Ordinary-user login uses a short-lived one-time captcha stored in Redis. Captcha validation consumes the record atomically, administrator bypass is decided server-side only after password verification, and all credential/captcha failures use the same sanitized response.
-- Historical dirty rows containing non-heuristic secrets still need a future design if exact read-time scrubbing is required; P9 audit reads intentionally do not widen Provider plaintext key decryption into the admin read path without a trusted minimal secret source and lifecycle.
-- Writable system settings remain constrained to fields with live runtime consumers. Tenant upload policy is backed by asset validation, task defaults are backed by task creation, `taskConcurrency` is backed by Worker semaphore acquisition, `storageRetention` is backed by Worker maintenance cleanup, `storageQuota` is backed by reference upload and Worker output persistence checks, and `logRetention` is backed by Worker database-log cleanup. Frontend settings may expose only settings with merged backend consumers; it must not expose manual cleanup triggers, raw MinIO listing, or any field without a runtime consumer.
+- Provider/model生命周期完整性现已强化：Provider在存在同租户未删除链接模型时阻止删除，Provider在启用链接模型存在时阻止禁用，模型写入路径拒绝不可用Provider，失败的生命周期写入不会记录成功的操作日志，以及P18 写入路径序列化会拒绝重复的同租户 Same-Provider 未删除的 `model_name` 值，而无需进行破坏性迁移。
+- Provider/model 管理仅限租户管理员。普通用户只能发现和使用显式分配的模型，任务创建会在持久或队列副作用之前重新检查分配。
+- 普通用户登录使用存储在Redis中的短暂一次性验证码。验证码验证以原子方式消耗记录，仅在密码验证后才在服务器端决定管理员绕过，并且所有credential/captcha失败都使用相同的已脱敏响应。
+- 如果需要精确的读取时间清理，包含非启发式秘密的历史脏行仍然需要未来的设计； P9 审核读取故意不会将 Provider 明文密钥解密扩大到管理读取路径，而无需可信的最小秘密源和生命周期。
+- 可写系统设置仍然仅限于具有实时运行时消费者的字段。租户上传策略由资产验证支持，任务默认值由任务创建支持，`taskConcurrency`由Worker信号量获取支持，`storageRetention`由Worker维护清理支持，`storageQuota`由参考上传和Worker输出持久性检查，`logRetention`由Worker数据库日志清理支持。前端设置可能仅公开具有合并的后端消费者的设置；它不得公开手动清理触发器、原始 MinIO 列表或任何没有运行时使用者的字段。
 
-Resolved transition item:
+已解决的过渡项目：
 
-- P3 removed the frontend Nginx AI relay route. The frontend container must continue to proxy `/api/` only to `backend-api` and must not proxy AI Providers.
-- P5 backend asset upload now validates MIME, magic bytes, size, dimensions, and pixel count before storing reference images in MinIO.
-- P5 frontend project/asset UI now uses authenticated backend project and asset APIs for reference uploads, metadata, favorite/delete, and downloads. It does not talk to MinIO directly and did not add new AI Provider direct calls, Provider API key persistence, auth token persistence, or task polling.
-- P6 backend Provider/model management now stores Provider API keys encrypted at rest, returns only masked key metadata, validates Provider URLs for save/update/test, records redacted operation logs, and exposes tenant-scoped Provider/model APIs.
-- P6 frontend Provider/model management now submits Provider API keys only to backend APIs, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
-- P7 Provider runtime now uses connect-time SSRF-safe outbound transport before real Provider calls and recursively redacts runtime metadata before persistence. Review fixes explicitly covered API keys appearing as values and as nested JSON map keys.
-- P7 frontend task client work now uses EventSource/SSE contracts and did not introduce polling, new Provider direct calls, or new Provider API key persistence.
-- P8 frontend backendization replaced the production workbench with backend task API + SSE + authorized backend assets, removed normal browser Provider settings, removed browser Provider adapters, removed `legacyFile` reference payloads, and moved history/detail/download/re-edit to backend assets and tasks.
-- R8 verified frontend, backend, and Compose config regression. Sensitive frontend static scan returned no production-code hits for browser Provider credentials, Provider Authorization headers, direct Provider hosts, task polling, or sensitive browser storage. Provider static-scan hits are limited to backend Provider management API consumers.
-- P9 audit/usage read APIs now use shared recursive redaction, tenant-scoped queries, admin RBAC, and deterministic pagination. Review fixes centralized the redaction implementation and proved exact known-secret scrubbing through a controlled injection seam without expanding production Provider-key decryption scope.
-- P9 production startup hardening now rejects placeholder `JWT_SIGNING_SECRET` and placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup can proceed in production, while keeping non-production defaults available.
-- P9 runtime settings now expose only tenant upload policy and enforce it in backend asset upload validation. Deferred settings are absent from responses and rejected on writes until their runtime consumers exist.
-- P9 frontend admin observability/settings UI now consumes only backend admin contracts, gates sections by `usage:read`, `audit:read`, and `system:settings:manage`, keeps lists paginated, PATCHes settings with CSRF through the shared API client, and does not persist Provider keys, auth tokens, log metadata, or system settings payloads in browser storage.
-- P9 security regression added targeted tests for SSRF, redaction, tenant/object authorization, upload validation, task/SSE replay visibility, production secret guards, frontend production import safety, and deleted the unreachable legacy history display/storage helpers identified during P8/R8.
-- R9 verified the full P9 code range with frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config/build/up/health, API health, frontend static route, and Compose cleanup. R9 found no blocking security issues.
-- P10 Worker pool, SSE bridge lifecycle, and Provider/model lifecycle hardening completed without changing tenant, Provider Adapter, SSE replay, task status, or sensitive logging contracts.
-- P10 frontend admin observability hardening added stale-response protection for API call details, keeps detail metadata bounded/redacted, preserves upload-policy-only system settings, and does not write Provider keys, auth tokens, log metadata, or settings payloads to browser storage.
-- P10 backend history query now provides a read-only, tenant-scoped, project-authorized `GET /projects/{projectId}/history` endpoint. It uses backend-owned task output, asset, and task joins; returns only non-deleted generated/edited output assets; excludes orphan and cross-tenant rows; and does not expose object keys, MinIO URLs, image bytes, Provider secrets, auth headers, cookies, or API call metadata.
-- R10 reviewed the complete P10 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
-- P11 backend user-admin APIs now enforce tenant-scoped user and role queries, require RBAC for every operation, hash newly created user passwords, redact sensitive fields from responses and operation logs, block self-disable, block loss of the last active tenant admin, require `role:manage` for assigning roles during create or role replacement, and require `user:disable` for status changes. The task passed backend tests, race tests, vet, API/Worker builds, Compose config, and whitespace checks.
-- P11 frontend user/role admin UI now gates entry, user reads, role/permission reads, create/update/disable/enable, and role assignment by the current session permissions. It sends CSRF headers through the shared API client, does not call user-admin endpoints when permissions are absent, disables current-user status actions, avoids rendering unsafe response fields, and keeps created-user passwords out of localStorage, sessionStorage, IndexedDB, and post-success UI. The task passed frontend lint, type-check, targeted tests, full tests, build, and whitespace checks.
-- R11 reviewed the complete P11 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, P11 frontend/backend sensitive-pattern scans, and whitespace checks.
-- P12 frontend unified-history migration now consumes the backend-owned, tenant-scoped `GET /projects/{projectId}/history` feed directly. The browser no longer builds production history by joining task lists with generated/edited asset lists. The UI preserves project-switch stale-response protection, authorized detail/download/re-edit, backend `editSourceAssetId`, non-leaky history errors, and unsafe response-field suppression.
-- P12 frontend project/asset workflow polish now uses backend APIs for project edit, asset filtering, asset metadata edit, member list/add/update/remove entry points, reference upload, download, delete, favorite, and use-as-reference. It preserves CSRF write requests, stale project-switch protections, and filtered-list consistency without adding Provider direct calls, browser Provider key storage, or task polling.
-- P12 backend project-member hardening now rejects deleting or downgrading the final project `OWNER`, allows owner transfer only after another `OWNER` remains, preserves tenant/RBAC/project-role checks, and verifies rejected writes do not create successful operation logs.
-- R12 reviewed the complete P12 code range and found no blocking security issues. Validation passed frontend lint/type-check/test/build, backend tests/race/vet/build, Docker Compose config, forbidden frontend Provider/polling/storage scans, and whitespace checks.
-- P13 backend runtime defaults now store only tenant-scoped Provider/model IDs, validate enabled same-tenant ownership on settings writes, revalidate default-backed task requests, and reject absent, cleared, stale, disabled, deleted, cross-tenant, or capability-incompatible defaults without enqueue or successful task audit side effects. Focused/full backend tests, race tests, vet, builds, Compose config, and whitespace checks passed before merge.
-- P13 runtime-default hardening now converts malformed persisted `task_defaults` rows to sanitized `422 VALIDATION_ERROR` for default-backed requests with no task/event/enqueue/success-audit side effects, leaves explicit Provider/model requests independent of unused defaults, and preserves sanitized internal errors for real settings-storage failures.
-- P13 task concurrency policy now exposes tenant/user/Provider/model limits only with a Worker runtime consumer. Tenant values may only narrow or match environment hard caps, global concurrency remains environment-owned, Provider row limits remain additional stricter caps, and malformed persisted `task_concurrency` fails closed before Provider execution or successful output/usage/API-call side effects.
-- P13 storage cleanup foundation now uses an independent bounded cleanup context for upload rollback after object write and adds an internal tenant-scoped physical cleanup service for soft-deleted assets. It deletes only metadata-selected original/thumbnail objects older than a caller-supplied cutoff, treats missing objects as idempotent success, leaves failed deletes retryable, and tracks physical cleanup with `purged_at`.
-- P13 storage retention runtime now exposes nullable `storageRetention.deletedAssetRetentionDays` only with a Worker maintenance consumer. Unset or cleared retention is disabled, malformed persisted settings fail closed, inactive tenants are skipped, and cleanup logs avoid object keys, bucket names, MinIO URLs, image bytes, Authorization, Cookie, JWT, and Provider API keys.
-- P14 Provider/model lifecycle integrity prevents enabled models from pointing at disabled or deleted Providers through normal management APIs, revalidates loaded task defaults, and keeps lifecycle conflict responses non-sensitive.
-- P14 backend usage/cost reporting keeps cost estimation deterministic and non-negative, treats invalid pricing as zero-cost without failing successful Provider tasks, keeps usage summary tenant-scoped across tenant/user/project/Provider/model dimensions, and preserves recursive redaction for raw usage/API metadata.
-- P14 frontend cost observability consumes only same-origin backend admin usage APIs, gates usage views by `usage:read`, keeps cost display based on backend strings, avoids polling and browser Provider-key storage, and does not expose raw Provider secrets, Authorization/Cookie/JWT values, image base64, bucket names, or object keys.
-- P15 core-flow E2E coverage now verifies the happy-path security envelope across init-admin, HttpOnly session cookies, readable CSRF cookie, Provider/model setup, upload validation, fake Worker execution, SSE replay, output asset download, history, usage, and logs without calling external AI Providers.
-- P15 final security regression now provides `scripts/security-regression.sh` and extends the core-flow test with low-permission negative assertions for output asset download, project history, usage reads, operation logs, API call logs, and API call detail. The script also runs focused security tests, frontend production forbidden-pattern scans, backend sensitive-marker scans, frontend `/api/` proxy safety checks, Compose config validation, and whitespace checks.
-- R15 release-readiness review re-ran the final security regression and deployment validation on latest `main`; no blocking security issues were found, and live Compose cleanup left no project containers or project volumes.
-- P16 deploy script hardening now adds scoped cleanup traps to `scripts/deploy-release-validation.sh --up --down`, including failure and SIGINT/SIGTERM paths. Validation confirmed no project Compose containers or volumes remain after live deployment checks.
-- P16 backend log retention now exposes `logRetention` only with a Worker runtime consumer. Cleanup is tenant-scoped, batch-limited, skips malformed settings fail-closed, preserves non-terminal task events for SSE/recovery, and records only sanitized aggregate audit metadata.
-- P16 thumbnail policy is now backend-owned. New thumbnails are generated only from images that passed backend validation, stored in MinIO, and accessed through `GET /api/v1/assets/{assetId}/thumbnail` after login, tenant, project/member, RBAC, and object authorization checks. Responses and logs must continue to avoid bucket names, object keys, MinIO URLs, image base64, Authorization, Cookie, JWT, and Provider secrets.
-- P17 orphan cleanup is conservative. It scans storage only through backend code, and deletion eligibility requires recognized backend object-key patterns plus absence from trusted MySQL metadata; a raw bucket listing is not sufficient. Dry-run and execution responses use sanitized aggregate counts and hashes/opaque IDs instead of raw object keys.
-- P13 storage quota accounting now exposes nullable `storageQuota.maxBytes` only with real backend consumers. `storageQuota.usedBytes` is read-only and computed from tenant-scoped unpurged asset metadata; upload and Worker output quota failures must not create successful metadata, output events, usage records, success logs, or leak object identifiers.
-- P17 storage quota reservation now makes quota enforcement safe under concurrent writers. Reservation IDs and counter internals are server-only; responses/logs/audit metadata must not leak them or any object key/bucket/MinIO URL. Failed reservations, expired reservations, cleanup failures, released reservations with positive finalize attempts, and malformed counters must fail closed without creating successful asset metadata.
-- P17 production diagnostics is implemented as an admin-only, tenant-scoped, read-only, aggregate-only backend endpoint. Diagnostics must not expose raw Provider payloads, operation/API log metadata, queue payload contents, Redis keys, object keys, bucket names, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets. Maintenance metadata parsing is fail-closed by field type: only numeric aggregate counts, boolean flags, enum statuses, and RFC3339 timestamps may survive.
-- P18 Provider/model/default-setting serialization adds row locks and write-path duplicate model-name rejection so concurrent admin changes cannot silently leave unavailable default references or duplicate active model names.
-- P18 optional real Provider smoke tooling remains manual and cost-bounded. Its default help/dry-run modes do not call any API, explicit `--run` requires `REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`, and direct AI Provider API bases are rejected.
-- P18 production dry-run fixed the temporary-file cleanup registration bug, added failure-path regression, and passed safe default plus live Compose rehearsal with project-scoped cleanup.
-- P19 host TLS reverse-proxy hardening added an auditable Nginx template and static guardrails. Public traffic must terminate TLS and proxy only to loopback frontend `127.0.0.1:8080`; it must never route directly to backend-api, AI Providers, or relays.
-- P19 API startup now reconciles missing built-in roles and grants for existing tenants without deleting custom roles or grants.
-- P20 pins the CSRF request-header contract to `X-CSRF-Token` across frontend, backend, CORS, Compose, and production-env preflight. Custom header aliases are rejected fail closed.
-- P20 frontend tenant/custom-role administration uses only same-origin backend APIs with CSRF-protected writes. Built-in roles remain read-only in the UI, and role drafts, passwords, tokens, and sensitive responses are not persisted in browser storage.
-- P21 Provider credential lifecycle hardening now crypto-erases `encrypted_api_key`, `api_key_hint`, and `api_key_updated_at` during Provider soft delete. Provider master-key rotation apply also scrubs historical soft-deleted Provider rows that still contain credential material, while dry-run reports count-only erase candidates.
-- P21 production CSRF hardening now rejects `CSRF_ENABLED=false` in `APP_ENV=production` at backend startup and in production dry-run preflight.
-- P21 reliable queue hardening now uses Redis Lua atomic migration for retry, ack, dead-letter, stale recovery, and delayed promotion. MySQL-backed queued/retrying delivery reconciliation repairs missing Redis delivery state while preserving MySQL as the task source of truth.
-- P21 deployment hardening now propagates a single production env file through Compose/release-validation commands, redacts health-failure logs, configures bounded `json-file` logging for long-running services, and keeps exact MinIO restore semantics in backup/restore rehearsal.
-- P21 frontend workbench hardening now submits the selected Amazon image type through backend task `imageType`, preserves backend history image types on re-edit, and normalizes invalid drafts before submission.
-- P21 login hardening now uses Redis-backed failed-login rate limiting keyed by an opaque hash of tenant, normalized email, and IP. Limit checks happen before user lookup, failures are counted after invalid credentials, successful login resets the counter before success audit/session response, and Redis limiter failures fail closed without echoing credentials.
-- P21 migration startup hardening now serializes API/Worker migrations with a MySQL advisory lock on MySQL paths, skips the lock only for SQLite/unit-test paths, and fails closed when an applied migration's expected schema objects are missing.
-- P21 quota maintenance now reconciles tenant storage quota counters from MySQL metadata through bounded rotating active-tenant batches. It does not use MinIO listing as quota truth and logs only sanitized aggregate error kinds.
-- P21 Provider attempt ledger hardening now persists an `ATTEMPTING` API-call row before external Provider execution and finalizes it after success, failure, timeout, or cancellation. Prewrite failure prevents the Provider call; finalize failure fails the task closed without output/usage side effects. Request/response metadata is recursively redacted and drops object keys, buckets, MinIO URLs, signed URLs, Authorization/Cookie/JWT/API-key/base64 fields.
-- P21 frontend legacy cleanup removed the old browser image/history repositories, legacy Blob result/detail branches, object URL result hook, and unused base64/object-url file helpers. Production history/detail/download/re-edit remain backend asset/task/history only; IndexedDB remains only for prompt templates and actively drops retired image/history stores through Dexie schema upgrade.
-- P21 SSE resilience hardening now bounds replay, catches up persisted MySQL events during heartbeat even without Redis wakeups, and resubscribes when the Redis notification channel closes. Redis remains a wakeup path only.
-- P21 session revocation hardening now stores a user `session_version`, includes it in JWTs, rejects stale sessions in auth middleware, rotates sessions on password change, revokes old cookies on logout, invalidates disabled-user sessions, and closes SSE streams whose session version or user status is no longer current.
-- P21 concurrency lease renewal hardening now renews Worker Redis semaphore leases during long Provider execution. Renewal failure cancels the execution and fails the task closed as `CONCURRENCY_LEASE_LOST` before successful output, usage, API-call success, or completed-task side effects can be written.
-- P21 Worker readiness hardening now writes the Compose healthcheck file only after database, Redis, and MinIO dependency checks pass, reports sanitized dependency-level failures, and removes the file immediately when `Worker.Run` exits.
+- P3删除了前端 Nginx AI中继路由。前端容器必须继续仅代理 `/api/` `backend-api`，并且不得代理 AI Provider。
+- P5后端资源上传现在会在将参考图像存储在MinIO之前验证MIME、魔法字节、大小、尺寸和像素数。
+- P5前端project/assetUI现在使用经过身份验证的后端项目和资产 API 来进行参考上传、元数据、favorite/delete和下载。它不直接与 MinIO 通信，也没有添加新的 AI Provider 直接调用、Provider API 密钥持久性、身份验证令牌持久性或任务轮询。
+- P6后端Provider/model管理现在存储Provider API静态加密的密钥，仅返回屏蔽密钥元数据，验证Providersave/update/test的URL，记录已脱敏操作日志，并公开租户范围的 Provider/model API。
+- P6前端Provider/model管理现在仅向后端API提交ProviderAPI密钥，仅显示屏蔽元数据，清除已提交和未提交的密钥草稿，并且不在浏览器存储中保留Provider密钥。
+- P7Provider运行时现在在真正的Provider调用之前使用连接时SSRF安全的出站传输，并在持久化之前递归地编辑运行时元数据。查看修复明确涵盖显示为值和嵌套 JSON 映射键的 API 键。
+- P7前端任务客户端工作现在使用EventSource/SSE合约，并且没有引入轮询、新的Provider直接调用或新的ProviderAPI密钥持久化。
+- P8前端后端化将生产工作台替换为后端任务API + SSE + 授权后端资产，删除普通浏览器Provider设置，删除浏览器Provider适配器，删除`legacyFile`引用有效负载，并将history/detail/download/re-edit移动到后端资产和任务。
+- R8验证了前端、后端和Compose配置回归。敏感前端静态扫描未返回浏览器 Provider 桌面、Provider 授权标头、直接 Provider 主机、任务轮询或敏感浏览器存储的生产代码命中。 Provider静态扫描命中仅限于后端Provider管理API消费者。
+- P9 audit/usage 读取 API 现在使用共享递归编辑、租户范围查询、管理 RBAC 和确定性分页。审查修复集中了修订实施，并通过受控注入缝证明了精确的已知秘密清理，而无需扩大生产Provider密钥解密范围。
+- P9生产启动强化现在拒绝占位符`JWT_SIGNING_SECRET`和占位符`API_KEY_ENCRYPTION_KEY`，在API或Worker启动可以在生产中继续进行，同时保持非生产默认值可用。
+- P9 运行时设置现在仅公开租户上传策略并在后端资产上传验证中强制执行。延迟设置不会出现在响应中，并且会在写入时被拒绝，直到其运行时使用者存在为止。
+- P9 前端管理端的可观测性/设置 UI 现在只使用后端管理契约，通过 `usage:read`、`audit:read` 和 `system:settings:manage` 控制各区域权限，保持列表分页，通过共享 API 客户端携带 CSRF 执行 PATCH 设置，并且不会在浏览器存储中保留 Provider 密钥、认证令牌、日志元数据或系统设置载荷。
+- P9安全回归添加了针对SSRF、编辑、tenant/object授权、上传验证、task/SSE重播可见性、生产秘密卫士、前端生产导入安全的针对性测试，并删除了在期间识别的无法访问的遗留历史记录display/storage助手P8/R8.
+- R9验证了完整的P9代码范围，前端lint/type-check/test/build，后端tests/race/vet/build，Docker Composeconfig/build/up/health，API健康状况，前端静态路线和Compose清理。 R9未发现阻塞安全问题。
+- P10Worker池、SSE桥生命​​周期和Provider/model生命周期强化无需更改租户、Provider适配器、SSE重播、任务状态或敏感日志记录合约。
+- P10前端管理可观察性强化为API调用详细信息添加了陈旧响应保护，保留详细元数据bounded/redacted，保留仅上传策略的系统设置，并且不会将Provider密钥、身份验证令牌、日志元数据或设置有效负载写入浏览器存储。
+- P10后端历史记录查询现在提供只读、租户范围、项目授权的`GET /projects/{projectId}/history`端点。它使用后端拥有的任务输出、资产和任务连接​​；仅返回未删除的 generated/edited 输出资产；排除孤立行和跨租户行；并且不公开对象键、MinIO URL、图像字节、Provider秘密、身份验证标头、cookie 或 API 调用元数据。
+- R10审查了完整的P10代码范围，发现没有阻塞安全问题。验证通过了前端lint/type-check/test/build、后端tests/race/vet/build、Docker Compose配置、禁止前端Provider/polling/storage扫描和空格检查。
+- P11 后端用户管理 API 现在强制执行租户范围的用户和角色查询，每个操作都需要 RBAC，散列新创建的用户密码，编辑响应和操作日志中的敏感字段，阻止自我禁用，阻止最后一个活动租户管理员的丢失，需要 `role:manage` 在创建或角色替换期间分配角色，并要求`user:disable` 用于状态更改。该任务通过了后端测试、竞态测试、审查、API/Worker构建、Compose配置和空格检查。
+- P11前端user/role管理UI现在控制进入、用户读取、role/permission读取、create/update/disable/enable以及通过当前会话权限进行角色分配。它通过共享的 API 客户端发送 CSRF 标头，在没有权限时不调用用户管理端点，禁用当前用户状态操作，避免呈现不安全的响应字段，并将创建的用户密码排除在localStorage、sessionStorage之外， IndexedDB，以及成功后UI。该任务通过了前端 lint、类型检查、目标测试、完整测试、构建和空格检查。
+- R11审查了完整的P11代码范围，没有发现阻塞安全问题。验证已通过前端 lint/type-check/test/build、后端 tests/race/vet/build、Docker Compose 配置、P11 frontend/backend 敏感模式扫描和空格检查。
+- P12前端统一历史迁移现在直接使用后端拥有的、租户范围的`GET /projects/{projectId}/history` feed。浏览器不再通过将任务列表与 generated/edited 资产列表连接来构建生产历史记录。 UI保留项目切换过时响应保护、授权detail/download/re-edit、后端`editSourceAssetId`、非泄漏历史错误和不安全的响应字段抑制。
+- P12前端project/asset工作流程优化现在使用后端API进行项目编辑、资产过滤、资产元数据编辑、成员list/add/update/remove入口点、参考上传、下载、删除、收藏和用作参考。它保留了 CSRF 写入请求、过时的项目切换保护和过滤列表一致性，而无需添加 Provider 直接调用、浏览器 Provider 密钥存储或任务轮询。
+- P12后端项目成员强化现在拒绝删除或降级最终项目`OWNER`，仅在另一个`OWNER`保留后才允许所有者转移，保留tenant/RBAC/project-role检查，并验证被拒绝的写入不会创建成功的操作日志。
+- R12审查了完整的P12代码范围，没有发现阻塞安全问题。验证通过了前端lint/type-check/test/build、后端tests/race/vet/build、Docker Compose配置、禁止前端Provider/polling/storage扫描和空格检查。
+- P13后端运行时默认值现在仅存储租户范围的Provider/modelID，在设置写入时验证启用的同租户所有权，重新验证默认支持的任务请求，并拒绝缺失、清除、过时、禁用、删除、跨租户或功能不兼容的默认值，而不会产生排队或成功的任务审核副作用。 Focused/full后端测试、竞态测试、审查、构建、Compose配置以及合并之前通过的空格检查。
+- P13 运行时默认值强化现在会针对使用默认值的请求，将格式错误的持久化 `task_defaults` 行转换为已脱敏的 `422 VALIDATION_ERROR`，且不产生 task/event/enqueue/success-audit 副作用；显式 Provider/model 请求不依赖未使用的默认值；真实设置存储故障仍返回已脱敏的 `500 INTERNAL_ERROR`。
+- P13 任务并发策略现在仅对 Worker 运行时使用者公开 tenant/user/Provider/model 限制。租户值可能仅缩小或匹配环境硬上限，全局并发仍然由环境拥有，Provider行限制仍然是额外的更严格的上限，并且格式错误的持久`task_concurrency`在Provider执行或成功output/usage/API-call副作用之前以失败方式关闭（fail closed）。
+- P13 存储清理基础现在使用独立的有界清理上下文在对象写入后进行上传回滚，并为软删除资产添加内部租户范围的物理清理服务。它仅删除元数据选择的 original/thumbnail 早于调用者提供的截止时间的对象，将丢失的对象视为幂等成功，使失败的删除可重试，并使用 `purged_at` 跟踪物理清理。
+- P13 存储保留运行时现在仅通过 Worker 维护使用者公开可空的 `storageRetention.deletedAssetRetentionDays`。未设置或清除的保留被禁用，格式错误的持久设置以失败方式关闭（fail closed），跳过不活动的租户，清理日志避免对象键、存储桶名称、MinIO URL、图像字节、授权、Cookie、JWT和ProviderAPI键。
+- P14 Provider/model 生命周期完整性可防止启用的模型通过普通管理 API 指向禁用或删除的 Provider，重新验证加载的任务默认值，并使生命周期冲突响应保持不敏感。
+- P14后端usage/cost报告保持成本估算的确定性和非负性，将无效定价视为零成本，而不会成功完成Provider任务，使使用摘要保持在跨tenant/user/project/Provider/model维度的租户范围内，并保留原始的递归编辑usage/API元数据。
+- P14前端成本可观察性仅消耗同源后端管理使用API，通过`usage:read`控制使用视图，根据后端字符串保持成本显示，避免轮询和浏览器Provider密钥存储，并且不暴露原始Provider秘密， Authorization/Cookie/JWT 值、图像 base64、存储桶名称或对象键。
+- P15核心流E2E覆盖范围现在可以验证init-admin、HttpOnly会话cookie、可读CSRFcookie、Provider/model设置、上传验证、假Worker执行的happy-path安全信封， SSE重放，输出资产下载、历史、使用和日志，无需调用外部AIProvider。
+- P15最终安全回归现在提供`scripts/security-regression.sh`，并通过针对输出资产下载、项目历史记录、使用读取、操作日志、API调用日志和API调用详细信息的低权限否定断言扩展核心流程测试。该脚本还运行重点安全测试、前端生产禁止模式扫描、后端敏感标记扫描、前端`/api/`代理安全检查、Compose配置验证和空格检查。
+- R15发布准备审查在最新的`main`上重新运行了最终的安全回归和部署验证；没有发现阻塞安全问题，并且实时 Compose 清理没有留下任何项目容器或项目卷。
+- P16部署脚本强化现在向`scripts/deploy-release-validation.sh --up --down`添加了范围内的清理陷阱，包括失败和SIGINT/SIGTERM路径。验证确认在实时部署检查后没有项目Compose容器或卷剩余。
+- P16后端日志保留现在仅通过Worker运行时使用者公开`logRetention`。清理是租户范围内的、批量限制的，跳过格式错误的设置失败关闭、保留SSE/recovery的非终端任务事件，并且仅记录已脱敏聚合审计元数据。
+- P16 缩略图政策现在由后端拥有。新的缩略图仅从通过后端验证的图像生成，存储在MinIO中，并在登录、租户、project/member、RBAC和对象授权检查后通过`GET /api/v1/assets/{assetId}/thumbnail`访问。响应和日志必须继续避免存储桶名称、对象键、MinIO URL、图像 base64、授权、Cookie、JWT 和 Provider 秘密。
+- P17孤儿清理是保守的。它仅通过后端代码扫描存储，删除资格需要识别的后端对象键模式以及可信MySQL元数据的缺失；原始的桶列表是不够的。 试运行和执行响应使用已脱敏聚合计数和hashes/opaque ID，而不是原始对象键。
+- P13 存储配额核算现在仅向真正的后端消费者公开可空的 `storageQuota.maxBytes`。 `storageQuota.usedBytes` 是只读的，根据租户范围内未清除的资产元数据计算得出；上传和Worker输出配额失败不得创建成功的元数据、输出事件、使用记录、成功日志或泄漏对象标识符。
+- P17 存储配额预留现在使配额执行在并发编写者下安全。预订 ID 和柜台内部仅适用于服务器； responses/logs/audit元数据不得泄漏它们或任何对象key/bucket/MinIOURL。失败的预留、过期的预留、清理失败、通过积极的最终确定尝试释放的预留以及格式错误的计数器必须在不创建成功的资产元数据的情况下关闭。
+- P17 生产诊断作为仅管理、租户范围、只读、仅聚合的后端端点来实现。诊断不得暴露原始 Provider 有效负载、operation/API 日志元数据、队列有效负载内容、Redis 键、对象键、存储桶名称、MinIO URL、签名 URL、图像 base64、授权、Cookie、JWT 或Provider秘密。维护元数据解析按字段类型失败关闭：只有数字聚合计数、布尔标志、枚举状态和RFC3339时间戳可以生存。
+- P18Provider/model/default-setting序列化添加行锁和写入路径重复模型名称拒绝，因此并发管理更改不能默默地留下不可用的默认引用或重复的活动模型名称。
+- P18可选真实Provider冒烟测试工具仍然是手动且受成本限制的。它的默认help/dry-run模式不调用任何API，显式`--run`需要`REAL_PROVIDER_SMOKE_CONFIRM=I_UNDERSTAND_COSTS`，直接AIProviderAPI碱基被拒绝。
+- P18生产试运行修复了临时文件清理注册错误，添加了故障路径回归，并通过了安全默认加实际 Compose演练以及项目范围的清理。
+- P19主机TLS反向代理强化添加了可审计的Nginx模板和静态保护机制。公共流量必须终止TLS并且仅代理到环回前端`127.0.0.1:8080`；它绝不能直接路由到后端 api、AI Provider 或中继。
+- P19 API 启动现在可以协调现有租户缺少的内置角色和授权，而无需删除自定义角色或授权。
+- P20将CSRF请求标头合约固定到`X-CSRF-Token`，跨前端、后端、CORS、Compose和生产环境预检。自定义标头别名被拒绝，以失败方式关闭（fail closed）。
+- P20前端tenant/custom-role管理仅使用具有CSRF保护写入的同源后端API。内置角色在 UI 中保持只读状态，并且角色草稿、密码、令牌和敏感响应不会保留在浏览器存储中。
+- P21 Provider 桌面生命周期强化现在可以在Provider软删除期间加密擦除`encrypted_api_key`、`api_key_hint`和`api_key_updated_at`。 Provider主密钥轮换应用还会清除历史软删除的Provider仍包含凭据材料的行，而试运行报告仅计数擦除候选者。
+- P21生产CSRF强化现在在后端启动和生产试运行预检时拒绝`APP_ENV=production`中的`CSRF_ENABLED=false`。
+- P21 可靠的队列强化现在使用Redis Lua 原子迁移来进行重试、ack、死信、过时恢复和延迟升级。 MySQL支持的queued/retrying交付协调修复了缺失的Redis交付状态，同时保留MySQL作为任务最终事实来源。
+- P21部署强化现在通过Compose/release-validation命令传播单个生产环境文件，编辑健康故障日志，为长期运行的服务配置有界`json-file`日志记录，并在backup/restore中保持准确的MinIO恢复语义演练。
+- P21前端工作台强化现在通过后端任务`imageType`提交选定的亚马逊图像类型，在重新编辑时保留后端历史图像类型，并在提交前规范化无效草稿。
+- P21 登录强化现在使用 Redis 支持的失败登录速率限制，由租户的不透明哈希、标准化电子邮件和 IP 控制。限制检查发生在用户查找之前，失败在无效后进行计数，成功登录会在成功 audit/session 响应之前重置计数器，Redis 限制器失败失败会关闭而不回显凭据。
+- P21 迁移启动强化现在使用 MySQL 路径上的 MySQL 咨询锁序列化 API/Worker 迁移，仅跳过 SQLite/unit-test 路径的锁定，并且在应用的迁移的预期架构对象丢失时以失败方式关闭（fail closed）。
+- P21 配额维护现在可以通过有界轮换活动租户批次来协调 MySQL 元数据中的租户存储配额计数器。它不使用 MinIO 列表作为配额真相，仅记录已脱敏聚合错误类型。
+- P21Provider尝试账本强化现在会在外部Provider执行之前保留`ATTEMPTING`API调用行，并在成功、失败、超时或取消后完成它。预写失败会阻止 Provider 调用；最终确定失败使任务关闭失败，没有output/usage副作用。 Request/response元数据递归已脱敏并删除对象键、存储桶、MinIO URL、签名 URL、Authorization/Cookie/JWT/API-key/base64 字段。
+- P21前端遗留清理删​​除了旧浏览器image/history存储库、遗留Blobresult/detail分支、对象URL结果挂钩以及未使用的base64/object-url文件助手。生产history/detail/download/re-edit仅保留后端asset/task/history； IndexedDB仅保留提示模板，并通过Dexie架构升级主动删除已退役的image/history商店。
+- P21SSE弹性强化现在限制重放，即使没有Redis唤醒，也可以在心跳期间捕获持续的MySQL事件，并在Redis通知通道关闭时重新订阅。 Redis 仅保留唤醒路径。
+- P21会话撤销强化现在存储用户`session_version`，将其包含在JWT中，拒绝身份验证中间件中的过时会话，在密码更改时轮换会话，在注销时撤销旧cookie，使禁用用户会话无效，并关闭会话版本或用户状态不再是当前的SSE流。
+- P21并发租约续订强化现在可以在长时间Provider执行期间续订WorkerRedis信号量租约。更新失败会取消执行，并在成功输出、使用、API-调用成功或可写入完成任务副作用之前将任务关闭为`CONCURRENCY_LEASE_LOST`失败。
+- P21Worker就绪强化现在仅在数据库、Redis和MinIO依赖项检查通过后写入Compose健康检查文件，报告脱敏依赖级失败，并在已完成时立即删除该文件`Worker.Run`退出。
 
-Storage and P5 review hardening backlog:
+存储和P5审查强化积压：
 
-- Frontend settings UI now exposes only active runtime-backed settings. It shows `storageQuota.maxBytes`, read-only `storageQuota.usedBytes`, and nullable `logRetention`; the UI must still hide orphan cleanup, manual cleanup triggers, MinIO object listing, bucket names, object keys, Provider secrets, and any setting without a backend consumer.
-- Built-in `asset:*` permissions and other built-in grants are reconciled for existing tenants during API startup.
-- MinIO bucket creation or verification remains an environment/deployment responsibility.
-- Frontend upload precheck limits are currently UX-only and not the platform security boundary. Backend upload validation remains authoritative until system upload limits are exposed to the frontend.
+- 前端设置UI现在仅公开活动的运行时支持的设置。它显示`storageQuota.maxBytes`，只读`storageQuota.usedBytes`，可为空`logRetention`； UI 仍必须隐藏孤立清理、手动清理触发器、MinIO 对象列表、存储桶名称、对象键、Provider 秘密以及任何没有后端使用者的设置。
+- 在 API 启动期间，为现有租户协调内置 `asset:*` 权限和其他内置授权。
+- MinIO 存储桶创建或验证仍然是environment/deployment 的责任。
+- 前端上传预检查限制目前仅限UX，而不是平台安全边界。在系统上传限制暴露给前端之前，后端上传验证仍然具有权威性。
 
-P20 operational controls:
+P20操作控制：
 
-- Provider master-key rotation uses the operator-only `backend/cmd/provider-key-rotation` CLI with default dry-run, explicit apply confirmation, serialized transaction processing, full rollback on any bad row, and sanitized count-only output.
-- Second and later tenant provisioning uses the operator-only `backend/cmd/provision-tenant` CLI until a deliberate platform-level administration model exists. Its apply path is explicitly confirmed and transactional.
-- Tenant HTTP APIs remain tenant-scoped; tenant admin sessions never imply platform-wide super-admin rights.
-- Custom-role HTTP writes are tenant-scoped, CSRF protected, audited, and blocked for built-in roles. Deletion fails while a user assignment exists.
-- Backup/restore/rollback rehearsal runs only against a disposable dynamically named Compose project and never against shared development or production services.
+- Provider主密钥轮换使用仅运维人员`backend/cmd/provider-key-rotation`CLI，默认试运行，显式应用确认，序列化事务处理，对任何坏行进行完全回滚，以及仅已脱敏计数输出。
+- 第二个及以后的租户配置仅使用运维人员`backend/cmd/provision-tenant`CLI，直到存在有意的平台级管理模型。它的应用路径是明确确认和事务性的。
+- 租户HTTP API 仍属于租户范围；租户管理会话绝不意味着平台范围的超级管理员权限。
+- 自定义角色 HTTP 写入属于租户范围，CSRF 受内置角色的保护、审核和阻止。当用户分配存在时，删除失败。
+- Backup/restore/rollback演练仅针对一次性动态命名的Compose项目运行，绝不针对共享开发或生产服务。
 
-R20 release-blocking security follow-ups:
+R20 发布阻止安全后续措施：
 
-- JWT session revocation, SSE replay/catch-up, concurrency lease lifecycle, and Worker readiness have been implemented in P21 and verified in R21 with full frontend/backend regression, security regression, default deployment validation, live Compose health/proxy checks, and cleanup checks. Production rollout still requires operator-provided production secrets, target-environment backup/restore rehearsal, optional real Provider smoke with explicit cost confirmation, remote CI, and external release approval.
+- JWT会话撤销、SSEreplay/catch-up、并发租赁生命周期和Worker准备情况已在P21中实现，并在R21中进行了充分验证frontend/backend回归、安全回归、默认部署验证、实际 Composehealth/proxy检查和清理检查。生产部署仍然需要运维人员提供生产秘密、目标环境backup/restore演练、可选的真实Provider冒烟测试以及明确的成本确认、远程CI以及外部发布批准。
 
-## Authentication
+## 身份验证
 
-Use JWT stored in HttpOnly Cookie.
+使用存储在 HttpOnly Cookie 中的JWT。
 
-Cookie requirements:
+Cookie 要求：
 
-- HttpOnly.
-- Secure in production.
-- SameSite protection.
-- Reasonable expiration.
+- 仅限 Http。
+- 生产安全。
+- SameSite 保护。
+- 合理的到期时间。
 
-Frontend JavaScript must not read authentication tokens.
+前端 JavaScript 不得读取身份验证令牌。
 
-## User-facing language and error handling
+## 面向用户的语言和错误处理
 
-- Platform-owned UI text, configuration explanations, validation messages, and non-technical errors should use Simplified Chinese whenever practical.
-- Frontend code must not show raw backend stack traces, raw Provider responses, raw infrastructure errors, Authorization/Cookie/JWT values, Provider API keys, MinIO object identifiers, or image base64 in user-visible text.
-- Backend route handlers should return sanitized messages. If a third-party Provider or infrastructure component returns English text, the platform should wrap or map it to a concise Chinese explanation while keeping detailed redacted diagnostics in authorized logs only.
-- Technical identifiers that are required for precision, such as enum values, MIME types, model IDs, request field names, and Provider type codes, may remain unchanged.
+- 平台拥有的UI文本、配置说明、验证消息和非技术错误应尽可能使用简体中文。
+- 前端代码不得在用户可见文本中显示原始后端堆栈跟踪、原始 Provider 响应、原始基础设施错误、Authorization/Cookie/JWT 值、Provider API 键、MinIO 对象标识符或图像 base64。
+- 后端路由处理程序应返回已脱敏消息。如果第三方Provider或基础设施组件返回英文文本，平台应将其包装或映射为简洁的中文解释，同时仅在授权日志中保留详细的已脱敏诊断。
+- 精度所需的技术标识符，例如枚举值、MIME类型、模型 ID、请求字段名称和Provider类型代码可能保持不变。
 
-## Authorization
+## 授权
 
-Use RBAC plus tenant and object-level checks.
+使用 RBAC 加上租户和对象级别的检查。
 
-Every object ID endpoint must verify:
+每个对象ID端点都必须验证：
 
-- Tenant ownership.
-- Required permission code.
-- Project membership or admin override when applicable.
+- 租户所有权。
+- 所需的权限代码。
+- 项目成员身份或管理员权限（如果适用）。
 
-## API key protection
+## API Key 保护
 
-- Encrypt Provider API keys before storing them.
-- Never return full API keys to frontend.
-- Show only masked metadata such as hint and last update time.
-- Do not log secrets.
-- Frontend may collect Provider API keys only in backend Provider management forms for immediate submission. It must never persist Provider API keys. The legacy local settings flow has been removed in P8; Provider credentials must be managed through backend APIs only.
+- 在存储密钥之前对其进行加密 Provider API 密钥。
+- 切勿将完整的API密钥返回到前端。
+- 仅显示隐藏的元数据，例如提示和上次更新时间。
+- 不要记录秘密。
+- 前端只能在后端收集ProviderAPI密钥，以便立即提交管理表单。它绝不能保留 Provider API 键。旧版本地设置流程已在 P8 中删除； Provider 凭据只能通过后端 API 进行管理。
 
-P6 Provider management must additionally enforce:
+P6 Provider 管理层还必须强制执行：
 
-- API keys may be accepted by Provider create/update forms only for immediate submission to the backend.
-- The backend response must never include plaintext API keys or encrypted key material.
-- Updating a Provider without `apiKey` must retain the existing encrypted key.
-- Rotating an API key must create an operation log with redacted metadata only.
-- Provider test must use decrypted credentials only in backend memory and must redact outbound request metadata before logs or API responses.
+- API密钥可以被Providercreate/update表单接受，仅用于立即提交到后端。
+- 后端响应不得包含明文 API 密钥或加密的密钥材料。
+- 更新没有 `apiKey` 的 Provider 必须保留现有的加密密钥。
+- 旋转API密钥必须创建仅包含已脱敏元数据的操作日志。
+- Provider测试必须仅在后端内存中使用解密的凭据，并且必须在日志或API响应之前编辑出站请求元数据。
 
-Current P6 Provider backend status:
+当前 P6 Provider 后端状态：
 
-- Provider API key encryption, masked responses, rotation metadata, backend-only Provider test, and recursive operation-log metadata redaction are implemented.
-- Provider test does not create tasks, assets, or usage records.
-- Frontend Provider/model management is implemented and does not persist Provider API keys or create Provider direct browser calls.
-- P9 production startup hardening rejects default placeholder `API_KEY_ENCRYPTION_KEY` before API or Worker startup in production.
+- 实现了ProviderAPI密钥加密、屏蔽响应、旋转元数据、仅后端Provider测试以及递归操作日志元数据编辑。
+- Provider 测试不会创建任务、资产或使用记录。
+- 前端Provider/model管理已实施，不会保留ProviderAPI密钥或创建Provider直接浏览器调用。
+- P9生产启动强化在API或Worker生产启动之前拒绝默认占位符`API_KEY_ENCRYPTION_KEY`。
 
-## Sensitive logging policy
+## 敏感日志记录策略
 
-Do not log:
+不记录：
 
-- Full API keys.
-- Authorization headers.
-- Cookies.
-- Passwords.
-- Image base64.
-- Raw uploaded image bytes.
+- 完整的API按键。
+- 授权标头。
+- 饼干。
+- 密码。
+- 图像base64。
+- 原始上传图像字节。
 
-Log sanitized request IDs, Provider IDs, model IDs, task IDs, durations, statuses, and redacted errors.
+记录已脱敏请求 ID、Provider ID、模型 ID、任务 ID、持续时间、状态和已脱敏错误。
 
-## SSRF defense
+## SSRF 防御
 
-Provider base URL validation must block:
+Provider 基础 URL 验证必须阻止：
 
-- `localhost`.
+- `localhost`。
 - `127.0.0.0/8`.
 - `::1`.
-- RFC1918 private ranges.
-- Link-local ranges.
-- Multicast ranges.
-- Docker internal service names.
-- Redirects to blocked targets.
+- RFC1918私人范围。
+- 链接本地范围。
+- 多播范围。
+- Docker 内部服务名称。
+- 重定向到被阻止的目标。
 
-Default policy is HTTPS only.
+默认策略仅限HTTPS。
 
-P6 must validate Provider URLs at both persistence time and outbound test/use time. Save-time validation alone is insufficient because DNS can change after a Provider is saved.
+P6 必须在持久时间和出站 test/use 时间验证 Provider URL。仅保存时间验证是不够的，因为在保存 Provider 后，DNS 可能会发生变化。
 
-Provider URL validation must reject:
+Provider URL 验证必须拒绝：
 
-- Non-HTTP(S) schemes.
-- Plain HTTP unless a future explicitly documented local-development exception is approved.
-- URLs with embedded credentials.
-- Hostnames that are Docker Compose service names or resolve to blocked IP ranges.
-- Redirect chains that land on a blocked target.
+- 非HTTP(S) 计划。
+- 普通HTTP，除非未来明确记录的本地开发例外情况得到批准。
+- 嵌入了凭据的 URL。
+- 主机名是Docker Compose服务名称或解析为阻止的IP范围。
+- 重定向落在被阻止目标上的链。
 
-SSRF tests are required for Provider save/update/test and real runtime execution paths.
+SSRF 需要测试Provider save/update/test 和真实的运行时执行路径。
 
-Current P6 Provider backend status:
+当前 P6 Provider 后端状态：
 
-- Provider save/update/test SSRF tests cover blocked schemes, embedded credentials, localhost, loopback, private ranges, link-local, multicast, Docker service names, DNS resolution to blocked ranges, and redirects to blocked targets.
-- P7 real Provider Adapter execution uses connect-time IP validation / SSRF-safe transport to prevent DNS rebinding between validation and connection.
+- Providersave/update/testSSRF测试涵盖阻止方案、嵌入式、本地主机、环回、私有范围、本地链路、多播、Docker服务名称、DNS解析到阻止的范围以及重定向到阻止的目标。
+- P7真实Provider适配器执行使用连接时IP验证/SSRF安全传输来防止DNS在验证和连接之间重新绑定。
 
-P7 Provider runtime requirement:
+P7 Provider 运行时要求：
 
-- Real Provider generation/edit calls must not start until the outbound HTTP transport validates the final dial target at connection time.
-- Provider runtime logs and api_call_logs must recursively redact Authorization, Cookie, API keys, bearer tokens, image base64, and raw image bytes.
-- Provider runtime must treat model capability rows as the trusted parameter allowlist.
+- 在出站 HTTP 传输验证连接时的最终拨号目标之前，真实的 Provider generation/edit 呼叫不得开始。
+- Provider运行时日志和api_call_logs必须递归地编辑授权、Cookie、API密钥、不记名令牌、图像 base64 和原始图像字节。
+- Provider 运行时必须将模型功能行视为可信参数白名单。
 
-Current P7 Provider runtime status:
+当前 P7 Provider 运行时状态：
 
-- The runtime requirement above is implemented and merged.
-- Configured Provider API keys are decrypted only in backend memory, passed into the redactor as known secrets, and removed from persisted metadata whether they appear as values or nested JSON map keys.
-- Residual boundary: unknown secrets that are neither supplied as known secrets nor matched by heuristic rules cannot be identified automatically. This is a generic limit of redaction, not an uncovered path for the currently configured Provider API key.
+- 实现并合并上述运行时要求。
+- 配置的 Provider API 密钥仅在后端内存中解密，作为已知秘密传递到编辑器中，并从持久元数据中删除，无论它们显示为值还是嵌套的 JSON 映射密钥。
+- 剩余边界：既不作为已知秘密提供也不由启发式规则匹配的未知秘密不能被自动识别。这是编辑的一般限制，而不是当前配置的 Provider API 密钥的未覆盖路径。
 
-Current P9 audit-read status:
+当前P9审核读取状态：
 
-- Audit/usage read responses use the same shared redaction implementation as Provider runtime rather than a forked heuristic-only copy.
-- Exact known-secret value/key removal is supported when a trusted redactor is explicitly injected.
-- Production admin read APIs currently default to heuristic redaction only. This is intentional: Provider plaintext API keys are not broadly decrypted just to scrub historical dirty rows.
-- If future requirements demand exact read-time scrubbing of historical non-heuristic secrets, first design a narrowly scoped secret source, authorized lifecycle, and retention policy; do not widen decryption ad hoc inside read handlers.
+- Audit/usage 读取响应使用与 Provider 运行时相同的共享编辑实现，而不是仅分叉的启发式副本。
+- 当显式注入受信任的编辑器时，支持精确的已知秘密value/key删除。
+- 生产管理员读取 API 目前默认仅进行启发式编辑。这是故意的：Provider明文API密钥不会被广泛解密，只是为了清除历史脏行。
+- 如果未来的需求需要对历史非启发式秘密进行精确的读取时清理，首先设计范围狭窄的秘密来源、授权生命周期和保留策略；不要在读取处理程序中临时扩大解密范围。
 
-P8 migration security requirements:
+P8迁移安全要求：
 
-- Browser generation/edit flows must create backend tasks only and never create Provider `Authorization` headers.
-- Any browser-persisted settings that survive P8 must be non-sensitive UI preferences only; Provider API keys and Provider API URLs are forbidden.
-- Existing local history blobs may remain only as explicit compatibility data if retained; they must not be silently uploaded into tenant storage or remain the normal production history source.
-- Workbench status must consume SSE only. Polling is still forbidden even during migration fallback handling.
+- 浏览器generation/edit流必须仅创建后端任务，而不能创建Provider`Authorization`标头。
+- 任何在 P8 中保留的浏览器持久设置都必须是非敏感的 UI 首选项；禁止使用 Provider API 键和 Provider API URL。
+- 如果保留，现有的本地历史记录 blob 可能仅保留为显式兼容性数据；它们不得默默上传到租户存储中或保留为正常的生产历史源。
+- 工作台状态必须仅消耗SSE。即使在迁移回退处理期间，轮询仍然被禁止。
 
-Current R12 frontend security status:
+当前R12前端安全状态：
 
-- Production workbench generation/edit flows create backend tasks and use SSE for status.
-- Static scans through R12 found no production direct Provider host, Provider `Authorization` header, Provider key persistence, sensitive browser storage, or polling loop.
-- Remaining `providers` static-scan hits are backend Provider management API paths, not browser AI Provider calls.
-- Remaining IndexedDB usage must stay limited to prompt templates. Frontend production history consumes the unified backend history endpoint directly, and legacy image/history stores are deleted by the Dexie upgrade path.
+- 生产工作台generation/edit流程创建后端任务并使用SSE作为状态。
+- 截至 R12 的静态扫描未发现生产代码直接访问 Provider 主机、设置 Provider `Authorization` 请求头、持久化 Provider 密钥、使用敏感浏览器存储或引入轮询循环。
+- 静态扫描中剩余的 `providers` 命中项是后端 Provider 管理 API 路径，不是浏览器 AI Provider 调用。
+- 剩余的 IndexedDB 使用必须仅限于提示模板。前端生产历史记录直接使用统一后端历史端点，旧 image/history 存储由 Dexie 升级路径删除。
 
-## Upload defense
+## 上传防御
 
-Uploads must validate true file type and image properties. SVG is forbidden because it can contain script and external references.
+上传必须验证真实的文件类型和图像属性。 SVG 被禁止，因为它可以包含脚本和外部引用。
 
-Validation must include:
+验证必须包括：
 
-- MIME allowlist.
-- Magic byte detection.
-- Size limit.
-- Width and height limit.
-- Pixel-count limit.
+- MIME 允许名单。
+- 魔术字节检测。
+- 尺寸限制。
+- 宽度和高度限制。
+- 像素数限制。
 
-Client-side checks may remain for user experience, but they are not a security boundary. Backend validation is mandatory before any object is stored in MinIO.
+客户端检查可能会保留用于用户体验，但它们不是安全边界。在任何对象存储在MinIO中之前，必须进行后端验证。
 
-P5 upload implementation must verify all of the following before writing to MinIO:
+P5 上传实现必须在写入 MinIO 之前验证以下所有内容：
 
-- The authenticated user can access the target project in the current tenant.
-- The request MIME type is in the allowlist.
-- Magic bytes decode as JPEG, PNG, or WebP.
-- The decoded image dimensions and pixel count are within configured limits.
-- The filename is treated as untrusted metadata only and never used directly in MinIO object keys.
+- 通过身份验证的用户可以访问当前租户中的目标项目。
+- 请求 MIME 类型位于允许列表中。
+- Magic bytes 解码为 JPEG、PNG 或 WebP。
+- 解码图像尺寸和像素数在配置的限制内。
+- 文件名仅被视为不受信任的元数据，并且不会直接在 MinIO 对象键中使用。
 
-## CSRF and CORS
+## CSRF 和 CORS
 
-Because auth uses Cookies, state-changing APIs need CSRF protection. CORS must be limited to configured frontend origins with credentials enabled only for trusted origins.
+由于 auth 使用 Cookie，因此状态更改 API 需要 CSRF 保护。 CORS 必须仅限于已配置的前端来源，并且仅对可信来源启用了凭据。
 
-## Rate and concurrency limits
+## 速率和并发限制
 
-Apply limits to:
+将限制应用于：
 
-- Login attempts.
-- Uploads.
-- Task creation.
-- Provider calls.
-- SSE connections.
+- 登录尝试。
+- 上传。
+- 任务创建。
+- Provider调用。
+- SSE 连接。
 
-Concurrency limits must exist at global, tenant, user, Provider, and model dimensions.
+全局、租户、用户、Provider 和模型维度必须存在并发限制。
 
-## Audit
+## 审计
 
-Record operation logs for security-sensitive actions. Metadata must be useful for audit but redacted for secrets.
+记录安全敏感操作的操作日志。元数据必须对审计有用，但对秘密来说已脱敏。
 
-## Security acceptance checks
+## 安全验收检查
 
-- No frontend AI Provider calls.
-- No frontend API key storage.
-- No complete API key in API response.
-- No sensitive data in logs.
-- Object-level checks on every object ID API.
-- Upload rejects SVG and invalid image bytes.
-- Docker frontend has no AI relay route.
-- Task status uses SSE, not polling.
+- 无前端AIProvider调用。
+- 无前端API密钥存储。
+- 没有完整的 API 输入 API 回复。
+- 日志中没有敏感数据。
+- 对每个对象IDAPI进行对象级检查。
+- 上传拒绝SVG和无效的图像字节。
+- Docker前端没有AI中继路由。
+- 任务状态使用SSE，而不是轮询。

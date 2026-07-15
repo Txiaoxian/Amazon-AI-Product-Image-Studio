@@ -1,50 +1,50 @@
-# Architecture
+# 架构
 
-## Original frontend baseline
+## 原始前端基线
 
-The repository started as a pure frontend local app:
+该存储库最初是一个纯前端本地应用程序：
 
-- React + TypeScript + Vite.
-- Tailwind CSS.
-- Dexie / IndexedDB for image blobs, history records, and prompt templates.
-- localStorage for settings and Provider API keys.
-- Frontend Provider Adapters for OpenAI, Gemini/Nano Banana, and OpenAI-compatible relay calls.
-- Static Nginx Docker deployment.
+- React + TypeScript + Vite。
+- TailwindCSS。
+- Dexie / IndexedDB 用于图像二进制数据、历史记录和提示模板。
+- localStorage 用于设置和 Provider API 键。
+- 用于OpenAI、Gemini/Nano Banana 和OpenAI兼容中继调用的前端Provider适配器。
+- 静态 Nginx Docker 部署。
 
-This baseline was preserved during the early platformization phases so existing UI concepts could be migrated instead of rewritten.
+该基线在早期平台化阶段得到保留，因此现有的UI概念可以迁移而不是重写。
 
-## Current Platform State During P21
+## P21 期间的当前平台状态
 
-The repository is structurally split into `frontend/`, `backend/`, `deploy/`, and `docs/`, and has completed P18 production dry-run, P19/P20 operational hardening, and multiple P21 production reliability slices. The platform now has backend/frontend infrastructure, authentication/RBAC, tenant user and role administration, project management, project member management with last-`OWNER` protection, MinIO-backed reference/generated/edited assets, backend-generated authorized thumbnails for new assets, seller project/asset workflow polish, Provider/model management, task APIs, SSE delivery, reliable Redis queueing, Worker processing, real backend Provider Adapter runtime, unified backend project history, usage/audit reads, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, conservative orphan cleanup, strict quota reservations, admin diagnostics, release validation, security regression, deployment runbook, optional real Provider smoke tooling, host TLS proxy template checks, frontend dependency audit gates, existing-tenant built-in-role reconciliation, fixed CSRF header contract, Redis-backed login rate limiting, serialized startup migrations, Worker quota reconciliation runtime, Provider attempt ledger, frontend legacy IndexedDB image/history cleanup, and Docker Compose release checks.
+仓库结构上分为`frontend/`、`backend/`、`deploy/`、`docs/`，已完成P18生产试运行、P19/P20操作强化以及多项P21生产可靠性切片。该平台现在拥有backend/frontend基础设施、authentication/RBAC、租户用户和角色管理、项目管理、具有最后`OWNER`保护的项目成员管理、MinIO支持的reference/generated/edited资产、后端为新资产生成的授权缩略图、卖家project/asset工作流程完善，Provider/model管理，任务API，SSE交付，可靠Redis排队，Worker处理，真正的后端Provider适配器运行时，统一后端项目历史记录， usage/audit读取，运行时支持upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention设置，保守的孤立清理，严格配额保留，管理诊断，发布验证，安全回归，部署运行手册，可选真实Provider冒烟测试工具，主机TLS代理模板检查，前端依赖审核门，现有租户内置角色协调、固定CSRF标头合约、Redis支持的登录速率限制、序列化启动迁移、Worker配额协调运行时、Provider尝试分类账、前端遗留IndexedDB image/history清理，以及Docker Compose发布检查。
 
-Important current facts:
+当前重要事实：
 
-- The production frontend workbench now uses backend model capabilities, backend task creation, SSE task state, authorized backend assets, and backend unified project history.
-- Browser Provider adapters, frontend Provider registry/types, and normal local Provider API Key/API URL settings have been removed.
-- IndexedDB is no longer the production source for generated images or history. It supports non-sensitive prompt templates only, and the Dexie v2 upgrade path deletes retired image/history stores.
-- The backend currently has configuration, logging, router, health, response helpers, middleware, explicit MySQL/GORM migrations under `backend/internal/database`, auth, RBAC, user/role admin APIs, project APIs, project member APIs, asset APIs, MinIO storage abstraction, upload validation, authorized downloads, Provider APIs, model APIs, API key encryption, SSRF-validated Provider testing, task APIs, SSE replay, reliable Redis queueing, Worker state transitions, backend Provider Adapter runtime, MinIO output assets, usage records, API call logs, operation logs, audit/usage read APIs, runtime-backed upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention settings, production secret guards, Worker process concurrency, API Redis subscriber lifecycle ownership, conservative orphan cleanup, strict quota reservations, tenant-scoped diagnostics, Provider/model/default-setting write serialization, security regression entry points, deployment validation scripts, and optional real Provider smoke tooling.
-- The frontend has an API client, task/SSE client contracts, auth integration, user/role admin UI, project selection/creation/editing, project member entry points, project asset upload/list/filter/favorite/delete/download/detail/metadata-edit UI, project-scoped reference selection by backend `assetId`, admin Provider/model management UI, admin usage/audit/settings UI, backend task-backed workbench submission, backend result rendering, and backend unified-history/detail/download/re-edit flows.
-- The frontend consumes the backend-owned project history query at `GET /api/v1/projects/{projectId}/history`; it must not rebuild the production history feed by joining task and generated/edited asset lists in the browser.
-- The backend now exposes tenant `taskDefaults` and consumes them only when task creation omits both Provider/model IDs. Malformed persisted defaults fail closed for default-backed requests without task creation side effects.
-- The backend now exposes tenant `taskConcurrency` only with a Worker runtime consumer. Tenant values can narrow environment hard caps, global concurrency remains deployment-owned, and malformed persisted concurrency settings fail closed before Provider execution.
-- The backend has an internal asset cleanup foundation for upload rollback and physical purge of soft-deleted objects. Worker maintenance now consumes nullable tenant `storageRetention.deletedAssetRetentionDays` and `logRetention` settings; unset/null/malformed settings fail closed and do not delete anything.
-- Docker Compose has buildable runtime foundations, P15 release validation, P16 cleanup traps, P18 live dry-run cleanup evidence, a deployment runbook, an external TLS reverse-proxy template/static checker, and optional real Provider smoke tooling. Routine development still uses the shared local MySQL/Redis/MinIO services documented in `docs/local-development.md`.
+- 生产前端工作台现在使用后端模型功能、后端任务创建、SSE任务状态、授权后端资产和后端统一项目历史记录。
+- 浏览器Provider适配器、前端Providerregistry/types和正常本地ProviderAPIKey/APIURL设置已被删除。
+- IndexedDB不再是生成图像或历史记录的生产源。它仅支持非敏感提示模板，Dexie v2 升级路径会删除已退役的image/history 商店。
+- 后端目前有配置、日志记录、路由器、运行状况、响应助手、中间件、显式 MySQL/GORM 迁移，`backend/internal/database`、身份验证、RBAC、user/role 管理 API、项目 API、项目成员 API、资产 API、 MinIO存储抽象，上传验证，授权下载，ProviderAPI，模型API，API密钥加密，SSRF验证Provider测试，任务API，SSE重播，可靠Redis排队，Worker状态转换，后端Provider适配器运行时，MinIO输出资产，使用记录，API调用日志，操作日志，audit/usage读取API，运行时支持upload-policy/task-default/task-concurrency/storage-retention/storage-quota/log-retention 设置、生产秘密守卫、Worker 进程并发、API Redis 订阅者生命周期所有权、保守的孤儿清理、严格的配额保留、租户范围的诊断、Provider/model/default-setting 写入序列化、安全回归入口点、部署验证脚本和可选真正的Provider冒烟测试工具。
+- 前端有API客户端、task/SSE客户端合约、身份验证集成、user/role管理UI、项目selection/creation/editing、项目成员入口点、项目资产upload/list/filter/favorite/delete/download/detail/metadata-edit UI，后端项目范围的参考选择`assetId`，管理Provider/model管理UI，管理usage/audit/settingsUI，后端任务支持的工作台提交，后端结果渲染和后端unified-history/detail/download/re-edit流动。
+- 前端消费后端拥有的项目历史查询`GET /api/v1/projects/{projectId}/history`；它不得通过在浏览器中加入任务和generated/edited资产列表来重建生产历史记录。
+- 后端现在公开租户`taskDefaults`，并且仅当任务创建忽略两个Provider/model ID 时才使用它们。对于默认支持的请求，格式错误的持久默认值以失败方式关闭（fail closed），而不会产生任务创建副作用。
+- 后端现在仅通过 Worker 运行时使用者公开租户 `taskConcurrency`。租户值可以缩小环境硬上限，全局并发仍然由部署拥有，并且格式错误的持久并发设置在 Provider 执行之前以失败方式关闭（fail closed）。
+- 后端具有内部资产清理基础，用于上传回滚和软删除对象的物理清除。 Worker 维护现在消耗可空租户 `storageRetention.deletedAssetRetentionDays` 和 `logRetention` 设置； unset/null/malformed 设置关闭失败并且不删除任何内容。
+- Docker Compose具有可构建的运行时基础，P15发布验证，P16清理陷阱，P18现场试运行清理证据，部署运行手册，外部TLS反向代理template/static检查器，以及可选的真实Provider冒烟测试工具。日常开发仍然使用`docs/local-development.md`中记录的共享本地MySQL/Redis/MinIO服务。
 
-Remaining follow-ups are documented in `docs/development-plan.md` and `docs/security.md`. P21 still needs SSE resilience, revocable sessions, concurrency lease renewal, Worker readiness, and final stable-production Go/No-Go review. Writable settings still cannot be exposed before their runtime consumers exist.
+剩余的后续行动记录在`docs/development-plan.md`和`docs/security.md`中。 P21仍然需要SSE弹性、可撤销会话、并发租约续订、Worker准备以及最终稳定生产Go/No-Go审查。在运行时使用者存在之前，可写设置仍然无法公开。
 
-## Target platform architecture
+## 目标平台架构
 
-The target platform is a multi-user, multi-tenant image generation platform:
+目标平台是一个多用户、多租户的图像生成平台：
 
-- Frontend: React + TypeScript + Vite + Tailwind CSS.
-- Backend API: Go + Gin + GORM.
-- Backend Worker: Go worker process.
-- Database: MySQL 8.
-- Queue/cache/locks: Redis.
-- Object storage: MinIO.
-- Deployment: Docker Compose.
+- 前端：React + TypeScript + Vite + Tailwind CSS。
+- 后端API：Go + Gin + GORM。
+- 后端Worker：GoWorker进程。
+- 数据库：MySQL8。
+- 队列/缓存/锁：Redis。
+- 对象存储：MinIO。
+- 部署：Docker Compose。
 
-## Target repository layout
+## 目标存储库布局
 
 ```text
 gpt-image/
@@ -87,40 +87,40 @@ gpt-image/
   README.md
 ```
 
-This layout is active. Explicit migrations currently live in `backend/internal/database/migrations.go`.
+此布局处于活动状态。显式迁移目前位于`backend/internal/database/migrations.go`。
 
-## Service boundaries
+## 服务边界
 
-The frontend owns presentation, user interactions, local draft state, API client calls, and SSE consumption. It does not own Provider credentials, Provider calls, task execution, or durable business data.
+前端拥有演示、用户交互、本地草稿状态、API客户端调用和SSE消费。它不拥有 Provider 凭据、Provider调用、任务执行或持久业务数据。
 
-The API service owns authentication, tenant context, RBAC, business APIs, upload validation, task creation, Provider/model management, SSE delivery, audit logging, and usage queries.
+API服务拥有身份验证、租户上下文、RBAC、业务 API、上传验证、任务创建、Provider/model管理、SSE交付、审核日志记录和使用查询。
 
-The worker service owns queue consumption, concurrency control, Provider Adapter execution, output upload, usage extraction, task status transitions, and task event persistence.
+Worker服务拥有队列消费、并发控制、Provider适配器执行、输出上传、使用情况提取、任务状态转换和任务事件持久化。
 
-MySQL is the final source of truth. Redis is only for queueing, locks, cache, rate limits, concurrency semaphores, and temporary acceleration. MinIO stores image bytes.
+MySQL是最终事实来源。 Redis仅用于队列、锁、缓存、速率限制、并发信号量和临时加速。 MinIO 存储图像字节。
 
-## Main data flow
+## 主要数据流
 
-1. User logs in through `/api/v1/auth/login`.
-2. Backend sets an HttpOnly Cookie and returns current user metadata.
-3. Frontend loads projects, assets, available Providers, and enabled model capabilities.
-4. User submits a generation or edit request.
-5. API validates permissions and input, creates a MySQL task, writes an initial task event, and enqueues a Redis job.
-6. Frontend opens or reuses the SSE task stream.
-7. Worker claims the job, writes task events, calls a Provider Adapter, uploads outputs to MinIO, records usage and API call logs, and marks the task terminal.
-8. SSE pushes queued, running, output, usage, completed, failed, cancelled, retry, and heartbeat events to the frontend.
+1. 用户通过`/api/v1/auth/login`登录。
+2. 后端设置HttpOnly Cookie并返回当前用户元数据。
+3. 前端加载项目、资产、可用的Provider以及启用的模型功能。
+4. 用户提交生成或编辑请求。
+5. API 验证权限和输入，创建 MySQL 任务，写入初始任务事件，并将 Redis 作业入队。
+6. 前端打开或重用SSE任务流。
+7. Worker声明作业，写入任务事件，调用Provider适配器，上传输出到MinIO，记录使用情况和API调用日志，并标记任务终端。
+8. SSE 将排队、运行、输出、使用、完成、失败、取消、重试和心跳事件推送到前端。
 
-## Compatibility strategy
+## 兼容性策略
 
-- Existing UI components are retained and adapted to backend APIs.
-- Existing prompt, upload, parameter, result, and history UI concepts remain.
-- Browser Provider code has been removed from the production import graph and must not be reintroduced.
-- Existing local history data may be used only through an explicit future import/compatibility feature if one is approved; it is not primary platform data.
+- 保留现有UI组件并适配后端API。
+- 现有的提示、上传、参数、结果和历史UI概念保留。
+- 浏览器Provider代码已从生产导入图中删除，不得重新引入。
+- 如果获得批准，现有的本地历史数据只能通过明确的未来import/compatibility功能使用；它不是主要平台数据。
 
-## Transition guardrails
+## 过渡保护机制
 
-- Do not add new browser-side AI Provider calls.
-- Do not add new frontend API key storage.
-- Do not expand legacy Nginx AI relay behavior.
-- Do not make IndexedDB the source of truth for any new platform feature.
-- New platform features must be designed around backend API, MySQL, Redis, MinIO, Provider Adapter, and SSE contracts.
+- 不要添加新的浏览器端 AI Provider 调用。
+- 不要添加新的前端API密钥存储。
+- 不要扩展旧版 Nginx AI 中继行为。
+- 不要将IndexedDB作为任何新平台功能的最终事实来源。
+- 新的平台功能必须围绕后端API、MySQL、Redis、MinIO、Provider适配器和SSE合约进行设计。

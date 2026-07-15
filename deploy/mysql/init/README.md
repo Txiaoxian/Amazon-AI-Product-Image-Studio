@@ -1,10 +1,8 @@
-# MySQL Init Placeholder
+# MySQL 初始化占位符
 
-Place idempotent local-only MySQL initialization scripts here when needed.
+需要时，在此处放置幂等的本地 MySQL 初始化脚本。
 
-The backend owns schema migrations through its GORM migration runner during API
-startup. This directory should stay limited to empty database initialization or
-local-only notes.
+后端在 API 启动期间通过 GORM 迁移运行器负责架构迁移。
+此目录只应用于空数据库初始化或保存本地说明。
 
-Do not put production data, credentials, or non-repeatable migrations in this
-directory.
+不要将生产数据、凭据或不可重复执行的迁移放入此目录。

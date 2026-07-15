@@ -1,18 +1,18 @@
-# API Contract
+#API合约
 
-## Base
+## API 基础路径
 
-All platform APIs use:
+所有平台 API 均使用：
 
 ```text
 /api/v1
 ```
 
-Authentication uses HttpOnly Cookie. Frontend requests must include credentials.
+身份验证使用 HttpOnly Cookie。前端请求必须包含凭据。
 
-## Response shape
+## 响应形状
 
-Success:
+成功响应：
 
 ```json
 {
@@ -21,7 +21,7 @@ Success:
 }
 ```
 
-Paginated success:
+分页成功：
 
 ```json
 {
@@ -35,7 +35,7 @@ Paginated success:
 }
 ```
 
-Error:
+错误响应：
 
 ```json
 {
@@ -48,44 +48,44 @@ Error:
 }
 ```
 
-## Common HTTP semantics
+## 常见HTTP语义
 
-- `400`: malformed request.
-- `401`: not authenticated.
-- `403`: authenticated but not authorized.
-- `404`: resource not found or not visible to this tenant/user.
-- `409`: conflict.
-- `422`: validation failed.
-- `429`: rate limited or concurrency limited.
-- `500`: internal error with sanitized message.
+- `400`：格式错误的请求。
+- `401`：未经过身份验证。
+- `403`：已验证但未授权。
+- `404`：资源未找到或对此不可见tenant/user.
+- `409`：冲突。
+- `422`：验证失败。
+- `429`：速率限制或并发限制。
+- `500`：已脱敏消息的内部错误。
 
-## Naming and formats
+## 命名和格式
 
-- JSON fields use camelCase.
-- Enum values use UPPER_SNAKE.
-- Time fields use ISO 8601 strings.
-- Pagination query params: `pageNum`, `pageSize`.
-- Sorting query params: `sortBy`, `sortOrder`.
+- JSON字段使用camelCase。
+- 枚举值使用UPPER_SNAKE。
+- 时间字段使用 ISO 8601 字符串。
+- 分页查询参数：`pageNum`、`pageSize`。
+- 排序查询参数：`sortBy`、`sortOrder`。
 
-## Authentication APIs
+## 身份验证 API
 
-- `POST /auth/init-admin`: initialize first administrator.
-- `POST /auth/captcha`: create a one-time captcha challenge.
-- `GET /auth/captcha/{captchaId}/image`: read the short-lived PNG captcha image.
-- `POST /auth/login`: login.
-- `POST /auth/logout`: logout.
-- `GET /me`: current user, tenant, roles, and permissions.
-- `PATCH /me/password`: change password.
+- `POST /auth/init-admin`：初始化第一个管理员。
+- `POST /auth/captcha`：创建一次性验证码挑战。
+- `GET /auth/captcha/{captchaId}/image`：读取短暂的PNG验证码图像。
+- `POST /auth/login`：登录。
+- `POST /auth/logout`：注销。
+- `GET /me`：当前用户、租户、角色和权限。
+- `PATCH /me/password`：更改密码。
 
-Login contract:
+登录合约：
 
-- The frontend login form sends `email`, `password`, and optional `captchaId` / `captchaCode`; it does not ask users to enter `tenantId`.
-- `tenantId` remains an optional compatibility field for API/operator clients. A deployment with multiple active tenants should configure `AUTH_DEFAULT_TENANT_ID` for the tenant-specific login entry point.
-- Captcha challenges are short-lived, stored server-side in Redis, and consumed atomically on the first validation attempt.
-- An active tenant administrator may omit captcha fields. A non-admin user must submit a valid challenge when `AUTH_CAPTCHA_ENABLED=true`.
-- Invalid password, missing captcha, invalid captcha, and expired captcha use the same sanitized `401 INVALID_CREDENTIALS` response; captcha and role state must not be disclosed.
+- 前端登录表单发送`email`、`password`和可选的`captchaId` / `captchaCode`；它不会要求用户输入`tenantId`。
+- `tenantId` 仍然是 API/operator 客户端的可选兼容性字段。具有多个活动租户的部署应为特定于租户的登录入口点配置 `AUTH_DEFAULT_TENANT_ID`。
+- 验证码挑战是短暂的，存储在服务器端Redis中，并在第一次验证尝试时自动消耗。
+- 活跃租户管理员可以省略验证码字段。非管理员用户必须在`AUTH_CAPTCHA_ENABLED=true`时提交有效的挑战。
+- 密码无效、验证码丢失、验证码无效、验证码过期使用相同的已脱敏`401 INVALID_CREDENTIALS`响应；验证码和角色状态不得泄露。
 
-## Tenant and user APIs
+## 租户和用户 API
 
 - `GET /tenants/current`
 - `PATCH /tenants/current`
@@ -99,35 +99,35 @@ Login contract:
 - `GET /users/{userId}/ai-access`
 - `PUT /users/{userId}/ai-access`
 
-All user APIs require tenant scope and appropriate RBAC permissions.
+所有用户 API 都需要租户范围和适当的 RBAC 权限。
 
-Tenant contract:
+租客合同：
 
-- Additional tenant provisioning is an operator-only CLI workflow, not an unauthenticated HTTP endpoint and not an implicit platform-super-admin API. The CLI creates one tenant, its built-in roles/grants, and one initial tenant admin transactionally.
-- `GET /tenants/current` returns only the authenticated caller's tenant metadata.
-- `PATCH /tenants/current` may update the current tenant `name` only. It must not accept `tenantId`, `status`, credentials, settings, or arbitrary metadata.
-- Tenant metadata writes require tenant admin access plus `system:settings:manage`, use the authenticated tenant scope, and write a sanitized operation log.
+- 额外的租户配置仅是运维人员CLI工作流程，而不是未经身份验证的HTTP端点，也不是隐式平台超级管理员API。 CLI 以事务方式创建一个租户、其内置的 roles/grants 和一个初始租户管理员。
+- `GET /tenants/current` 仅返回经过身份验证的调用者的租户元数据。
+- `PATCH /tenants/current` 只能更新当前租户`name`。它不得接受`tenantId`、`status`、凭据、设置或任意元数据。
+- 租户元数据写入需要租户管理员访问权限加上`system:settings:manage`，使用经过身份验证的租户范围，并写入已脱敏操作日志。
 
-P20 tenant implementation status:
+P20租户实施状况：
 
-- `backend/cmd/provision-tenant` implements additional-tenant provisioning as a default-safe operator CLI with explicitly confirmed transactional apply.
-- `GET /tenants/current` and `PATCH /tenants/current` are implemented with authenticated tenant scope. PATCH accepts only `name`.
+- `backend/cmd/provision-tenant` 将额外租户配置实现为默认安全的运维人员CLI，并明确确认交易应用。
+- `GET /tenants/current`和`PATCH /tenants/current`是在经过身份验证的租户范围内实现的。 PATCH仅接受`name`。
 
-P11 implementation status:
+P11实施情况：
 
-- `GET /users`, `GET /users/{userId}`, `POST /users`, `PATCH /users/{userId}`, `POST /users/{userId}/disable`, `POST /users/{userId}/enable`, `POST /users/{userId}/roles`, `GET /roles`, and `GET /permissions` are implemented.
-- User responses include safe public fields only: `id`, `tenantId`, `email`, `displayName`, `status`, `lastLoginAt`, timestamps, and role summaries. They must not include `passwordHash`, JWT, CSRF token, Cookie, Authorization header, or internal sensitive fields.
-- `POST /users` requires `user:create`; assigning any `roleIds` during create also requires tenant admin access or `role:manage`.
-- `PATCH /users/{userId}` may update safe fields such as `displayName`; changing `status` additionally requires tenant admin access or `user:disable`.
-- `/disable` and `/enable` require tenant admin access or `user:disable`.
-- `POST /users/{userId}/roles` requires tenant admin access or `role:manage`, validates all role IDs are active roles in the caller tenant, and replaces roles transactionally.
-- The backend rejects self-disable and any operation that would remove the last active admin in a tenant.
-- User creation, update, disable/enable, and role replacement write redacted operation logs.
-- The frontend user/role admin UI consumes these endpoints through the shared API client, sends CSRF headers on writes, gates data loading and controls by permissions, and keeps initial passwords as transient form input only.
-- `GET /users/{userId}/ai-access` and `PUT /users/{userId}/ai-access` are tenant-administrator-only. PUT transactionally replaces `modelIds`, rejects missing/cross-tenant/deleted models, and writes a sanitized operation log.
-- Ordinary users do not receive self-service Provider/model grant endpoints or management controls. They only select from their assigned enabled models in generation parameters.
+- `GET /users`、`GET /users/{userId}`、`POST /users`、`PATCH /users/{userId}`、`POST /users/{userId}/disable`、`POST /users/{userId}/enable`、`POST /users/{userId}/roles`、 `GET /roles`和`GET /permissions`已实施。
+- 用户响应仅包含安全公共字段：`id`、`tenantId`、`email`、`displayName`、`status`、`lastLoginAt`、时间戳和角色摘要。它们不得包含 `passwordHash`、JWT、CSRF 令牌、Cookie、授权标头或内部敏感字段。
+- `POST /users`需要`user:create`；在创建过程中分配任何`roleIds`还需要租户管理员访问权限或`role:manage`。
+- `PATCH /users/{userId}`可能会更新安全字段，例如`displayName`；更改`status`还需要租户管理员访问权限或`user:disable`。
+- `/disable`和`/enable`需要租户管理员访问权限或`user:disable`。
+- `POST /users/{userId}/roles` 需要租户管理员访问权限或 `role:manage`，验证所有角色 ID 都是调用者租户中的活动角色，并以事务方式替换角色。
+- 后端拒绝自禁用以及任何会删除租户中最后一个活动管理员的操作。
+- 用户创建、更新、disable/enable、角色替换写入已脱敏操作日志。
+- 前端user/role管理UI通过共享API客户端使用这些端点，在写入时发送CSRF标头，通过权限控制数据加载和控制，并将初始密码仅保留为临时表单输入。
+- `GET /users/{userId}/ai-access` 和 `PUT /users/{userId}/ai-access` 仅限租户管理员。 PUT以事务方式替换`modelIds`，拒绝missing/cross-tenant/deleted模型，并写入已脱敏操作日志。
+- 普通用户不会收到自助服务Provider/model授予端点或管理控制权。他们仅从生成参数中指定的启用模型中进行选择。
 
-## RBAC APIs
+## RBAC API 接口
 
 - `GET /roles`
 - `POST /roles`
@@ -136,20 +136,20 @@ P11 implementation status:
 - `GET /permissions`
 - `PUT /roles/{roleId}/permissions`
 
-Role-management contract:
+角色管理合同：
 
-- The built-in `admin`, `seller`, and `viewer` roles are reserved and immutable through tenant HTTP APIs. Startup reconciliation owns their required grants.
-- Tenant admins may create, update, disable, and delete custom roles only within the authenticated tenant.
-- `PUT /roles/{roleId}/permissions` replaces grants for one custom role transactionally using permission IDs from the global permission dictionary.
-- Deleting a custom role must fail while it is assigned to any user. Successful deletion removes only that role's tenant-scoped grants and role row.
-- Role write endpoints require tenant admin access or `role:manage`, enforce object-level tenant scope, use CSRF protection, and record sanitized operation logs.
+- 内置 `admin`、`seller` 和 `viewer` 角色通过租户 HTTP API 保留且不可变。启动协调拥有其所需的补助金。
+- 租户管理员只能在经过身份验证的租户内创建、更新、禁用和删除自定义角色。
+- `PUT /roles/{roleId}/permissions` 使用全局权限字典中的权限 ID 以事务方式替换一个自定义角色的授权。
+- 当自定义角色分配给任何用户时，删除该角色必定会失败。成功删除仅删除该角色的租户范围授权和角色行。
+- 角色写入端点需要租户管理员访问权限或`role:manage`，强制对象级租户范围，使用CSRF保护，并记录已脱敏操作日志。
 
-P20 role-management implementation status:
+P20角色管理实施状况：
 
-- Custom-role create/update/delete and permission replacement are implemented.
-- Built-in role mutation, cross-tenant role IDs, invalid permission IDs, and deletion of assigned custom roles fail without partial writes.
+- 实现自定义角色create/update/delete和权限替换。
+- 内置角色突变、跨租户角色 ID、无效权限 ID 以及分配的自定义角色的删除在没有部分写入的情况下失败。
 
-## Project APIs
+## 项目 API
 
 - `GET /projects`
 - `POST /projects`
@@ -162,165 +162,165 @@ P20 role-management implementation status:
 - `PATCH /projects/{projectId}/members/{userId}`
 - `DELETE /projects/{projectId}/members/{userId}`
 
-Project object APIs require tenant scope and project membership or admin permission.
+项目对象 API 需要租户范围和项目成员资格或管理员权限。
 
-Project payload rules for P5:
+P5的项目负载规则：
 
-- Create/update fields: `name`, `brand`, `asin`, `site`, `notes`, `status`, `sortOrder`.
-- `name` is required.
-- `status` values: `ACTIVE`, `ARCHIVED`.
-- `sortOrder` is an integer used by the seller workspace project tabs. Lists sort by `sortOrder ASC` with deterministic timestamp/ID tie-breakers.
-- Response records include `id`, `tenantId`, product fields, `status`, `sortOrder`, `createdBy`, `createdAt`, `updatedAt`.
-- Deleted projects are soft deleted and excluded from normal lists.
+- Create/update字段：`name`、`brand`、`asin`、`site`、`notes`、`status`、 `sortOrder`。
+- 需要`name`。
+- `status`值：`ACTIVE`、`ARCHIVED`。
+- `sortOrder` 是卖家工作区项目选项卡使用的整数。列表按 `sortOrder ASC` 排序，并具有确定性 timestamp/ID 决胜局。
+- 回复记录包括`id`、`tenantId`、产品字段、`status`、`sortOrder`、`createdBy`、`createdAt`、`updatedAt`。
+- 删除的项目被软删除并从正常列表中排除。
 
-Project member rules for P5:
+P5的项目会员规则：
 
-- Member role values: `OWNER`, `EDITOR`, `VIEWER`.
-- Project member APIs require `project:member:manage` or tenant admin permission.
-- Project object APIs must combine RBAC permission and project membership. For example, asset upload requires `asset:upload` and project `OWNER` or `EDITOR`.
-- A project must retain at least one `OWNER`. Updating or deleting the final `OWNER` returns `409 CONFLICT` and must not write a successful project-member operation log.
-- Owner transfer is supported by adding or promoting another `OWNER` before downgrading or removing the original `OWNER`.
-- `GET /projects/{projectId}/member-candidates` returns active same-tenant platform users that may be added to the project. It supports bounded search such as `q`, returns safe display fields only, and must not require callers to type raw user IDs.
-- Project member responses include safe user display fields such as `userName`, `userEmail`, and `userStatus` so the frontend can show names instead of opaque IDs.
+- 会员角色值：`OWNER`、`EDITOR`、`VIEWER`。
+- 项目成员API需要`project:member:manage`或租户管理员权限。
+- 项目对象 API 必须结合 RBAC 权限和项目成员资格。例如，资产上传需要`asset:upload`和项目`OWNER`或`EDITOR`。
+- 一个项目必须至少保留一个`OWNER`。更新或删除最终的`OWNER`返回`409 CONFLICT`，并且不得写入成功的项目成员操作日志。
+- 在降级或删除原始`OWNER`之前添加或升级另一个`OWNER`，支持所有者转让。
+- `GET /projects/{projectId}/member-candidates` 返回可能添加到项目中的活跃同租户平台用户。它支持有界搜索，例如`q`，仅返回安全显示字段，并且不得要求调用者输入原始用户 ID。
+- 项目成员响应包括安全用户显示字段，例如 `userName`、`userEmail` 和 `userStatus`，因此前端可以显示名称而不是不透明的 ID。
 
-Current P5 implementation status:
+目前P5实施状态：
 
-- Backend implements project CRUD, project member APIs, tenant-scoped object authorization, operation logs, and last-`OWNER` protection for member update/delete paths.
-- Frontend uses project APIs for project selection, project creation/editing, and seller workspace project-member management entry points.
-- Project member management is backend-ready for daily seller workflows; later frontend polish can add more granular member mutation error states without changing this contract.
-- Current seller workspace UI shows projects as top tabs with project name and brand, sorted by `sortOrder`. Dragging tabs updates project order through project update APIs. Project edit/member management is opened from a secondary management modal rather than inline raw-ID forms.
+- 后端实现项目CRUD、项目成员API、租户范围的对象授权、操作日志以及对成员update/delete路径的last-`OWNER`保护。
+- 前端使用项目 API 进行项目选择、项目creation/editing以及卖家工作区项目成员管理入口点。
+- 项目成员管理已为日常卖家工作流程做好了后端准备；稍后的前端改进可以添加更细粒度的成员突变错误状态，而无需更改此契约。
+- 当前卖家工作区UI将项目显示为顶部选项卡，其中包含项目名称和品牌，按`sortOrder`排序。拖动选项卡可通过项目更新 API 更新项目顺序。项目edit/member管理是从二级管理模式打开的，而不是内联原始ID形式。
 
-## Asset APIs
+## 资产 API
 
 - `GET /projects/{projectId}/assets`
-- `POST /projects/{projectId}/assets/uploads`: upload reference image.
+- `POST /projects/{projectId}/assets/uploads`：上传参考图片。
 - `GET /assets/{assetId}`
 - `PATCH /assets/{assetId}`
 - `DELETE /assets/{assetId}`
 - `POST /assets/{assetId}/favorite`
 - `DELETE /assets/{assetId}/favorite`
 - `GET /assets/{assetId}/download`
-- `GET /assets/{assetId}/thumbnail`: stream generated thumbnail image through backend authorization. The endpoint is available only when the asset has a stored `thumbnail_object_key`; it must not expose MinIO bucket names, object keys, signed URLs, or public object URLs.
-- `POST /assets/{assetId}/edit-source`: optional future convenience endpoint for preparing an asset as an edit reference. P8 does not require it; the backendized workbench should submit `referenceAssetIds` and `editSourceAssetId` directly through task creation.
+- `GET /assets/{assetId}/thumbnail`：通过后端授权流式传输生成的缩略图。仅当资产已存储`thumbnail_object_key`时，该端点才可用；它不得公开 MinIO 存储桶名称、对象密钥、签名 URL 或公共对象 URL。
+- `POST /assets/{assetId}/edit-source`：可选的未来便利端点，用于准备资产作为编辑参考。 P8不需要；后端工作台应直接通过任务创建提交`referenceAssetIds`和`editSourceAssetId`。
 
-Downloads must stream through backend authorization or use short-lived signed URLs created after authorization.
+下载必须通过后端授权进行流式传输或使用授权后创建的短期签名 URL。
 
-Asset payload rules for P5:
+P5的资产负载规则：
 
-- Upload uses `multipart/form-data`.
-- Required file field: `file`.
-- Optional fields: `kind`, `category`, `filename`, `isFavorite`. `category` is the asset's current image type and accepts only `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`; uploads default to `MAIN` when omitted.
-- P5 upload accepts `kind=REFERENCE` only. Generated and edited assets are created by later task/worker flows.
-- Asset response fields: `id`, `tenantId`, `projectId`, `kind`, `category`, `filename`, `mimeType`, `fileSize`, `width`, `height`, `thumbnailUrl`, `previewUrl`, `isFavorite`, `imageType`, `createdBy`, `createdAt`, `updatedAt`. `category` and `imageType` both expose the asset's current image type. For legacy rows with an invalid or empty category, the backend falls back to the source task image type, then to `MAIN`.
-- Asset list supports `kind`, `category`, `favorite`, `imageType`, `pageNum`, and `pageSize` query params. `category` is retained as a compatibility alias of `imageType`; both filter by the asset's current classification and can be combined with `favorite=true`.
-- `PATCH /assets/{assetId}` may update `category`, `filename`, and `isFavorite`; changing `category` immediately moves the asset between product-material and generation-history image-type filters without rewriting the source task. It must not change `tenantId`, `projectId`, `objectKey`, image dimensions, MIME type, or the underlying file format. When `filename` is updated, the backend always replaces its extension with the extension determined from the stored MIME type (`.jpg`, `.png`, or `.webp`).
-- `DELETE /assets/{assetId}` is soft delete.
-- `GET /assets/{assetId}/download` must require backend authorization and must not expose permanent public MinIO URLs.
-- `GET /assets/{assetId}/thumbnail` must require the same tenant/object authorization envelope as asset reads. If no thumbnail exists, return a sanitized 404 and keep `thumbnailUrl` empty in list/detail/history payloads until thumbnail generation is available for that asset.
-- Current P5 backend implementation provides list, upload, detail, update, soft delete, favorite/unfavorite, and download. P8 can backendize edit flows through task creation without adding `edit-source`.
-- Current P5 frontend implementation consumes project-scoped asset list/upload and asset detail/update/delete/favorite/download through the authenticated API client with `credentials: include`.
-- P5 frontend downloads use the backend download endpoint as a blob response; the browser must not talk to MinIO directly.
-- P5 frontend must not depend on `POST /assets/{assetId}/edit-source`; selecting an asset as a local reference is transition UI only until P8 backendization.
-- P8 workbench tasks should use project asset IDs directly in `referenceAssetIds` / `editSourceAssetId`; uploaded files must enter the backend asset library before they become durable task inputs.
-- P16 thumbnail policy is active: new reference uploads and Worker-created generated/edited outputs populate `thumbnailUrl` with `/api/v1/assets/{assetId}/thumbnail` only after a backend-generated thumbnail object has been stored and `thumbnail_object_key` is persisted. Existing assets without thumbnails keep an empty `thumbnailUrl` until an explicit backfill task exists.
+- 上传使用`multipart/form-data`。
+- 必填文件字段：`file`。
+- 可选字段：`kind`、`category`、`filename`、`isFavorite`。 `category` 是资产的当前图像类型，仅接受 `MAIN`、`A_PLUS`、`SCENE`、`DETAIL`、`DIMENSION`、`SELLING_POINT`、 `PROMOTION`，或`COMPARISON`；省略时上传默认为`MAIN`。
+- P5上传仅接受`kind=REFERENCE`。生成和编辑的资源由稍后的 task/worker 流创建。
+- 资产响应字段：`id`、`tenantId`、`projectId`、`kind`、`category`、`filename`、`mimeType`、 `fileSize`、`width`、`height`、`thumbnailUrl`、`previewUrl`、`isFavorite`、`imageType`、 `createdBy`，`createdAt`，`updatedAt`。 `category` 和 `imageType` 都公开资源的当前图像类型。对于具有无效或空类别的旧行，后端会回退到源任务图像类型，然后回退到 `MAIN`。
+- 资产列表支持`kind`、`category`、`favorite`、`imageType`、`pageNum`和`pageSize`查询参数。 `category` 保留为 `imageType` 的兼容性别名；两者都按资产的当前分类进行过滤，并且可以与 `favorite=true` 组合。
+- `PATCH /assets/{assetId}`可能会更新`category`、`filename`和`isFavorite`；更改 `category` 会立即在产品材料和生成历史图像类型过滤器之间移动资产，而无需重写源任务。它不得更改 `tenantId`、`projectId`、`objectKey`、图像尺寸、MIME 类型或基础文件格式。当更新 `filename` 时，后端始终将其扩展名替换为根据存储的 MIME 类型（`.jpg`、`.png` 或 `.webp`）确定的扩展名。
+- `DELETE /assets/{assetId}`是软删除。
+- `GET /assets/{assetId}/download` 必须需要后端授权，并且不得暴露永久公共 MinIO URL。
+- `GET /assets/{assetId}/thumbnail` 必须需要与资产读取相同的 tenant/object 授权信封。如果不存在缩略图，则返回已脱敏 404 并在 list/detail/history 负载中将 `thumbnailUrl` 保留为空，直到可用于该资产生成缩略图。
+- 当前P5后端实现提供列表、上传、详细信息、更新、软删除、favorite/unfavorite和下载。 P8可以通过任务创建来后端编辑流程，而无需添加`edit-source`。
+- 当前的P5前端实现通过经过身份验证的API客户端使用`credentials: include`消耗项目范围的资产list/upload和资产detail/update/delete/favorite/download。
+- P5 前端下载使用后端下载端点作为 blob 响应；浏览器不得直接与 MinIO 对话。
+- P5前端不能依赖于`POST /assets/{assetId}/edit-source`；选择资产作为本地引用是过渡 UI 直到P8后端化。
+- P8工作台任务应直接在`referenceAssetIds` / `editSourceAssetId`中使用项目资产ID；上传的文件必须进入后端资源库才能成为持久的任务输入。
+- P16缩略图政策处于活动状态：仅在存储后端生成的缩略图对象并且`thumbnail_object_key`之后，新的参考上传和Worker创建的generated/edited输出才会使用`/api/v1/assets/{assetId}/thumbnail`填充`thumbnailUrl`被坚持下来。没有缩略图的现有资源将保持空的 `thumbnailUrl`，直到存在显式回填任务。
 
-## Admin Storage Orphan APIs
+## 管理存储孤立 API
 
-P17 introduces conservative admin-only storage orphan operations. These APIs are not a general MinIO browser and must not expose bucket names, object keys, MinIO URLs, signed URLs, image base64, Authorization, Cookie, JWT, or Provider secrets.
+P17 引入了保守的仅管理存储孤儿操作。这些 API 不是通用的 MinIO 浏览器，不得公开存储桶名称、对象键、MinIO URL、签名 URL、图像 base64、授权、Cookie、JWT 或 Provider 秘密。
 
-- `POST /admin/storage/orphans/scan`: dry-run only. It returns aggregate candidate, skipped, and error counts plus sanitized candidate samples.
-- `POST /admin/storage/orphans/cleanup`: executes deletion only when the caller explicitly sets `dryRun=false` and provides a confirmation string such as `DELETE_ORPHANS`; otherwise it behaves as a dry-run.
-- Required permission: tenant admin or an explicit storage/system-management permission already available to admin settings operators, such as `system:settings:manage`, until a dedicated `storage:manage` permission is introduced.
-- Request fields should include `bucketKinds`, `tenantId` only for system-wide super-admin use if such a role exists, `minAgeHours`, `batchLimit`, and an optional cursor. Tenant admins must be scoped to their own tenant.
-- Candidate eligibility must require both a recognized backend object-key pattern and absence from trusted MySQL metadata. Bucket listing alone is never sufficient reason to delete.
-- Response samples must use hashes or opaque candidate IDs, not raw object keys.
-- Cleanup must be idempotent for already-missing objects and retry-safe for storage errors. Failed deletes must remain discoverable in later scans.
-- Every execution must record sanitized aggregate operation logs.
-- Implementation status: merged in `P17-BE-ORPHAN-CLEANUP`. Scan/cleanup are backend-only admin APIs with dry-run default, explicit cleanup confirmation, bounded listing, opaque continuation cursor, metadata exclusion, and sanitized audit.
+- `POST /admin/storage/orphans/scan`：仅试运行。它返回聚合候选、跳过和错误计数以及已脱敏候选样本。
+- `POST /admin/storage/orphans/cleanup`：仅当调用者显式设置`dryRun=false`并提供确认字符串如`DELETE_ORPHANS`时才执行删除；否则它表现为试运行。
+- 所需权限：租户管理员或管理设置运维人员已可用的显式 storage/system-management 权限，例如 `system:settings:manage`，直到引入专用 `storage:manage` 权限。
+- 请求字段应包含`bucketKinds`、`tenantId`（仅适用于系统范围的超级管理员使用（如果存在此类角色）、`minAgeHours`、`batchLimit`和可选光标）。租户管理员的范围必须限于他们自己的租户。
+- 候选人资格必须要求具有公认的后端对象密钥模式并且不存在受信任的 MySQL 元数据。仅仅列出存储桶清单永远不足以成为删除的理由。
+- 响应样本必须使用哈希值或不透明的候选 ID，而不是原始对象键。
+- 对于已经丢失的对象，清理必须是幂等的，对于存储错误，清理必须是重试安全的。失败的删除必须在以后的扫描中保持可发现性。
+- 每次执行都要记录已脱敏聚合操作日志。
+- 实施状态：合并于`P17-BE-ORPHAN-CLEANUP`。 Scan/cleanup 是仅限后端的管理 API，具有试运行默认值、显式清理确认、有界列表、不透明连续游标、元数据排除和已脱敏审核。
 
-## Task APIs
+## 任务 API
 
-- `POST /projects/{projectId}/tasks`: create generation/edit task.
+- `POST /projects/{projectId}/tasks`：创建generation/edit任务。
 - `GET /projects/{projectId}/tasks`
 - `GET /tasks/{taskId}`
 - `POST /tasks/{taskId}/cancel`
 - `POST /tasks/{taskId}/retry`
 
-Task creation persists the task and enqueues Redis work. Task progress must be consumed through SSE.
+任务创建会保留任务并将 Redis 工作排入队列。任务进度必须通过SSE消耗。
 
-Task request fields for P7:
+P7 的任务请求字段：
 
-- `type`: `IMAGE_GENERATION` or `IMAGE_EDIT`.
-- `prompt`: required text prompt.
-- `providerId`: Provider ID in the current tenant. Starting with P13, it may be omitted only together with `modelId`, in which case backend resolves tenant `taskDefaults`.
-- `modelId`: Model ID in the current tenant and owned by the Provider. Starting with P13, it may be omitted only together with `providerId`.
-- `imageType`: optional ecommerce image category such as `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`.
-- `referenceAssetIds`: optional list of project asset IDs for generation/edit references.
-- `editSourceAssetId`: required for edit tasks when the selected model needs an edit source.
-- `parameters`: structured object containing only model-supported values such as size, quality, output format, output count, aspect ratio, and image type settings.
+- `type`：`IMAGE_GENERATION`或`IMAGE_EDIT`。
+- `prompt`：必填文字提示。
+- `providerId`：当前租户中的ProviderID。从P13开始，只能与`modelId`一起省略，在这种情况下，后端解析租户`taskDefaults`。
+- `modelId`：当前租户中的型号ID，由Provider拥有。从P13开始，只能与`providerId`一起省略。
+- `imageType`：可选的电子商务图片类别，例如`MAIN`、`A_PLUS`、`SCENE`、`DETAIL`、`DIMENSION`、`SELLING_POINT`、 `PROMOTION`，或`COMPARISON`。
+- `referenceAssetIds`：用于generation/edit引用的项目资产 ID 的可选列表。
+- `editSourceAssetId`：当所选模型需要编辑源时编辑任务所需。
+- `parameters`：仅包含模型支持的值的结构化对象，例如大小、质量、输出格式、输出计数、宽高比和图像类型设置。
 
-Task response fields for P7:
+P7 的任务响应字段：
 
-- `id`, `tenantId`, `projectId`, `type`, `status`, `prompt`, `providerId`, `modelId`, `imageType`, `parameters`, `inputAssetIds`, `outputAssetIds`, `attempt`, `maxAttempts`, `queuedAt`, `startedAt`, `finishedAt`, `timeoutAt`, `errorCode`, `errorMessage`, `createdBy`, `createdAt`, `updatedAt`.
+- `id`、`tenantId`、`projectId`、`type`、`status`、`prompt`、`providerId`、 `modelId`、`imageType`、`parameters`、`inputAssetIds`、`outputAssetIds`、`attempt`、`maxAttempts`、 `queuedAt`、`startedAt`、`finishedAt`、`timeoutAt`、`errorCode`、`errorMessage`、`createdBy`、 `createdAt`，`updatedAt`。
 
-Task statuses for P7:
+P7的任务状态：
 
-- `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `RETRYING`, `TIMED_OUT`.
+- `QUEUED`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELLED`、`RETRYING`、`TIMED_OUT`。
 
-P7 task API requirements:
+P7任务API要求：
 
-- Task APIs require Cookie auth and CSRF for state-changing requests.
-- Project-scoped task APIs must check tenant, RBAC, and project membership or admin access.
-- Task creation must validate Provider/model enabled state, same-tenant ownership, model capabilities, reference asset ownership, and parameter values before enqueue. `IMAGE_GENERATION` with `referenceAssetIds` requires both generation and edit capability because the Worker maps reference-guided generation to the Provider image-edit operation.
-- The frontend must not provide or override `tenantId`, `createdBy`, `status`, `attempt`, `queuedAt`, or other server-owned fields.
-- Redis enqueue payload should contain task ID only; Worker reloads full state from MySQL.
-- P7 may add task API wrappers to the frontend, but P8 owns replacing the main generation workbench flow.
+- 任务 API 需要 Cookie 身份验证和 CSRF 来进行状态更改请求。
+- 项目范围的任务 API 必须检查租户、RBAC 以及项目成员资格或管理员访问权限。
+- 任务创建必须在入队之前验证 Provider/model 启用状态、同租户所有权、模型功能、参考资产所有权和参数值。 `IMAGE_GENERATION` 和 `referenceAssetIds` 需要生成和编辑功能，因为 Worker 将参考引导生成映射到 Provider 图像编辑操作。
+- 前端不得提供或覆盖 `tenantId`、`createdBy`、`status`、`attempt`、`queuedAt`或其他服务器拥有的字​​段。
+- Redis入队有效负载应仅包含任务ID； Worker从MySQL重新加载完整状态。
+- P7可能会向前端添加任务API包装器，但P8拥有替换主生成工作台流程的能力。
 
-Current P7 implementation status:
+目前P7实施状态：
 
-- Backend implements task create/list/detail/cancel/retry APIs, MySQL task/event/output/log/usage schema, operation logs, and Redis enqueue abstraction.
-- Task event replay cursor is `task_events.sequence`; `task_events.id` is derived from that sequence and is safe to use as the SSE `id`.
-- Backend now implements SSE long connections, Worker execution, real Provider runtime execution, generated/edited output asset creation, usage records, and API call logs.
-- Frontend now has task API wrappers and SSE client/reducer contract utilities. Workbench backendization is still deferred to P8.
-- P13 extends task creation with runtime-backed tenant defaults: when both Provider/model IDs are absent, backend resolves `taskDefaults` and applies the same validation and enqueue contract; explicit requests remain valid without consulting defaults.
+- 后端实现任务 create/list/detail/cancel/retry API、MySQL task/event/output/log/usage 架构、操作日志和 Redis 入队抽象。
+- 任务事件重播光标为`task_events.sequence`； `task_events.id` 源自该序列，可以安全地用作 SSE `id`。
+- 后端现在实现了SSE长连接、Worker执行、真实Provider运行时执行、generated/edited输出资产创建、使用记录和API调用日志。
+- 前端现在有任务 API 包装器和 SSE client/reducer 合约实用程序。工作台后端化仍推迟到P8。
+- P13 使用运行时支持的租户默认值扩展任务创建：当两个 Provider/model ID 均不存在时，后端解析 `taskDefaults` 并应用相同的验证和排队合约；明确的请求仍然有效，无需咨询默认值。
 
-P8 workbench contract:
+P8工作台合约：
 
-- The workbench lists enabled backend models and uses capability responses to render allowed task parameters.
-- Task creation remains the final validator when a selected Provider/model is disabled, deleted, or otherwise becomes unavailable after the UI loaded it.
-- Browser code must not construct Provider-facing request payloads beyond the platform task contract.
+- 工作台列出已启用的后端模型并使用功能响应来呈现允许的任务参数。
+- 当选定的 Provider/model 被禁用、删除或在 UI 加载后变得不可用时，任务创建仍然是最终验证器。
+- 浏览器代码不得构造超出平台任务合约的面向Provider的请求有效负载。
 
-## History APIs
+## 历史 API
 
-- `GET /projects/{projectId}/history`: list backend-generated project history as a single paginated feed of generated/edited assets paired with their source task.
+- `GET /projects/{projectId}/history`：将后端生成的项目历史记录作为与其源任务配对的generated/edited资产的单个分页提要列出。
 
-History query params for P10:
+P10的历史查询参数：
 
-- `pageNum`: default `1`, positive integer.
-- `pageSize`: default follows backend pagination defaults and must be capped by the same maximum page-size policy used by task/assets lists.
-- `kind`: optional `GENERATED` or `EDITED`; absent means both generated and edited output assets.
-- `imageType`: optional `MAIN`, `A_PLUS`, `SCENE`, `DETAIL`, `DIMENSION`, `SELLING_POINT`, `PROMOTION`, or `COMPARISON`; when present, only results created for that image type are returned.
+- `pageNum`：默认`1`，正整数。
+- `pageSize`：默认遵循后端分页默认值，并且必须受到 task/assets 列表使用的相同最大页面大小策略的限制。
+- `kind`：可选`GENERATED`或`EDITED`；缺席意味着生成和编辑的输出资产。
+- `imageType`：可选`MAIN`、`A_PLUS`、`SCENE`、`DETAIL`、`DIMENSION`、`SELLING_POINT`、 `PROMOTION`，或`COMPARISON`；如果存在，则仅返回为该图像类型创建的结果。
 
-History response fields for P10:
+P10 的历史响应字段：
 
-- Standard page envelope: `records`, `total`, `pageNum`, `pageSize`.
-- Each `records[]` item contains:
-  - `asset`: same safe asset response shape as `GET /assets/{assetId}`, including backend download/preview URL but never `objectKey`, MinIO URL, image bytes, or Blob data.
-  - `task`: same task response shape as `GET /tasks/{taskId}`, including `outputAssetIds`.
+- 标准页信封：`records`、`total`、`pageNum`、`pageSize`。
+- 每个`records[]`项目包含：
+  - `asset`：与`GET /assets/{assetId}`相同的安全资产响应形状，包括后端download/previewURL，但从不`objectKey`、MinIOURL、图像字节，或 Blob 数据。
+  - `task`：与`GET /tasks/{taskId}`相同的任务响应形状，包括`outputAssetIds`。
 
-History API requirements:
+历史API要求：
 
-- The endpoint is read-only and requires Cookie auth.
-- The endpoint must authorize the project with `task:read` and the same project-member/admin access semantics used by project task reads.
-- Queries must filter by `tenant_id`, `project_id`, `image_assets.deleted_at IS NULL`, generated/edited asset kind, and same-tenant linked tasks.
-- The backend must build the feed from backend-owned relationships, preferably `task_outputs -> image_assets -> generation_tasks`; client-provided task IDs, tenant IDs, or asset/task joins are never trusted.
-- Sorting must be deterministic, newest output asset first, with a stable tie-breaker such as asset ID.
-- Orphaned generated/edited assets without a same-tenant visible task/output link must not appear in the history feed.
-- This endpoint does not create tasks, does not touch Redis/SSE, does not read or write MinIO objects, and does not expose operation/API call log metadata.
-- P10 backend history query is implemented and merged.
-- P12 frontend unified-history migration is implemented and merged. The production frontend history feed consumes this endpoint directly and must not rebuild the feed by joining task and generated/edited asset lists in the browser.
+- 端点是只读的，需要 Cookie 身份验证。
+- 端点必须使用 `task:read` 和项目任务读取使用的相同 project-member/admin 访问语义来授权项目。
+- 查询必须按 `tenant_id`、`project_id`、`image_assets.deleted_at IS NULL`、generated/edited 资产类型和同租户链接任务进行过滤。
+- 后端必须从后端拥有的关系构建提要，最好是`task_outputs -> image_assets -> generation_tasks`；客户端提供的任务 ID、租户 ID 或 asset/task 联接永远不会被信任。
+- 排序必须是确定性的，首先是最新的输出资产，并具有稳定的决胜局，例如资产ID。
+- 没有同租户可见 task/output 链接的孤立 generated/edited 资产不得出现在历史记录中。
+- 此端点不创建任务，不接触Redis/SSE，不读取或写入MinIO对象，并且不公开operation/API调用日志元数据。
+- P10后端历史查询实现并合并。
+- P12前端统一历史迁移已实现并合并。生产前端历史提要直接使用此端点，并且不得通过在浏览器中加入任务和generated/edited资产列表来重建提要。
 
-## Provider APIs
+## Provider API 接口
 
 - `GET /providers`
 - `POST /providers`
@@ -331,59 +331,59 @@ History API requirements:
 - `POST /providers/{providerId}/enable`
 - `POST /providers/{providerId}/disable`
 
-Provider access boundary:
+Provider访问边界：
 
-- All Provider list/detail and mutation endpoints are tenant-administrator-only. A non-admin cannot gain Provider CRUD access merely through a custom `provider:*` permission.
-- Ordinary users do not need Provider endpoints; the assigned model response supplies the safe `providerName` needed by the generation selector.
+- 所有 Provider list/detail 和突变端点仅限租户管理员。非管理员无法仅通过自定义 `provider:*` 权限获得 Provider CRUD 访问权限。
+- 普通用户不需要Provider端点；分配的模型响应提供了生成选择器所需的安全`providerName`。
 
-Provider APIs require `provider:read` or `provider:manage` as appropriate. Provider object APIs must filter by `tenant_id`; cross-tenant Provider IDs should return `404` or a non-revealing authorization failure.
+Provider API 需要 `provider:read` 或 `provider:manage`（视情况而定）。 Provider 对象 API 必须按 `tenant_id` 过滤；跨租户 Provider ID 应返回 `404` 或非公开授权失败。
 
-Provider request fields for P6:
+Provider P6 的请求字段：
 
-- `type`: `OPENAI`, `GEMINI`, or `OPENAI_COMPATIBLE`.
-- `name`: display name, required.
-- `baseUrl`: required for custom/OpenAI-compatible Providers; official Provider defaults may be supplied by backend config but still pass SSRF validation before use.
-- `apiKey`: accepted only on create or explicit rotation/update. If omitted on update, the existing encrypted key is retained.
-- `timeoutSeconds`: bounded positive integer. Current maximum is `600` seconds. The UI should explain that long timeouts are intended for slow image generation and are not a replacement for Worker/task timeout policy.
-- `concurrencyLimit`: bounded non-negative integer. `0` means use global/system default unless implementation chooses a stricter explicit default.
-- `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
+- `type`：`OPENAI`、`GEMINI`或`OPENAI_COMPATIBLE`。
+- `name`：显示名称，必填。
+- `baseUrl`：custom/OpenAI-compatibleProvider所需；官方Provider默认值可能由后端配置提供，但在使用前仍然通过SSRF验证。
+- `apiKey`：仅在创建或显式时接受 rotation/update. 如果在更新时省略，则保留现有的加密密钥。
+- `timeoutSeconds`：有界正整数。当前最大值为 `600` 秒。 UI 应该解释长超时是为了缓慢的图像生成而设计的，并且不能替代 Worker/task 超时策略。
+- `concurrencyLimit`：有界非负整数。 `0` 表示使用 global/system 默认值，除非实现选择更严格的显式默认值。
+- `status`：`ENABLED`或`DISABLED`； enable/disable端点是首选状态转换API。
 
-Provider response fields for P6:
+Provider P6 的响应字段：
 
-- `id`, `tenantId`, `type`, `name`, `baseUrl`, `status`, `timeoutSeconds`, `concurrencyLimit`, `apiKeyHint`, `apiKeyUpdatedAt`, `lastTestStatus`, `lastTestedAt`, `createdAt`, `updatedAt`.
-- Provider responses never include full API keys, encrypted API key values, Authorization headers, or raw Provider responses.
+- `id`、`tenantId`、`type`、`name`、`baseUrl`、`status`、`timeoutSeconds`、 `concurrencyLimit`、`apiKeyHint`、`apiKeyUpdatedAt`、`lastTestStatus`、`lastTestedAt`、`createdAt`、`updatedAt`。
+- Provider 响应绝不会包含完整的 API 密钥、加密的 API 密钥值、授权标头或原始 Provider 响应。
 
-Provider test contract for P6:
+Provider P6 测试合约：
 
-- `POST /providers/{providerId}/test` performs a backend-only connectivity/authentication probe with timeout and SSRF protection.
-- It returns sanitized fields such as `status`, `durationMs`, `checkedAt`, `httpStatus`, `requestId`, and `message`.
-- It must not create generation tasks, upload output assets, write usage records, or expose raw Provider payloads.
-- It should write an operation log and may update sanitized `lastTest*` Provider metadata.
+- `POST /providers/{providerId}/test` 执行仅后端的 connectivity/authentication 探测，具有超时和 SSRF 保护。
+- 返回已脱敏字段，例如`status`、`durationMs`、`checkedAt`、`httpStatus`、`requestId`和`message`。
+- 它不得创建生成任务、上传输出资产、写入使用记录或暴露原始 Provider 有效负载。
+- 它应该写入操作日志并可能更新已脱敏`lastTest*`Provider元数据。
 
-Current P6 Provider backend implementation status:
+当前 P6 Provider 后端实现状态：
 
-- Backend implements Provider CRUD, soft delete, enable/disable, Provider test, tenant-scoped queries, RBAC, operation logs, API key encryption, and masked Provider responses.
-- Provider test is backend-only and does not create tasks, assets, or usage records.
-- Frontend Provider/model management is implemented and merged. The UI sends Provider API keys only as immediate form submissions, displays only masked metadata, clears submitted and unsubmitted key drafts, and does not persist Provider keys in browser storage.
+- 后端实现ProviderCRUD、软删除、enable/disable、Provider测试、租户范围查询、RBAC、操作日志、API密钥加密和屏蔽Provider 回复。
+- Provider 测试仅用于后端，不会创建任务、资产或使用记录。
+- 前端Provider/model管理已实施并合并。 UI 仅将 Provider API 键作为即时表单提交发送，仅显示屏蔽元数据，清除已提交和未提交的键草稿，并且不会在浏览器存储中保留 Provider 键。
 
-P10 Provider lifecycle policy:
+P10 Provider 生命周期策略：
 
-- `DELETE /providers/{providerId}` must fail with `409 CONFLICT` when any non-deleted model in the same tenant still references the Provider.
-- The response must use the standard error envelope with a non-sensitive code such as `PROVIDER_HAS_LINKED_MODELS`; it may include a linked-model count but must not leak model names from another tenant.
-- Soft-deleted models do not block Provider deletion.
-- Cross-tenant models must never block or reveal another tenant's Provider deletion.
-- Provider deletion must not cascade-delete or cascade-disable models in this phase.
-- Current P10 implementation status: this deletion policy is implemented and merged. The conflict response uses `PROVIDER_HAS_LINKED_MODELS`, and tests cover same-tenant enabled/disabled linked models, soft-deleted linked models, cross-tenant linked models, RBAC/not-found behavior, and non-leaky responses/logs. Provider disable behavior was later tightened by P14.
+- 当同一租户中任何未删除的模型仍然引用 Provider 时，`DELETE /providers/{providerId}` 必须失败并显示 `409 CONFLICT`。
+- 响应必须使用标准错误信封和非敏感代码，例如`PROVIDER_HAS_LINKED_MODELS`；它可能包括链接模型计数，但不得从其他租户泄漏模型名称。
+- 软删除模型不会阻止Provider删除。
+- 跨租户模型绝不能阻止或泄露其他租户的 Provider 删除。
+- Provider 在此阶段删除不得级联删除或级联禁用模型。
+- 当前P10实施状态：此删除政策已实施并合并。冲突响应使用 `PROVIDER_HAS_LINKED_MODELS`，测试涵盖同租户 enabled/disabled 链接模型、软删除链接模型、跨租户链接模型、RBAC/not-found 行为和非泄漏 responses/logs. Provider 禁用行为，后来通过P14。
 
-P14 Provider lifecycle policy:
+P14 Provider 生命周期策略：
 
-- `POST /providers/{providerId}/disable` and `PATCH /providers/{providerId}` with `status=DISABLED` must fail with `409 CONFLICT` while same-tenant non-deleted enabled models still reference the Provider.
-- The conflict response uses `PROVIDER_HAS_ENABLED_MODELS` and must not leak model names, Provider secrets, cross-tenant identifiers, Authorization headers, Cookies, or raw Provider payloads.
-- Provider disable may succeed when linked same-tenant models are already disabled; it does not cascade-delete or cascade-disable models.
-- Model create, model Provider migration, and model enable must reject disabled, deleted, or cross-tenant Providers. Failed writes must not record successful `provider.*` or `model.*` operation logs.
-- Current P18 implementation status: Provider/model lifecycle integrity is implemented and merged. Provider/model/default-setting writes use stronger row locking, and model create/update paths reject duplicate same-tenant same-Provider non-deleted `model_name` values without a destructive unique-index migration.
+- `POST /providers/{providerId}/disable` 和 `PATCH /providers/{providerId}` 以及 `status=DISABLED` 必须失败并出现 `409 CONFLICT`，而同租户未删除的启用模型仍引用 Provider。
+- 冲突响应使用 `PROVIDER_HAS_ENABLED_MODELS`，并且不得泄露模型名称、Provider 秘密、跨租户标识符、授权标头、Cookie 或原始 Provider 有效负载。
+- Provider 当链接的同租户模型已被禁用时，禁用可能会成功；它不会级联删除或级联禁用模型。
+- 模型创建、模型Provider迁移和模型启用必须拒绝禁用、删除或跨租户Provider。失败的写入不得记录成功的`provider.*`或`model.*`操作日志。
+- 当前P18实施状态：Provider/model生命周期完整性已实施并合并。 Provider/model/default-setting 写入使用更强的行锁定，并且模型 create/update 路径拒绝重复的同租户 Same-Provider 未删除的 `model_name` 值，而无需进行破坏性的唯一索引迁移。
 
-## Model APIs
+## 模型 API
 
 - `GET /models`
 - `POST /models`
@@ -393,46 +393,46 @@ P14 Provider lifecycle policy:
 - `POST /models/{modelId}/enable`
 - `POST /models/{modelId}/disable`
 
-Model access boundary:
+模型访问边界：
 
-- Tenant administrators can list and manage all same-tenant models.
-- Non-admin model list/detail reads require the existing read capability and an explicit same-tenant row in `user_model_access_grants`; an unassigned detail is returned as not found.
-- Model create/update/delete/enable/disable operations are tenant-administrator-only even if a custom role contains `model:manage`.
-- Task creation rechecks the selected model grant in the same transaction before any task, event, audit-success row, or queue side effect is created.
+- 租户管理员可以列出和管理所有同租户模型。
+- 非管理模型list/detail读取需要现有的读取能力和`user_model_access_grants`中的显式同租户行；未分配的详细信息将作为未找到而返回。
+- 即使自定义角色包含 `model:manage`，模型 create/update/delete/enable/disable 操作也仅限租户管理员。
+- 在创建任何任务、事件、审核成功行或队列副作用之前，任务创建会在同一事务中重新检查选定的模型授权。
 
-Model APIs require `model:read` or `model:manage` as appropriate. Model object APIs must filter by `tenant_id`, and `providerId` must belong to the same tenant.
+模型 API 需要 `model:read` 或 `model:manage`（视情况而定）。模型对象 API 必须按 `tenant_id` 进行过滤，且 `providerId` 必须属于同一租户。
 
-Model request fields for P6:
+P6 的模型请求字段：
 
-- `providerId`: required.
-- `modelName`: Provider-facing model id/name.
-- `displayName`: user-facing model name.
-- `supportsGenerate`, `supportsEdit`, `supportsMultiReference`, `supportsN`.
-- `maxOutputCount`: positive integer, constrained by `supportsN`.
-- `supportedSizes`, `supportedQualities`, `supportedOutputFormats`: arrays of strings, validated and stored as structured JSON.
+- `providerId`：必填。
+- `modelName`：Provider面向模型id/name.
+- `displayName`：面向用户的模型名称。
+- `supportsGenerate`、`supportsEdit`、`supportsMultiReference`、`supportsN`。
+- `maxOutputCount`：正整数，受`supportsN`约束。
+- `supportedSizes`、`supportedQualities`、`supportedOutputFormats`：字符串数组，按结构化JSON进行验证和存储。
 - `supportedQualities` accepts normalized values for two Provider-specific meanings. OpenAI `gpt-image-2` uses the official ordered values `auto`, `low`, `medium`, `high`; the frontend displays them as “自动、低质量、中等质量、高质量”, while the adapter sends the original protocol values unchanged. Gemini output resolution remains `1k`, `2k`, `4k`, stored in lowercase and converted to Provider-required uppercase at request time. Legacy `standard`/`hd` values remain readable for existing rows but are not offered by the `gpt-image-2` preset.
-- For OpenAI and OpenAI-compatible `gpt-image-2`, `supportedSizes` stores the platform's ordered aspect-ratio choices: `auto`, `1:1`, `1.62:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. At Provider-call time the backend adapter converts non-auto ratios into OpenAI-compliant `WIDTHxHEIGHT` values. Existing explicit pixel values remain accepted and pass through unchanged for backward compatibility.
+- 对于OpenAI和OpenAI兼容`gpt-image-2`、`supportedSizes`存储平台的有序宽高比选择：`auto`、`1:1`， `1.62:1`、`2:3`、`3:2`、`3:4`、`4:3`、`4:5`、`5:4`、 `9:16`，`16:9`，`21:9`。在Provider调用时，后端适配器将非自动比率转换为OpenAI兼容的`WIDTHxHEIGHT`值。现有的显式像素值仍然被接受并保持不变以实现向后兼容性。
 - Frontend model editing and generation use matching labels for those semantics: OpenAI-style `gpt-image-2` models show “图片比例 / 生成质量”; Gemini models show “画面比例 / 输出分辨率”. Presets are UI helpers only; the backend model row remains the trusted persisted capability source.
-- `pricing`: structured JSON with currency and unit prices; exact Provider billing interpretation can be refined before P7 usage accounting.
-- `status`: `ENABLED` or `DISABLED`; enable/disable endpoints are the preferred state transition API.
+- `pricing`：结构化JSON，包含货币和单价；准确的Provider计费解释可以在P7使用量核算之前细化。
+- `status`：`ENABLED`或`DISABLED`； enable/disable端点是首选状态转换API。
 
-Model response fields for P6:
+P6 的模型响应字段：
 
-- `id`, `tenantId`, `providerId`, `providerName`, `providerType`, `modelName`, `displayName`, capability fields, `pricing`, `status`, `createdAt`, `updatedAt`. `providerType` lets generation parameters use the same Provider-specific labels as model configuration without guessing from legacy capability values.
+- `id`、`tenantId`、`providerId`、`providerName`、`providerType`、`modelName`、`displayName`、能力字段、 `pricing`、`status`、`createdAt`、`updatedAt`。 `providerType` 允许生成参数使用相同的 Provider 特定标签作为模型配置，而无需根据旧功能值进行猜测。
 
-Current P6 model backend implementation status:
+当前P6模型后端实现状态：
 
-- Backend implements model CRUD, soft delete, enable/disable, tenant-scoped queries, same-tenant Provider checks, RBAC, operation logs, capability validation, pricing metadata validation, and model responses for frontend dynamic parameter rendering.
-- Current model list filters include status, enabled shorthand, Provider ID, and generation/edit capability filtering.
-- Frontend Provider/model management is implemented and merged. Model capability forms manage generate/edit, multi-reference, `n`, max output count, supported sizes, qualities, formats, pricing metadata, and status.
-- Current frontend Provider/model management uses Simplified Chinese labels where practical and exposes size/ratio and quality capabilities through preset checkboxes rather than free-form-only text entry.
-- Current P7 task execution uses stable `modelId` references. P18 nevertheless tightens admin/data integrity by rejecting duplicate `(tenant_id, provider_id, model_name)` values for non-deleted models in write paths.
-- P10 implements linked model behavior for Provider deletion: non-deleted linked models block Provider deletion; admins must soft-delete linked models first.
-- P14 tightens model write behavior: create/update/enable must reject disabled, deleted, or cross-tenant Providers; task defaults loaded from persisted settings must also fail closed when the referenced Provider/model is no longer enabled and same-tenant. P18 adds row-lock serialization and rejects duplicate same-Provider non-deleted `model_name` values in write paths.
+- 后端实现模型CRUD、软删除、enable/disable、租户范围查询、同租户Provider检查、RBAC、操作日志、能力验证、定价元数据验证以及前端动态参数渲染的模型响应。
+- 当前模型列表过滤器包括状态、启用的速记、ProviderID和generation/edit功能过滤。
+- 前端Provider/model管理已实施并合并。模型功能表单管理generate/edit、多引用、`n`、最大输出计数、支持的尺寸、质量、格式、定价元数据和状态。
+- 当前前端Provider/model管理在实用的情况下使用简体中文标签，并通过预设复选框而不是仅自由格式的文本输入来公开size/ratio和质量功能。
+- 当前P7任务执行使用稳定的`modelId`引用。尽管如此，P18仍然通过拒绝写入路径中未删除模型的重复`(tenant_id, provider_id, model_name)`值来收紧admin/data完整性。
+- P10实现Provider删除的链接模型行为：未删除的链接模型阻止Provider删除；管理员必须首先软删除链接模型。
+- P14收紧模型写入行为：create/update/enable必须拒绝禁用、删除或跨租户Provider；当引用的 Provider/model 不再启用且不再处于同一租户时，从持久设置加载的任务默认值也必须以失败方式关闭（fail closed）。 P18 添加行锁序列化并拒绝写入路径中重复的同一 Provider未删除`model_name`值。
 
-Frontend uses enabled model capability fields to render dynamic parameters. P6 only manages capabilities; P8 applies those capabilities to the generation workbench after backend task creation and SSE exist.
+前端使用启用的模型功能字段来渲染动态参数。 P6仅管理能力； P8 在后端任务创建且 SSE 存在后将这些功能应用到生成工作台。
 
-## Usage and audit APIs
+## 使用和审核 API
 
 - `GET /admin/usage/summary`
 - `GET /admin/usage/records`
@@ -441,47 +441,47 @@ Frontend uses enabled model capability fields to render dynamic parameters. P6 o
 - `GET /admin/api-call-logs/:id`
 - `GET /admin/diagnostics/summary`
 
-Current P9 backend contract:
+当前P9后端合约：
 
-- All routes above require tenant admin access plus the matching RBAC permission: `usage:read` for usage endpoints, `audit:read` for operation/API call logs.
-- List endpoints return the standard envelope with `records`, `total`, `pageNum`, and `pageSize`.
-- Shared query parameters: `pageNum`, `pageSize`, `sortBy=createdAt`, `sortOrder=asc|desc`, `createdAtFrom`, `createdAtTo`.
-- Usage filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`; summary accepts `dimension=tenant|user|project|provider|model`.
-- Operation log filters: `actorUserId`, `action`, `resourceType`, `resourceId`.
-- API call log filters: `taskId`, `userId`, `projectId`, `providerId`, `modelId`, `status=SUCCESS|FAILURE`, `requestId`.
-- Usage/raw metadata, operation metadata, API call request/response payloads, and Provider errors are recursively redacted before serialization.
-- `tenantId` appears only for rows already scoped to the caller tenant; cross-tenant detail probes return `404` without existence disclosure.
-- Frontend implementation status: `P9-FE-ADMIN-OBSERVABILITY-SETTINGS` consumes these routes through `frontend/src/api/admin.ts`, keeps list reads paginated, and gates visible sections by `usage:read` or `audit:read`.
+- 上述所有路由都需要租户管理员访问权限以及匹配的RBAC权限：`usage:read`用于使用端点，`audit:read`用于operation/API呼叫日志。
+- 列表端点返回带有`records`、`total`、`pageNum`和`pageSize`的标准信封。
+- 共享查询参数：`pageNum`、`pageSize`、`sortBy=createdAt`、`sortOrder=asc|desc`、`createdAtFrom`、`createdAtTo`。
+- 使用过滤器：`taskId`、`userId`、`projectId`、`providerId`、`modelId`；摘要接受`dimension=tenant|user|project|provider|model`。
+- 操作日志过滤器：`actorUserId`、`action`、`resourceType`、`resourceId`。
+- API 调用日志过滤器：`taskId`、`userId`、`projectId`、`providerId`、`modelId`、`status=SUCCESS|FAILURE`、 `requestId`。
+- Usage/raw元数据、操作元数据、API调用request/response有效负载和Provider错误在序列化之前递归已脱敏。
+- `tenantId` 仅针对已限定调用者租户范围的行显示；跨租户详细信息探测返回 `404`，但不披露存在性。
+- 前端实现状态：`P9-FE-ADMIN-OBSERVABILITY-SETTINGS`通过`frontend/src/api/admin.ts`使用这些路由，保持列表读取分页，并通过`usage:read`或`audit:read`控制可见部分。
 
-P17 diagnostics contract:
+P17诊断合同：
 
-- `GET /admin/diagnostics/summary` is an admin-only, read-only JSON endpoint for production diagnostics. It requires tenant admin access plus `audit:read` unless a later task deliberately adds a narrower diagnostics permission.
-- The response must use the standard envelope and contain aggregate sections only:
-  - `tasks`: counts by active/terminal statuses, recent failures, retrying/timeout counts, and bounded recent-failure samples with task IDs and sanitized error codes/messages only.
-  - `queue`: pending/processing/delayed/dead counts and section-level availability status; it must not expose Redis keys, queue payload contents, claim IDs, or task payload bodies.
-  - `providers`: bounded Provider/API-call aggregate counts and failure rates for a fixed or query-bounded time window; raw request/response metadata must not be returned.
-  - `storage`: `storageQuota.maxBytes`, read-only `usedBytes`, asset counts, soft-deleted/purged counts, and cleanup/orphan aggregate state without bucket/object-key/MinIO URL exposure.
-  - `maintenance`: latest sanitized aggregate operation-log summaries for storage retention, log retention, and orphan cleanup when available.
-- Query parameters should be limited to safe controls such as `windowHours` and `limit`; defaults must be bounded.
-- Database-backed sections are tenant-scoped. Redis or storage-inspection failures should be represented as sanitized section-level `status=unavailable` where possible rather than leaking infrastructure details.
-- Diagnostics must not mutate state, enqueue tasks, run cleanup, test Providers, call AI Providers, or read/decrypt Provider API keys.
-- Implementation status: merged in `P17-BE-OBSERVABILITY-METRICS`. The endpoint returns task status/recent failure aggregates, Redis queue depth with `reason="queue_unavailable"` on unavailable queue inspection, untruncated Provider/API-call totals with bounded Provider breakdowns, storage quota/asset aggregates, and fail-closed sanitized maintenance summaries. Maintenance metadata strings are not passed through generically: `status` is enum-only, `completedAt` is RFC3339/RFC3339Nano-only, numeric fields must be JSON numbers, and unknown/array/map/string payloads are dropped rather than redacted into client-visible raw content.
+- `GET /admin/diagnostics/summary` 是一个仅限管理、只读的 JSON 生产诊断端点。它需要租户管理员访问权限加上`audit:read`，除非稍后的任务故意添加更窄的诊断权限。
+- 回复必须使用标准信封并且仅包含聚合部分：
+  - `tasks`：按active/terminal状态、最近失败、retrying/timeout计数以及仅包含任务ID和已脱敏错误codes/messages的有界最近失败样本进行计数。
+  - `queue`：pending/processing/delayed/dead计数和部分级别的可用性状态；它不得公开 Redis 键、队列负载内容、声明 ID 或任务负载主体。
+  - `providers`：有界Provider/API-call固定或查询有界时间窗口的聚合计数和失败率；不得返回原始 request/response 元数据。
+  - `storage`：`storageQuota.maxBytes`、只读`usedBytes`、资产计数、soft-deleted/purged计数和cleanup/orphan聚合状态，不含bucket/object-key/MinIOURL曝光。
+  - `maintenance`：最新已脱敏聚合操作日志摘要，用于存储保留、日志保留和孤立清理（如果可用）。
+- 查询参数应限制为安全控件，例如`windowHours`和`limit`；默认值必须是有界的。
+- 数据库支持的部分是租户范围内的。 Redis 或存储检查失败应尽可能表示为已脱敏节级 `status=unavailable`，而不是泄漏基础设施详细信息。
+- 诊断不得改变状态、排队任务、运行清理、测试 Provider、调用 AI Provider 或 read/decrypt Provider API 键。
+- 实施状态：合并于`P17-BE-OBSERVABILITY-METRICS`。端点返回任务 status/recent 失败聚合、Redis 队列深度以及不可用队列检查时的 `reason="queue_unavailable"`、未截断的 Provider/API-call 总计以及有界 Provider 故障、存储 quota/asset 聚合，以及fail-close 已脱敏维护总结。一般不会传递维护元数据字符串：`status`仅是枚举，`completedAt`是RFC3339/RFC3339Nano-only，数字字段必须是JSON数字，并且unknown/array/map/string有效负载被丢弃而不是已脱敏到客户端可见的原始内容中。
 
-P14 usage/cost reporting contract:
+P14 usage/cost 报告合同：
 
-- Backend cost estimation is deterministic and uses model `pricing.unitPrices` plus Provider usage metadata without relying on frontend-calculated costs.
-- Persisted `usage_records.estimated_cost` is formatted with 8 decimal places and never negative. Missing, invalid, negative, or incomplete pricing produces zero estimated cost rather than failing an otherwise successful Provider task.
-- Usage summary includes tenant-scoped aggregate view with `dimension=tenant` in addition to user, project, Provider, and model. `dimensionId` for the tenant view is the current tenant ID.
-- Usage/cost queries remain tenant-scoped, paginated, stable under equal timestamps, and redacted. Raw usage may be returned only after recursive redaction.
-- Summary cost strings preserve exact decimal values and do not round through float conversion. Multi-currency results are grouped by dimension and currency.
-- Current P14 implementation status: backend usage/cost reporting, frontend cost observability, and R14 are merged and reviewed. The frontend admin usage tab consumes this contract for tenant totals, tenant/user/project/Provider/model summaries, filters, drilldown, multi-currency display, and usage records without client-side authoritative cost recalculation.
+- 后端成本估算是确定性的，并使用模型`pricing.unitPrices`加上Provider使用元数据，而不依赖于前端计算的成本。
+- 持久化 `usage_records.estimated_cost` 的格式为小数点后 8 位且绝不为负数。缺失、无效、负数或不完整的定价会产生零估计成本，而不是使原本成功的 Provider 任务失败。
+- 使用情况摘要包括租户范围的聚合视图，以及用户、项目、Provider和模型，以及`dimension=tenant`。租户视图的`dimensionId`是当前租户ID。
+- Usage/cost查询保持租户范围，分页，在相同时间戳下稳定，并且已脱敏。仅在递归编辑后才能返回原始使用情况。
+- 汇总成本字符串保留精确的小数值，并且不会通过浮点转换进行舍入。多币种结果按维度和币种分组。
+- 当前P14实施状态：后端usage/cost报告、前端成本可观察性和R14已合并和审查。前端管理使用选项卡使用此合同来获取租户总数、tenant/user/project/Provider/model摘要、过滤器、深入分析、多货币显示和使用记录，而无需客户端权威成本重新计算。
 
-Current settings contract:
+当前设置合同：
 
 - `GET /admin/system-settings`
 - `PATCH /admin/system-settings`
 
-The active runtime-backed settings slices are intentionally narrow:
+活动的运行时支持的设置切片故意变窄：
 
 ```json
 {
@@ -516,56 +516,56 @@ The active runtime-backed settings slices are intentionally narrow:
 }
 ```
 
-- Both routes require tenant admin access plus `system:settings:manage`.
-- `GET /admin/system-settings` returns the effective tenant upload policy, using the environment-configured upload limits when the tenant has no override row yet.
-- `PATCH /admin/system-settings` may update one or more fields under `uploadPolicy`; omitted fields keep their current effective values.
-- Tenant overrides must stay positive and may only narrow or match the environment-configured upload hard caps. Runtime asset validation remains the security boundary and consumes the effective tenant policy for request-body size, dimensions, and pixel-count checks.
-- Allowed MIME types remain configuration-owned security policy; the settings API must not make SVG or any non-allowlisted type writable.
-- P13 has added `taskDefaults` because task creation is the runtime consumer:
-  - `GET /admin/system-settings` returns `taskDefaults` with nullable `defaultProviderId` and `defaultModelId`.
-  - `PATCH /admin/system-settings` may update `taskDefaults` only when both IDs are supplied together, or clear both with `null` values.
-  - The backend must validate tenant ownership, enabled Provider, enabled model, and model ownership by Provider before saving defaults.
-  - Task creation may omit both `providerId` and `modelId`; in that case backend resolves the tenant defaults and then runs the same Provider/model/capability validation used for explicit requests.
-  - Task creation with only one of `providerId` or `modelId` omitted remains invalid to avoid ambiguous mixed-default requests.
-  - If defaults are absent, stale, disabled, deleted, cross-tenant, or capability-incompatible, default-backed task creation returns validation failure and must not enqueue a task or write a successful task operation log.
-  - A malformed stored `task_defaults` value, including invalid JSON, unknown fields, blank IDs, or only one populated ID, is invalid server-side configuration. A default-backed task request must fail closed as `422 VALIDATION_ERROR` without creating a task, event, enqueue operation, or successful operation log.
-  - A task request that supplies both valid `providerId` and `modelId` must not depend on or fail because of an unused malformed `task_defaults` row.
-- P13 has added `taskConcurrency` together with its Worker runtime consumer:
-  - `GET /admin/system-settings` returns effective `tenantLimit`, `userLimit`, `providerLimit`, and `modelLimit` after the backend slice is merged.
-  - `PATCH /admin/system-settings` may update positive integer fields under `taskConcurrency`; omitted fields retain the current effective values.
-  - Values may only narrow or match environment-configured tenant/user/Provider/model hard caps. Global concurrency is not a tenant-visible or tenant-writable field.
-  - Worker applies the effective values when acquiring a new Redis semaphore lease. A positive Provider `concurrencyLimit` remains an additional stricter Provider cap.
-  - Malformed persisted `task_concurrency` configuration causes affected eligible execution to fail with a sanitized task-configuration failure before Provider calls or output/usage/API-call persistence; actual settings storage failures retry without bypassing the limiter.
-- P13 storage cleanup foundation is merged as backend-internal cleanup capability:
-  - Upload rollback cleanup no longer depends on a canceled request context after object write.
-  - Soft-deleted image assets have an internal cleanup service with tenant, cutoff, batch, not-found idempotency, storage-error retry, and durable `purged_at` tracking.
-  - It does not expose a public cleanup API.
-- P13 has added `storageRetention` only together with its Worker maintenance runtime consumer:
-  - `GET /admin/system-settings` returns `storageRetention.deletedAssetRetentionDays`.
-  - The value is nullable. `null` means automatic physical cleanup of soft-deleted assets is disabled for the tenant.
-  - No tenant override defaults to `null`; the backend must not unexpectedly enable physical deletion.
-  - `PATCH /admin/system-settings` may set a positive integer day count or clear it with `null`; omitted fields retain the current value.
-  - Valid range is `1..3650` days unless a later public contract deliberately changes the range.
-  - Worker maintenance resolves the tenant setting, computes `cutoff = now - deletedAssetRetentionDays`, and calls the asset cleanup foundation for that tenant.
-  - Malformed persisted `storage_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
-- P13 has added `storageQuota` together with backend quota consumers:
-  - `GET /admin/system-settings` returns `storageQuota.maxBytes` and read-only `storageQuota.usedBytes`.
-  - `maxBytes` is nullable. `null` means no tenant storage quota is enforced.
-  - `usedBytes` is computed from tenant-scoped `image_assets.size_bytes` for rows whose MinIO objects are still expected to exist. Soft-deleted but not purged rows count; purged rows do not.
-  - `PATCH /admin/system-settings` may set a positive integer `maxBytes` or clear it with `null`; `usedBytes` is never writable.
-  - Reference uploads and Worker output asset persistence must reject writes that would exceed the quota and must not leave successful asset metadata, successful task output events, or sensitive object identifiers in responses/logs.
-  - Malformed persisted `storage_quota` must fail closed for new asset writes. Existing assets must not be deleted or hidden because of quota settings.
-  - P17 quota reservation keeps this public API shape stable while adding server-side reservation/counter behavior. Internal reservation IDs, counter rows, lock keys, and reconciliation details must not be returned to the frontend.
-  - `usedBytes` reflects the tenant-scoped quota counter initialized/reconciled from MySQL `image_assets` metadata. MinIO bucket listing is not quota truth.
-- P16 contracts `logRetention` only together with a Worker runtime consumer:
-  - `GET /admin/system-settings` returns nullable `operationLogRetentionDays`, `apiCallLogRetentionDays`, and `taskEventRetentionDays`.
-  - `PATCH /admin/system-settings` may set each field to a positive integer day count or clear it with `null`; omitted fields retain their current value.
-  - `null` means automatic retention cleanup for that log category is disabled.
-  - Valid range is `1..3650` days unless a later public contract deliberately changes it.
-  - Worker maintenance resolves active tenant settings, computes per-category cutoffs, deletes only rows older than the cutoff, limits each batch, and writes sanitized aggregate audit metadata after cleanup.
-  - `taskEventRetentionDays` may delete events only for terminal tasks older than the cutoff. It must preserve events for queued/running/cancelling/retrying tasks so live SSE and recovery semantics are not broken.
-  - The setting covers existing database-backed logs only: `operation_logs`, `api_call_logs`, and `task_events`. Container stdout/stderr and external log aggregation retention remain deployment responsibilities.
-  - Malformed persisted `log_retention` must fail closed: Worker skips cleanup for that tenant and logs only sanitized metadata. API reads/writes must return sanitized errors under the existing settings error shape.
-- Manual cleanup triggers remain absent from `system-settings`. P17 dedicated admin storage orphan endpoints have real runtime behavior and must not be mirrored as writable settings.
-- Implementation status: backend `GET/PATCH /admin/system-settings` and asset-upload runtime consumption are merged in `P9-BE-RUNTIME-SETTINGS-CONTRACT`; backend `taskDefaults` write/read, task-creation runtime consumption, and malformed-row fail-closed hardening are merged in `P13-BE-RUNTIME-DEFAULTS` and `P13-BE-RUNTIME-DEFAULTS-HARDENING`; backend `taskConcurrency` read/write and Worker consumption are merged in `P13-BE-CONCURRENCY-POLICY`; backend storage cleanup foundation is merged in `P13-BE-STORAGE-CLEANUP-FOUNDATION`; backend `storageRetention` read/write and Worker maintenance consumption are merged in `P13-BE-STORAGE-RETENTION-RUNTIME`; backend `storageQuota` read/write, computed usage, reference-upload enforcement, and Worker-output enforcement are merged in `P13-BE-STORAGE-QUOTA-ACCOUNTING`; backend strict quota reservation/counter/reconciliation is merged in `P17-BE-STORAGE-QUOTA-RESERVATION`; backend `logRetention` read/write and Worker maintenance cleanup are merged in `P16-BE-LOG-RETENTION`; backend thumbnail generation and authorized thumbnail streaming are merged in `P16-BE-THUMBNAIL-POLICY`; backend admin storage orphan scan/cleanup is merged in `P17-BE-ORPHAN-CLEANUP`.
-- Frontend implementation status: `P13-FE-SYSTEM-SETTINGS` exposes active runtime-backed settings: `uploadPolicy`, `taskDefaults`, `taskConcurrency`, `storageRetention`, and `storageQuota`; P19 added runtime-backed nullable `logRetention` controls after the backend consumer was merged and reviewed. Each save sends one CSRF-protected top-level patch per settings group, keeps `storageQuota.usedBytes` read-only, and keeps non-consumed settings absent from UI and requests.
+- 两条路线都需要租户管理员访问权限加上`system:settings:manage`。
+- `GET /admin/system-settings` 当租户还没有覆盖行时，使用环境配置的上传限制返回有效的租户上传策略。
+- `PATCH /admin/system-settings`可能会更新`uploadPolicy`下的一个或多个字段；省略的字段保留其当前有效值。
+- 租户覆盖必须保持积极，并且只能缩小或匹配环境配置的上传硬上限。运行时资产验证仍然是安全边界，并使用有效的租户策略来进行请求正文大小、维度和像素计数检查。
+- 允许的MIME类型保留配置拥有的安全策略；设置 API 不得使 SVG 或任何非允许类型可写。
+- P13添加了`taskDefaults`，因为任务创建是运行时消费者：
+  - `GET /admin/system-settings`返回`taskDefaults`，其中`defaultProviderId`和`defaultModelId`可为空。
+  - 仅当两个 ID 一起提供时，`PATCH /admin/system-settings` 才可以更新`taskDefaults`，或者使用 `null` 值清除两者。
+  - 后端必须在保存默认值之前验证租户所有权、启用Provider、启用模型以及模型所有权Provider。
+  - 创建任务时可能会省略`providerId`和`modelId`；在这种情况下，后端会解析租户默认值，然后运行与显式请求相同的 Provider/model/capability 验证。
+  - 仅省略 `providerId` 或 `modelId` 之一的任务创建仍然无效，以避免模糊的混合默认请求。
+  - 如果默认值不存在、过时、已禁用、已删除、跨租户或功能不兼容，则默认支持的任务创建将返回验证失败，并且不得将任务排队或写入成功的任务操作日志。
+  - 格式错误的存储 `task_defaults` 值（包括无效的 JSON、未知字段、空白 ID 或仅填充了一个 ID）是无效的服务器端配置。默认支持的任务请求必须以 `422 VALIDATION_ERROR` 的形式失败关闭，而不创建任务、事件、入队操作或成功操作日志。
+  - 提供有效 `providerId` 和 `modelId` 的任务请求不得依赖或因未使用的格式错误的 `task_defaults` 行而失败。
+- P13添加了`taskConcurrency`及其Worker运行时消费者：
+  - 后端切片合并后，`GET /admin/system-settings`返回有效`tenantLimit`、`userLimit`、`providerLimit`和`modelLimit`。
+- `PATCH /admin/system-settings`可能会更新`taskConcurrency`下的正整数字段；省略的字段保留当前有效值。
+  - 值只能缩小或匹配环境配置的tenant/user/Provider/model硬上限。全局并发不是租户可见或租户可写的字段。
+  - Worker在获取新的Redis信号量租约时应用有效值。正的 Provider `concurrencyLimit` 仍然是一个额外的更严格的 Provider 上限。
+  - 格式错误的持久化`task_concurrency`配置会导致受影响的合格执行在Provider调用或output/usage/API-call持久化之前发生脱敏任务配置已失败；实际设置存储失败重试而不绕过限制器。
+- P13存储清理基础合并为后端内部清理功能：
+  - 上传回滚清理不再依赖于对象写入后取消的请求上下文。
+  - 软删除的图像资产具有内部清理服务，包括租户、截止、批量、未发现幂等性、存储错误重试和持久的`purged_at`跟踪。
+  - 它不会公开公共清理API。
+- P13仅与其Worker维护运行时消费者一起添加了`storageRetention`：
+  - `GET /admin/system-settings`返回`storageRetention.deletedAssetRetentionDays`。
+  - 该值可以为空。 `null` 表示对租户禁用软删除资产的自动物理清理。
+  - 无租户覆盖默认为`null`；后端不得意外启用物理删除。
+  - `PATCH /admin/system-settings`可以设置正整数天数或使用`null`清除它；省略的字段保留当前值。
+  - 有效范围为`1..3650`天，除非后来的公共合同故意更改范围。
+  - Worker维护解析租户设置，计算`cutoff = now - deletedAssetRetentionDays`，并调用该租户的资产清理基础。
+  - 格式错误的持续存在`storage_retention`必须以失败方式关闭（fail closed）：Worker跳过该租户的清理并仅记录已脱敏元数据。 API reads/writes 在现有设置错误形状下必须返回已脱敏错误。
+- P13添加了`storageQuota`以及后端配额消费者：
+  - `GET /admin/system-settings`返回`storageQuota.maxBytes`和只读`storageQuota.usedBytes`。
+  - `maxBytes` 可为空。 `null` 表示不强制执行租户存储配额。
+- `usedBytes` 是根据租户范围的 `image_assets.size_bytes` 计算得出，其中 MinIO 对象仍预计存在。软删除但未清除的行数；已清除的行则不会。
+  - `PATCH /admin/system-settings`可以设置正整数`maxBytes`或用`null`清除； `usedBytes` 永远不可写。
+  - 参考上传和Worker输出资产持久性必须拒绝超出配额的写入，并且不得在responses/logs.中留下成功的资产元数据、成功的任务输出事件或敏感对象标识符
+  - 格式错误的持续存在`storage_quota`对于新资产写入必须以失败方式关闭（fail closed）。不得因配额设置而删除或隐藏现有资产。
+  - P17配额预留使此公共API形状保持稳定，同时添加服务器端reservation/counter行为。内部预留 ID、计数器行、锁定密钥和对帐详细信息不得返回到前端。
+  - `usedBytes`反映来自MySQL`image_assets`元数据的租户范围配额计数器initialized/reconciled。 MinIO 桶清单并不是配额真理。
+- P16 合约 `logRetention` 仅与 Worker 运行时消费者一起使用：
+  - `GET /admin/system-settings`返回可为空的`operationLogRetentionDays`、`apiCallLogRetentionDays`和`taskEventRetentionDays`。
+  - `PATCH /admin/system-settings`可以将每个字段设置为正整数天数或使用`null`清除它；省略的字段保留其当前值。
+  - `null` 表示禁用该日志类别的自动保留清理。
+  - 有效范围是`1..3650`天，除非后来的公共合同故意更改它。
+  - Worker维护解析活动租户设置，计算每个类别的截止值，仅删除早于截止值的行，限制每个批次，并在清理后写入已脱敏聚合审计元数据。
+  - `taskEventRetentionDays` 只能删除早于截止时间的终端任务的事件。它必须保留queued/running/cancelling/retrying任务的事件，以便实时SSE和恢复语义不会被破坏。
+  - 该设置仅涵盖现有数据库支持的日志：`operation_logs`、`api_call_logs`和`task_events`。容器stdout/stderr和外部日志聚合保留仍然是部署责任。
+  - 格式错误的持久存在`log_retention`必须以失败方式关闭（fail closed）：Worker跳过该租户的清理并仅记录已脱敏元数据。 API reads/writes 在现有设置错误形状下必须返回已脱敏错误。
+- `system-settings` 中仍然不存在手动清理触发器。 P17 专用管理存储孤立端点具有真正的运行时行为，并且不得镜像为可写设置。
+- 实现状态：后端`GET/PATCH /admin/system-settings`和资源上传运行时消耗合并到`P9-BE-RUNTIME-SETTINGS-CONTRACT`；后端`taskDefaults`write/read、任务创建运行时消耗和畸形行失败关闭强化合并在`P13-BE-RUNTIME-DEFAULTS`和`P13-BE-RUNTIME-DEFAULTS-HARDENING`中；后端`taskConcurrency`read/write和Worker消费合并到`P13-BE-CONCURRENCY-POLICY`；后端存储清理基础合并于`P13-BE-STORAGE-CLEANUP-FOUNDATION`；后端`storageRetention`read/write和Worker维护消耗合并到`P13-BE-STORAGE-RETENTION-RUNTIME`；后端`storageQuota`read/write，计算使用、参考上传强制和Worker输出强制合并在`P13-BE-STORAGE-QUOTA-ACCOUNTING`中；后端严格配额reservation/counter/reconciliation合并到`P17-BE-STORAGE-QUOTA-RESERVATION`；后端 `logRetention` read/write 和 Worker 维护清理合并在 `P16-BE-LOG-RETENTION` 中；后端缩略图生成和授权缩略图流合并在`P16-BE-THUMBNAIL-POLICY`；后端管理存储孤儿scan/cleanup合并到`P17-BE-ORPHAN-CLEANUP`。
+- 前端实现状态：`P13-FE-SYSTEM-SETTINGS`公开活动的运行时支持设置：`uploadPolicy`、`taskDefaults`、`taskConcurrency`、`storageRetention`和`storageQuota`； P19 在后端消费者合并和审核后添加了运行时支持的可空 `logRetention` 控件。每次保存都会为每个设置组发送一个受 CSRF 保护的顶级补丁，保持 `storageQuota.usedBytes` 只读，并保持 UI 和请求中不存在未使用的设置。

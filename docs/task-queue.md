@@ -1,17 +1,17 @@
-# Task Queue Plan
+# 任务队列计划
 
-## Principles
+## 原则
 
-- Task creation is synchronous only until MySQL persistence and Redis enqueue succeed.
-- MySQL is the final source of task state.
-- Redis is the queue, lock, concurrency, and rate-limit layer.
-- Worker execution must be idempotent.
-- SSE events are persisted in MySQL before delivery.
-- P7 is split into foundation, SSE, Worker queue, Provider Adapter runtime, frontend task client, and R7 review. Do not implement all concerns in one worktree.
+- 任务创建仅在MySQL持久化和Redis入队成功之前同步。
+- MySQL是任务状态的最终来源。
+- Redis是队列、锁、并发和速率限制层。
+- Worker 执行必须是幂等的。
+- SSE事件在交付前保留在MySQL中。
+- P7分为基础、SSE、Worker队列、Provider适配器运行时、前端任务客户端和R7审查。不要在一个worktree中实现所有问题。
 
-## Task lifecycle
+## 任务生命周期
 
-Statuses:
+状态：
 
 - `QUEUED`
 - `RUNNING`
@@ -21,195 +21,195 @@ Statuses:
 - `RETRYING`
 - `TIMED_OUT`
 
-Expected transitions:
+预期的转变：
 
-- `QUEUED` to `RUNNING`
-- `QUEUED` to `CANCELLED`
-- `RUNNING` to `SUCCEEDED`
-- `RUNNING` to `FAILED`
-- `RUNNING` to `TIMED_OUT`
-- `RUNNING` to `CANCELLED` when cancellation is honored before Provider completion
-- `FAILED` to `RETRYING`
-- `RETRYING` to `QUEUED`
+- `QUEUED`至`RUNNING`
+- `QUEUED`至`CANCELLED`
+- `RUNNING`至`SUCCEEDED`
+- `RUNNING`至`FAILED`
+- `RUNNING`至`TIMED_OUT`
+- `RUNNING`至`CANCELLED`（在Provider完成之前取消）
+- `FAILED`至`RETRYING`
+- `RETRYING`至`QUEUED`
 
-Terminal states: `SUCCEEDED`, `FAILED`, `CANCELLED`, `TIMED_OUT`.
+终端状态：`SUCCEEDED`、`FAILED`、`CANCELLED`、`TIMED_OUT`。
 
-Status naming note:
+状态命名说明：
 
-- `SUCCEEDED` is the canonical task status for successful completion.
-- SSE event type `TASK_COMPLETED` represents the transition into `SUCCEEDED`.
-- Existing frontend transitional status names must be aligned before task status is used by production UI.
+- `SUCCEEDED` 是成功完成的规范任务状态。
+- SSE事件类型`TASK_COMPLETED`表示过渡到`SUCCEEDED`。
+- 在生产使用任务状态之前，必须对齐现有前端过渡状态名称UI。
 
-## Queue design
+## 队列设计
 
-Use Redis for durable-ish queue delivery and worker coordination. The implementation may use Redis Streams or a reliable list pattern, but it must support:
+使用 Redis 进行持久队列交付和 Worker 协调。该实现可以使用 Redis Streams 或可靠的列表模式，但它必须支持：
 
-- Claiming jobs.
-- Re-delivery after worker crash.
-- Backoff for retry.
-- Dead-letter handling.
-- Visibility into pending jobs.
+- 申请工作。
+- Worker崩溃后重新交付。
+- 退避重试。
+- 死信处理。
+- 待处理作业的可见性。
 
-The queue payload should contain task ID only. Worker loads full task state from MySQL.
+队列有效负载应仅包含任务ID。 Worker从MySQL加载完整任务状态。
 
-P7 foundation requirement:
+P7基础要求：
 
-- `P7-BE-TASK-FOUNDATION` has created the enqueue abstraction and writes task IDs to Redis after MySQL persistence.
-- Enqueue failure marks the task `FAILED` with sanitized `ENQUEUE_FAILED` metadata rather than returning success for an unqueued task.
-- `P7-BE-WORKER-QUEUE` has implemented reliable queue claim, visibility timeout, ack, delayed retry promotion, stale claim recovery, and dead-letter handling.
+- `P7-BE-TASK-FOUNDATION`已创建队列抽象，并在MySQL持久化后将任务ID写入Redis。
+- 入队失败会用已脱敏`ENQUEUE_FAILED`元数据标记任务`FAILED`，而不是为未入队的任务返回成功。
+- `P7-BE-WORKER-QUEUE`实现了可靠的队列声明、可见性超时、确认、延迟重试升级、过时声明恢复和死信处理。
 
-## Concurrency limits
+## 并发限制
 
-Enforce concurrency at these dimensions:
+在这些维度上强制并发：
 
-- Global.
-- Tenant.
-- User.
-- Provider.
-- Model.
+- 全球。
+- 租户。
+- 用户。
+- Provider。
+- 模型。
 
-Redis semaphores or locks can enforce active counts. MySQL state must still be checked to recover after crashes.
+Redis 信号量或锁可以强制执行活动计数。 MySQL 仍然必须检查状态才能在崩溃后恢复。
 
-P13 concurrency-policy contract:
+P13并发策略合约：
 
-- `TASK_GLOBAL_CONCURRENCY` remains deployment-owned and is never tenant writable.
-- `TASK_TENANT_CONCURRENCY`, `TASK_USER_CONCURRENCY`, `TASK_PROVIDER_CONCURRENCY`, and `TASK_MODEL_CONCURRENCY` remain environment hard caps and the fallback limits when a tenant has no override.
-- The tenant settings slice `taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}` may only narrow or match those hard caps.
-- Worker must resolve the tenant policy after loading the tenant-scoped task execution context and before acquiring Redis semaphore leases. A successfully acquired new lease uses the effective policy; existing leases are not retroactively changed.
-- Provider `concurrencyLimit`, when positive, remains an additional stricter Provider-dimensional cap; the effective Provider limit is the minimum of environment cap, tenant policy, and Provider limit.
-- Malformed stored concurrency policy must fail an eligible task with sanitized `TASK_CONFIGURATION_INVALID` before Provider execution, outputs, usage, or API call logging. A settings storage/infrastructure read failure must leave the task eligible for retry and must not bypass concurrency enforcement.
-- Implementation status: `P13-BE-CONCURRENCY-POLICY` is merged. Future queue or worker changes must preserve this policy resolution order, fail-closed behavior, and lease-release semantics.
+- `TASK_GLOBAL_CONCURRENCY` 仍由部署拥有，租户永远不可写入。
+- `TASK_TENANT_CONCURRENCY`、`TASK_USER_CONCURRENCY`、`TASK_PROVIDER_CONCURRENCY`和`TASK_MODEL_CONCURRENCY`仍然是环境硬上限以及租户没有优先权时的后备限制。
+- 租户设置切片`taskConcurrency.{tenantLimit,userLimit,providerLimit,modelLimit}`只能缩小或匹配这些硬上限。
+- Worker 必须在加载租户范围的任务执行上下文之后和获取 Redis 信号量租约之前解析租户策略。成功获得的新租约使用有效的政策；现有租赁不会追溯改变。
+- Provider `concurrencyLimit`，当为正时，仍然是一个额外的更严格的Provider维度上限；有效的Provider限制是环境上限、租户政策和Provider限制的最小值。
+- 格式错误的存储并发策略必须在 Provider 执行、输出、使用或 API 调用日志记录之前使符合条件的任务失败，且已脱敏 `TASK_CONFIGURATION_INVALID`。设置 storage/infrastructure 读取失败必须使任务有资格重试，并且不得绕过并发执行。
+- 实施状态：`P13-BE-CONCURRENCY-POLICY`已合并。未来队列或Worker更改必须保留此策略解析顺序、失败关闭行为和租用释放语义。
 
-## Worker idempotency
+## Worker幂等性
 
-Before execution, worker must:
+在执行之前，Worker必须：
 
-1. Load task by ID with tenant context.
-2. Check task status and attempt.
-3. Transition to `RUNNING` transactionally if eligible.
-4. Write `TASK_STARTED` event.
+1. 通过 ID 使用租户上下文加载任务。
+2. 检查任务状态和尝试。
+3. 如果符合条件，可通过交易方式过渡到`RUNNING`。
+4. 写入`TASK_STARTED`事件。
 
-Before creating output assets, worker must prevent duplicate output records for the same task and output index.
+在创建输出资产之前，Worker必须防止同一任务和输出索引出现重复的输出记录。
 
-P7 implementation boundary:
+P7实现边界：
 
-- `P7-BE-WORKER-QUEUE` validates idempotency and status transitions with fake/stub execution.
-- `P7-BE-PROVIDER-ADAPTER-RUNTIME` adds real Provider calls, MinIO outputs, task_outputs, usage_records, and api_call_logs after the Worker state machine is stable.
+- `P7-BE-WORKER-QUEUE` 通过 fake/stub 执行验证幂等性和状态转换。
+- `P7-BE-PROVIDER-ADAPTER-RUNTIME`在Worker状态机稳定后添加真实的Provider调用、MinIO输出、task_outputs、usage_records和api_call_logs。
 
-P7 Worker queue result:
+P7 Worker 队列结果：
 
-- Worker queue execution is merged and uses MySQL task state as the authority before every claim and transition.
-- Redis payloads contain task ID only; Worker reloads tenant, project, Provider, model, prompt, and task parameters from MySQL.
-- Worker-written events publish minimal Redis wakeups so API SSE streams can replay persisted MySQL events.
-- Concurrency limits exist for global, tenant, user, Provider, and model dimensions, with stale lock cleanup.
-- P10 SSE bridge lifecycle follow-up is merged: API Redis subscription lifecycle is tied to API server shutdown instead of an unbounded background context.
+- Worker队列执行被合并，并在每次声明和转换之前使用MySQL任务状态作为权限。
+- Redis有效负载仅包含任务ID； Worker 从 MySQL 重新加载租户、项目、Provider、模型、提示和任务参数。
+- Worker写入的事件发布最少的Redis唤醒，因此APISSE流可以重放持久的MySQL事件。
+- 全局、租户、用户、Provider 和模型维度存在并发限制，并具有过时锁清理功能。
+- P10 SSE 桥生命周期后续功能已合并：API Redis 订阅生命周期与 API 服务器关闭相关联，而不是与无限的后台上下文相关联。
 
-P7 Provider runtime result:
+P7 Provider 运行时结果：
 
-- Real Provider execution is now merged behind the Worker state machine.
-- Successful runs create MinIO objects, generated/edited assets, `task_outputs`, `usage_records`, and `api_call_logs`, then emit `IMAGE_OUTPUT`, `USAGE_RECORDED`, and terminal events through the existing persisted-event flow.
-- Provider runtime uses SSRF-safe outbound transport and recursive redaction before persistence. Review fixes closed both current API key value leakage and current API key-as-map-key leakage paths.
-- The previous runtime carry-forward item after P10 worker-pool merge is resolved: API Redis subscription lifecycle is now bound to API server shutdown.
+- 真正的Provider执行现在合并在Worker状态机后面。
+- 成功运行创建 MinIO 对象、generated/edited 资产、`task_outputs`、`usage_records` 和 `api_call_logs`，然后发出 `IMAGE_OUTPUT`、`USAGE_RECORDED` 和终端事件通过现有的持久事件流。
+- Provider运行时使用SSRF-安全的出站传输和持久化之前的递归编辑。审核修复关闭了当前的 API 键值泄漏和当前的 API key-as-map-key 泄漏路径。
+- P10Worker池合并后的上一个运行时结转项目已解决：APIRedis订阅生命周期现在绑定到API服务器关闭。
 
-P21 Provider attempt ledger result:
+P21 Provider尝试账本结果：
 
-- Provider runtime now writes a tenant-scoped `api_call_logs` row with status `ATTEMPTING` before the external Provider call starts.
-- Success, Provider failure, task timeout, and context cancellation finalize the same ledger row with sanitized request/response metadata.
-- Attempt prewrite failure prevents the Provider call and leaves the task eligible for retry.
-- Attempt finalize failure fails the running task closed with `PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED` and does not persist output assets, usage records, or successful terminal side effects.
-- Worker persistence treats APICall IDs as idempotent ledger updates, so duplicate deliveries do not create duplicate Provider calls or duplicate API-call rows.
+- Provider 运行时现在会在外部 Provider 调用开始之前写入状态为 `ATTEMPTING` 的租户范围`api_call_logs` 行。
+- 成功、Provider失败、任务超时和上下文取消使用已脱敏request/response元数据完成同一账本行。
+- 尝试预写失败会阻止 Provider 调用，并使任务有资格重试。
+- 尝试最终确定失败导致正在运行的任务因 `PROVIDER_ATTEMPT_LEDGER_FINALIZE_FAILED` 关闭而失败，并且不会保留输出资产、使用记录或成功的终端副作用。
+- Worker 持久性将 APICall ID 视为幂等账本更新，因此重复交付不会创建重复的 Provider 调用或重复的 API 调用行。
 
-P21 Worker quota reconciliation result:
+P21 Worker配额对账结果：
 
-- Worker maintenance now consumes storage quota reconciliation using existing MySQL metadata and quota counter/reservation tables.
-- Active tenants are processed in bounded rotating batches. A fixed first-page batch must not starve later tenants.
-- Reconciliation is tenant-scoped, fail-closed for malformed settings/counters/reservations, and logs only sanitized aggregate metadata.
+- Worker 维护现在使用现有的 MySQL 元数据和配额 counter/reservation 表消耗存储配额协调。
+- 活动租户按有界轮换批次进行处理。固定的首页批次不能让后来的租户挨饿。
+- 协调是租户范围内的，对于格式错误的settings/counters/reservations会失败关闭，并且仅记录已脱敏聚合元数据。
 
-P21 concurrency lease renewal result:
+P21并发续租结果：
 
-- Redis semaphore leases are renewed while a Worker is executing a Provider task.
-- Renewal happens after the task is claimed as `RUNNING` and before Provider execution can outlive the original lease TTL.
-- If renewal fails or Redis reports that the lease is no longer held, the Worker cancels execution and fails the task closed as `CONCURRENCY_LEASE_LOST`.
-- A lost lease must not be followed by successful output assets, usage records, successful API-call finalization, or `SUCCEEDED` task state.
-- The Worker still releases the lease after execution or fail-closed handling.
+- 当 Worker 正在执行 Provider 任务时，Redis 信号量租约会更新。
+- 续订发生在任务被声明为`RUNNING`之后且在Provider执行之前，可以比原始租约TTL更长久。
+- 如果续订失败或Redis报告不再持有租约，Worker将取消执行并导致任务失败，关闭为`CONCURRENCY_LEASE_LOST`。
+- 丢失的租约后面不得有成功的输出资产、使用记录、成功的API调用完成或`SUCCEEDED`任务状态。
+- Worker在执行或失败关闭处理后仍然释放租约。
 
-P21 Worker readiness result:
+P21 Worker 准备结果：
 
-- The Worker readiness file is not a static startup marker anymore.
-- The Worker writes the file only after database, Redis, and MinIO dependency checks pass.
-- The Worker removes the readiness file immediately when `Worker.Run` exits, including error and normal shutdown paths.
-- Dependency readiness errors are reported at the dependency-name level and must not log passwords, Redis keys, object keys, bucket URLs, Provider secrets, Authorization headers, Cookies, JWTs, or image base64.
+- Worker 准备文件不再是静态启动标记。
+- 仅在数据库、Redis和MinIO依赖项检查通过后，Worker才会写入文件。
+- 当`Worker.Run`退出时，Worker会立即删除就绪文件，包括错误和正常关闭路径。
+- 依赖项准备就绪错误在依赖项名称级别报告，并且不得记录密码、Redis密钥、对象密钥、存储桶 URL、Provider秘密、授权标头、Cookie、JWT 或图像 base64。
 
-P10 Worker pool result:
+P10 Worker 池结果：
 
-- `P10-BE-WORKER-POOL` is merged.
-- `WORKER_CONCURRENCY` controls the number of in-process Worker processing loops.
-- Worker process concurrency is distinct from global/tenant/user/Provider/model execution limits. Worker loop count controls how many queue claims can be processed in parallel by one worker process; Redis concurrency limits still decide whether a claimed task may run.
-- The worker pool preserves the existing queue contract: Redis payloads contain task IDs only, MySQL is reloaded before every state transition, queue finalization happens per claim, and duplicate claims must not duplicate output assets, usage records, API call logs, or terminal events.
-- Recovery remains a single loop per Worker process so multiple processing loops do not duplicate timeout/recovery work.
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. `P10-BE-PROVIDER-MODEL-LIFECYCLE` is also merged; Provider deletion is now blocked while same-tenant non-deleted linked models exist.
+- `P10-BE-WORKER-POOL`已合并。
+- `WORKER_CONCURRENCY`控制进程内Worker处理循环的数量。
+- Worker 进程并发性与 global/tenant/user/Provider/model 执行限制不同。 Worker循环计数控制一个Worker进程可以并行处理多少个队列声明； Redis 并发限制仍然决定已声明的任务是否可以运行。
+- Worker池保留现有队列合约：Redis有效负载仅包含任务ID，MySQL在每次状态转换之前重新加载，每个声明发生队列最终确定，并且重复声明不得重复输出资产、使用记录、API调用日志或终端事件。
+- 每个 Worker 进程的恢复仍然是一个循环，因此多个处理循环不会重复 timeout/recovery 工作。
+- `P10-BE-SSE-BRIDGE-LIFECYCLE`已合并。 `P10-BE-PROVIDER-MODEL-LIFECYCLE`也被合并； Provider 现在，当存在同租户未删除链接模型时，删除会被阻止。
 
-## Cancellation
+## 取消
 
-Cancellation request:
+取消请求：
 
-1. Checks tenant and object authorization.
-2. Marks eligible task cancelled or cancellation requested.
-3. Writes `TASK_CANCELLED` event when terminal cancellation is reached.
+1. 检查租户和对象授权。
+2. 标记符合条件的任务已取消或已请求取消。
+3. 当到达终端取消时写入`TASK_CANCELLED`事件。
 
-If a Provider call cannot be interrupted, worker must ignore Provider output if MySQL state is already terminal cancelled.
+如果 Provider 调用无法被中断，且 MySQL 状态已被终端取消，那么 Worker 必须忽略 Provider 输出。
 
-## Retry
+## 重试
 
-Retry creates a new attempt for eligible failed, timed out, or cancelled tasks when allowed by policy. Retry must preserve original prompt and parameters unless the API explicitly accepts replacements.
+当策略允许时，重试会为符合条件的失败、超时或取消的任务创建新的尝试。重试必须保留原始提示和参数，除非 API 明确接受替换。
 
-## Timeout and recovery
+## 超时和恢复
 
-Tasks have `timeout_at`. A recovery loop should:
+任务有`timeout_at`。恢复循环应该：
 
-- Mark overdue running tasks as `TIMED_OUT`.
-- Release stale concurrency locks.
-- Requeue safe tasks when status and attempt allow.
+- 将过期的运行任务标记为`TIMED_OUT`。
+- 释放过时的并发锁。
+- 当状态和尝试允许时重新排队安全任务。
 
-## SSE events
+## SSE 活动
 
-Every meaningful transition writes to `task_events`:
+每个有意义的转变都会写入`task_events`：
 
-- Queued.
-- Started.
-- Progress.
-- Output created.
-- Usage recorded.
-- Failed.
-- Completed.
-- Cancelled.
-- Retried.
-- Timed out.
+- 排队。
+- 开始了。
+- 进步。
+- 创建输出。
+- 记录使用情况。
+- 失败的。
+- 完全的。
+- 取消了。
+- 重试了。
+- 超时。
 
-P7 SSE boundary:
+P7 SSE边界：
 
-- `P7-BE-SSE-STREAM` consumes persisted `task_events` and live fanout only.
-- Replay must use `task_events.sequence` as the cursor and emit `task_events.id` as the SSE `id`.
-- MySQL remains the replay source. Redis pub/sub or in-process fanout may accelerate live delivery but cannot replace MySQL event persistence.
-- The merged SSE implementation uses an API-process in-process broker plus Redis cross-process wakeups. The SSE API must still reload events from MySQL before sending them.
+- `P7-BE-SSE-STREAM`仅消耗持久的`task_events`和实时扇出。
+- 重播必须使用 `task_events.sequence` 作为光标，并发出 `task_events.id` 作为 SSE `id`。
+- MySQL 仍然是重播源。 Redis pub/sub 或进程内扇出可能会加速实时交付，但不能取代 MySQL 事件持久性。
+- 合并的SSE实现使用API进程内代理加上Redis跨进程唤醒。 SSE API 在发送事件之前仍必须从 MySQL 重新加载事件。
 
-P10 SSE bridge lifecycle plan:
+P10 SSE桥梁生命周期计划：
 
-- Completed and merged.
-- Redis task-event pub/sub remains a wakeup channel carrying only event sequence IDs.
-- The API subscriber stops with the API server lifecycle instead of using an unbounded background context.
-- Subscriber shutdown closes the Redis pub/sub path and router/API tests prove the subscriber can stop without logging `context.Canceled` as an unexpected failure.
-- SSE replay semantics, heartbeat, `Last-Event-ID`, and frontend EventSource behavior did not change.
+- 完成并合并。
+- Redis任务事件pub/sub仍然是仅携带事件序列ID的唤醒通道。
+- API订阅者随着API服务器生命周期停止，而不是使用无限制的后台上下文。
+- 订阅者关闭会关闭 Redis pub/sub 路径，并且 router/API 测试证明订阅者可以停止，而无需将 `context.Canceled` 记录为意外故障。
+- SSE重播语义、心跳、`Last-Event-ID`和前端EventSource行为没有改变。
 
-P10 Provider/model lifecycle plan:
+P10 Provider/model生命周期计划：
 
-- Provider deletion must be blocked while any non-deleted linked models exist in the same tenant.
-- Soft-deleted models no longer block Provider deletion.
-- Cross-tenant models must not block or reveal another tenant's Provider deletion.
+- Provider 当同一租户中存在任何未删除的链接模型时，必须阻止删除。
+- 软删除模型不再阻止Provider删除。
+- 跨租户模型不得阻止或泄露其他租户的 Provider 删除。
 
-P14 Provider/model lifecycle update:
+P14 Provider/model生命周期更新：
 
-- Provider disable through both `/disable` and `PATCH status=DISABLED` must be blocked while enabled same-tenant linked models exist.
-- Model create/update/enable must reject disabled, deleted, or cross-tenant Providers.
-- Loaded `taskDefaults` must be revalidated before task creation, so disabled/deleted Provider or model references fail closed and do not enqueue tasks.
-- P18 write-path integrity rejects duplicate same-tenant same-Provider non-deleted `model_name` values while task execution continues to use stable `modelId` references.
+- 当启用的同租户链接模型存在时，必须阻止Provider通过`/disable`和`PATCH status=DISABLED`禁用。
+- 模型create/update/enable必须拒绝禁用、删除或跨租户Provider。
+- 已加载的`taskDefaults`必须在创建任务之前重新验证，因此disabled/deletedProvider或模型引用以失败方式关闭（fail closed）并且不会将任务排队。
+- P18 写入路径完整性拒绝重复的同租户 Same-Provider 未删除的 `model_name` 值，而任务执行继续使用稳定的 `modelId` 引用。

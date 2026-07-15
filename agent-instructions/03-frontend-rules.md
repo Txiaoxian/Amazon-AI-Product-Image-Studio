@@ -1,52 +1,52 @@
-# Frontend Rules
+# 前端规则
 
-## Preserve existing UI
+## 保留现有 UI
 
-The current React UI is the baseline. Keep the existing workbench, upload interaction, prompt editor, model/parameter selectors, result canvas, history panel concept, modals, Tailwind styles, and tests unless a change is necessary for backend integration.
+当前 React UI 是基准。除非后端集成需要调整，否则应保留现有工作台、上传交互、提示词编辑器、模型/参数选择器、结果画布、历史面板设计、弹窗、Tailwind 样式和测试。
 
-## Required frontend migration direction
+## 前端迁移方向
 
-- Replace frontend Provider Adapters with backend API calls.
-- Replace local history as the primary data source with project assets and task history APIs.
-- Replace local API key settings with Provider management screens backed by backend APIs.
-- Replace local generation status with SSE task events.
-- Keep local state only for drafts, transient previews, and compatibility helpers.
+- 使用后端 API 调用替换前端 Provider Adapter。
+- 使用项目资产和任务历史 API 替换作为主要数据源的本地历史记录。
+- 使用由后端 API 支持的 Provider 管理页面替换本地 API Key 设置。
+- 使用 SSE 任务事件替换本地生成状态。
+- 本地状态仅用于草稿、临时预览和兼容辅助逻辑。
 
-## Frontend migration safety
+## 前端迁移安全
 
-- A frontend migration task must preserve the current production path until the replacement path is actually active.
-- Do not show backend-driven controls as the default production UI if the live submit path still sends unrelated legacy parameters.
-- If a task only prepares a future backend path, keep that preparation explicit and do not silently break legacy references, history actions, downloads, or other still-live flows.
-- Task packages for migration work must describe the old path, allowed intermediate state, target path, and forbidden half-migrated states before implementation begins.
+- 在替代路径真正启用前，前端迁移任务必须保留当前生产路径。
+- 如果实际提交路径仍在发送无关的旧参数，不得把后端驱动的控件作为默认生产 UI 展示。
+- 如果任务仅为未来后端路径做准备，必须明确标注这一中间状态，不得暗中破坏旧的参考图、历史操作、下载或其他仍在使用的流程。
+- 迁移工作开始实施前，任务包必须说明旧路径、允许的中间态、目标路径和禁止的半迁移状态。
 
-## Forbidden frontend patterns
+## 禁止的前端模式
 
-- Do not call OpenAI, Gemini, or relay URLs from the browser.
-- Do not store API keys in localStorage, IndexedDB, sessionStorage, URL params, or client-visible config.
-- Do not use `setInterval`, repeated `setTimeout`, or looped fetch calls to observe generation task status.
-- Do not render or log image base64 payloads.
+- 不得从浏览器调用 OpenAI、Gemini 或中转站 URL。
+- 不得在 localStorage、IndexedDB、sessionStorage、URL 参数或客户端可见配置中存储 API Key。
+- 不得使用 `setInterval`、重复 `setTimeout` 或循环 fetch 调用观察生成任务状态。
+- 不得渲染或记录图片 base64 载荷。
 
-## API integration
+## API 集成
 
-- Put request logic in a shared API client layer, not directly inside page components.
-- Use backend model capability responses to drive parameter controls.
-- Handle loading, empty, error, disabled, permission, and duplicate-submit states.
-- Use branded or clearly named TypeScript ID types where practical for tenant, project, asset, task, provider, and model IDs.
+- 请求逻辑应放在共享 API 客户端层，不得直接写在页面组件中。
+- 使用后端返回的模型能力驱动参数控件。
+- 正确处理加载、空数据、错误、禁用、权限和重复提交状态。
+- 在可行时，为租户、项目、资产、任务、Provider 和模型 ID 使用带品牌标识或命名清晰的 TypeScript ID 类型。
 
-## User-facing language
+## 面向用户的语言
 
-- Prefer Simplified Chinese for all platform-facing UI text.
-- Configuration labels, helper text, empty states, validation copy, button labels, status labels, and error messages should be Simplified Chinese whenever practical.
-- Keep unavoidable technical identifiers such as Provider type codes, model IDs, API field names, MIME types, and enum values unchanged when changing them would reduce precision.
-- Do not expose raw backend or third-party English error payloads directly in UI; translate or summarize them in Simplified Chinese while preserving actionable meaning.
+- 所有面向平台用户的 UI 文本优先使用简体中文。
+- 配置标签、辅助说明、空状态、校验文案、按钮标签、状态标签和错误信息应尽量使用简体中文。
+- Provider 类型代码、模型 ID、API 字段名、MIME 类型和枚举值等不可避免的技术标识，在翻译会降低准确性时保持原样。
+- 不得在 UI 中直接暴露后端或第三方返回的英文原始错误载荷；应在保留可操作含义的前提下翻译或概括为简体中文。
 
-## Verification
+## 验证
 
-For frontend-affecting work, run:
+遵循 `06-testing-and-delivery.md` 中的分级验证策略。
 
-- `npm run lint`
-- `npm run type-check`
-- `npm run test`
-- `npm run build`
+- 实施期间，只运行与已修改前端文件相关的 ESLint 检查和 Vitest 文件。诊断类型错误，或当前验证门槛有意不包含生产构建时，可单独运行 `npm run type-check`。
+- 交付已稳定的前端代码前，在 `frontend/` 中运行 `npm run lint`、`npm test` 和 `npm run build`。
+- `npm run build` 已包含 `tsc -b`；除非跳过构建或需要单独进行仅类型诊断，否则不要在同一最终验证门槛中再运行 `npm run type-check`。
+- 仅规则、仅文档和仅后端的变更不需要运行前端检查。
 
-After P1 moves the frontend into `frontend/`, run these commands from `frontend/`.
+同一逻辑任务中的每次小修改后都不必重新运行完整前端测试套件。迭代期间重跑受影响的检查，实施稳定后再运行一次最终相关验证门槛。

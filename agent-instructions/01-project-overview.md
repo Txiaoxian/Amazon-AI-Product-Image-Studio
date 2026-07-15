@@ -1,51 +1,51 @@
-# Project Overview
+# 项目概况
 
-## Product
+## 产品
 
-Amazon AI Product Image Studio is an AI product image generation and editing platform for Amazon sellers.
+Amazon AI Product Image Studio 是面向 Amazon 卖家的 AI 产品图片生成与编辑平台。
 
-The platform helps sellers:
+平台帮助卖家：
 
-- Generate product images with AI.
-- Edit existing product images with AI.
-- Upload product reference images.
-- Manage one project per product.
-- Store generated, edited, and reference images in a project asset library.
-- Track prompts, task history, usage, costs, and audit events.
+- 使用 AI 生成产品图片。
+- 使用 AI 编辑现有产品图片。
+- 上传产品参考图。
+- 按产品管理独立项目。
+- 在项目素材库中保存生成图、编辑图和参考图。
+- 跟踪提示词、任务历史、用量、成本和审计事件。
 
-## Current state
+## 当前状态
 
-The repository has been platformized through R12:
+仓库已完成截至 R12 的平台化建设：
 
-- The original React + TypeScript + Vite + Tailwind frontend now lives under `frontend/`.
-- The Go + Gin + GORM backend now lives under `backend/` with API and Worker entrypoints.
-- Docker Compose deployment assets live under `deploy/`.
-- Authentication, RBAC, tenant isolation, tenant user/role administration, projects, project members, assets, Provider/model management, task APIs, Redis queueing, Worker execution, SSE, unified project history, usage/audit reads, upload-policy settings, and runtime hardening through P12 are implemented.
-- Production generation/edit flows go through backend task APIs, backend Provider Adapters, Redis queueing, Worker execution, MinIO assets, and SSE. The browser must not call AI Providers directly.
-- Browser Provider adapters, normal-user Provider API key/API URL settings, and IndexedDB-backed production history/image paths have been removed or retired from the production import graph.
-- Seller-facing project workflows now include backend-backed project edit, asset filtering, asset metadata edit, project member entry points, unified history, authorized detail/download/re-edit, and backend last-`OWNER` protection for member writes.
-- IndexedDB may still support non-sensitive local prompt-template convenience data and tests; it must not be reintroduced as platform history or image truth.
+- 原有 React + TypeScript + Vite + Tailwind 前端现位于 `frontend/`。
+- Go + Gin + GORM 后端现位于 `backend/`，并提供 API 和 Worker 入口。
+- Docker Compose 部署资源位于 `deploy/`。
+- 已实现认证、RBAC、租户隔离、租户用户/角色管理、项目、项目成员、素材、Provider/模型管理、任务 API、Redis 队列、Worker 执行、SSE、统一项目历史、用量/审计查询、上传策略设置，以及截至 P12 的运行时加固。
+- 生产环境的生成/编辑流程经过后端任务 API、后端 Provider Adapter、Redis 队列、Worker 执行、MinIO 素材和 SSE；浏览器不得直接调用 AI Provider。
+- 浏览器 Provider Adapter、普通用户的 Provider API Key/API URL 设置，以及基于 IndexedDB 的生产历史/图片路径已从生产导入图中移除或停用。
+- 面向卖家的项目流程现已包含后端驱动的项目编辑、素材筛选、素材元数据编辑、项目成员入口、统一历史、授权详情/下载/再次编辑，以及后端对成员写入的最后一个 `OWNER` 保护。
+- IndexedDB 仍可用于非敏感的本地提示词模板便捷数据和测试，但不得重新作为平台历史或图片的事实来源。
 
-The existing frontend UI concepts should still be preserved and evolved. Do not rewrite the UI from scratch unless a later task explicitly authorizes a replacement.
+应继续保留并演进现有前端 UI 概念；除非后续任务明确授权替换，否则不得从头重写 UI。
 
-## Target stack
+## 目标技术栈
 
-- Frontend: React + TypeScript + Vite + Tailwind CSS.
-- Backend: Go + Gin + GORM.
-- Database: MySQL 8.
-- Queue and cache: Redis.
-- Object storage: MinIO.
-- Auth: JWT with HttpOnly Cookie.
-- Authorization: RBAC plus `tenant_id` isolation.
-- Task status: SSE only.
-- Deployment: Docker Compose.
+- 前端：React + TypeScript + Vite + Tailwind CSS。
+- 后端：Go + Gin + GORM。
+- 数据库：MySQL 8。
+- 队列和缓存：Redis。
+- 对象存储：MinIO。
+- 认证：JWT + HttpOnly Cookie。
+- 授权：RBAC + `tenant_id` 隔离。
+- 任务状态：仅使用 SSE。
+- 部署：Docker Compose。
 
-## Historical P0 non-goals
+## 历史 P0 非目标
 
-P0 is complete. Its old constraints are historical only: P0 did not implement backend business code, move frontend files, refactor React components, or replace local storage paths. Current tasks must follow the latest phase plan in `docs/development-plan.md` and `docs/codex-agent-tasks.md`.
+P0 已完成，其旧约束仅作为历史记录：P0 未实现后端业务代码、移动前端文件、重构 React 组件或替换本地存储路径。当前任务必须遵循 `docs/development-plan.md` 和 `docs/codex-agent-tasks.md` 中的最新阶段计划。
 
-## Implementation posture
+## 实施原则
 
-- Prefer incremental changes with explicit contracts.
-- Preserve existing user-facing concepts while keeping the current backend-backed production paths honest.
-- Do not remove or replace an existing production path unless the backend-backed equivalent exists, is validated, and the task explicitly owns the migration.
+- 优先采用具有明确契约的增量修改。
+- 保留现有面向用户的概念，同时确保当前后端驱动的生产路径真实有效。
+- 除非后端等价路径已经存在、完成验证，且任务明确负责该迁移，否则不得删除或替换现有生产路径。

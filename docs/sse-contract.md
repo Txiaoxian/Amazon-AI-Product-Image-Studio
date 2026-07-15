@@ -1,67 +1,67 @@
-# SSE Contract
+#SSE合约
 
-## Endpoint
+## 端点
 
 ```text
 GET /api/v1/events/tasks
 ```
 
-Query params:
+查询参数：
 
-- `projectId`: optional project filter.
-- `taskId`: optional task filter.
-- `lastEventId`: optional fallback when `Last-Event-ID` header is unavailable.
+- `projectId`：可选的项目过滤器。
+- `taskId`：可选任务过滤器。
+- `lastEventId`：当`Last-Event-ID`标头不可用时可选的后备。
 
-Authentication uses the normal HttpOnly Cookie.
+身份验证使用普通的 HttpOnly Cookie。
 
-P7 implementation scope:
+P7实施范围：
 
-- `P7-BE-SSE-STREAM` implements this endpoint after `task_events` exists. It is merged with MySQL replay and API-process in-process wakeups.
-- `P7-BE-WORKER-QUEUE` has added Redis-based cross-process Worker-to-API wakeups after Worker persists task events. Redis carries only a minimal wakeup; MySQL remains the replay source.
-- `P7-FE-TASK-CLIENT-SSE` is merged with frontend SSE client types, `lastEventId` fallback handling, heartbeat handling, and reducer utilities. It does not replace the main generation workbench flow; P8 owns workbench backendization.
+- `P7-BE-SSE-STREAM`在`task_events`存在后实现此端点。它与MySQL重放和API进程内唤醒合并。
+- `P7-BE-WORKER-QUEUE`添加了基于Redis的跨进程Worker到API在Worker保留任务事件后唤醒。 Redis仅进行最小程度的唤醒； MySQL 仍然是重播源。
+- `P7-FE-TASK-CLIENT-SSE`与前端SSE客户端类型、`lastEventId`后备处理、心跳处理和减速器实用程序合并。它不会取代主要的生成工作台流程； P8拥有工作台后端。
 
-P10 lifecycle update:
+P10生命周期更新：
 
-- `P10-BE-SSE-BRIDGE-LIFECYCLE` is merged. The API Redis task-event subscriber is started with the API lifecycle context and stops on API shutdown.
-- Redis task-event wakeups remain sequence-only. They do not carry tenant IDs, task IDs, project IDs, full event payloads, Authorization headers, Cookies, Provider/API keys, or image base64.
-- Redis remains a wakeup path only. The SSE service still reloads visible events from MySQL before writing frames.
+- `P10-BE-SSE-BRIDGE-LIFECYCLE`已合并。 API Redis 任务事件订阅者使用 API 生命周期上下文启动，并在 API 关闭时停止。
+- Redis 任务事件唤醒仍然仅按顺序进行。它们不携带租户 ID、任务 ID、项目 ID、完整事件负载、授权标头、Cookie、Provider/API 密钥或图像 base64。
+- Redis仅保留唤醒路径。在写入帧之前，SSE服务仍然会从MySQL重新加载可见事件。
 
-P21 resilience update:
+P21弹性更新：
 
-- Historical replay is bounded per stream attempt so a stale cursor cannot force an unbounded response before the live stream starts.
-- Heartbeat processing performs a MySQL catch-up pass before writing `HEARTBEAT`, so persisted events can reach clients even when Redis wakeups are delayed or missed.
-- If the Redis notification channel closes, the API SSE service resubscribes instead of permanently losing cross-process wakeups.
-- Long-lived SSE streams periodically revalidate the authenticated user's session version and active status. Logout, password change, user disable, or another session-version change closes stale streams instead of continuing to emit events.
+- 历史重播受到每次流尝试的限制，因此过时的光标无法在实时流开始之前强制执行无限制的响应。
+- 心跳处理在写入 `HEARTBEAT` 之前执行MySQL追赶传递，因此即使Redis唤醒延迟或错过，持久事件也可以到达客户端。
+- 如果 Redis 通知通道关闭，API SSE 服务会重新订阅，而不是永久丢失跨进程唤醒。
+- 长期存在的SSE流定期重新验证经过身份验证的用户的会话版本和活动状态。注销、密码更改、用户禁用或其他会话版本更改会关闭陈旧的流，而不是继续发出事件。
 
-## Browser rules
+## 浏览器规则
 
-- Frontend must use EventSource or an equivalent SSE client.
-- Frontend must not poll task status.
-- Frontend must not use `setInterval` or repeated fetch loops for task progress.
+- 前端必须使用 EventSource 或等效的 SSE 客户端。
+- 前端不得轮询任务状态。
+- 前端不得使用`setInterval`或重复的获取循环来获取任务进度。
 
-## Reconnect and replay
+## 重新连接并重播
 
-The server must support:
+服务器必须支持：
 
-- `Last-Event-ID` header.
-- `lastEventId` query fallback.
-- Historical event replay from MySQL `task_events`.
-- Heartbeat events to keep the connection alive.
-- Safe reconnect after network interruption.
+- `Last-Event-ID`标题。
+- `lastEventId`查询回退。
+- MySQL`task_events`的历史事件重播。
+- 保持连接活动的心跳事件。
+- 网络中断后安全重新连接。
 
-If a client reconnects with a known event ID, the server sends all visible events after that ID before streaming live events.
+如果客户端重新连接已知事件 ID，服务器会在流式传输实时事件之前发送此后的所有可见事件 ID。
 
-Replay cursor contract:
+重放游标合约：
 
-- `task_events.sequence` is the durable monotonic replay cursor.
-- `task_events.id` is the SSE `id` derived from `sequence`, formatted as `evt_` plus a zero-padded decimal sequence.
-- `Last-Event-ID` and `lastEventId` must be parsed back to a sequence cursor.
-- Historical replay must query visible events with `sequence > cursor`, ordered by `sequence ASC`.
-- Malformed event IDs should be rejected with a sanitized validation error before opening a stream.
+- `task_events.sequence`是持久的单调重放光标。
+- `task_events.id`是SSE`id`派生自`sequence`，格式为`evt_`加上零填充的十进制序列。
+- `Last-Event-ID` 和 `lastEventId` 必须解析回序列游标。
+- 历史回放必须使用`sequence > cursor`查询可见事件，按`sequence ASC`排序。
+- 在打开流之前，应拒绝格式错误的事件 ID，并显示已脱敏验证错误。
 
-## Event frame
+## 事件框架
 
-Example:
+示例：
 
 ```text
 id: evt_000000000001
@@ -69,59 +69,59 @@ event: TASK_STARTED
 data: {"taskId":"task_...","status":"RUNNING","startedAt":"2026-05-09T07:00:00Z"}
 ```
 
-`id` is the durable `task_events.id`; the server must use its underlying `task_events.sequence` for replay ordering.
+`id`是耐用的`task_events.id`；服务器必须使用其底层 `task_events.sequence` 进行重播排序。
 
-## Event types
+## 事件类型
 
-- `TASK_QUEUED`: task created and queued.
-- `TASK_STARTED`: worker started execution.
-- `TASK_PROGRESS`: optional progress update.
-- `IMAGE_OUTPUT`: output image asset created.
-- `USAGE_RECORDED`: usage/cost record created.
-- `TASK_FAILED`: task failed.
-- `TASK_COMPLETED`: task succeeded.
-- `TASK_CANCELLED`: task cancelled.
-- `TASK_RETRIED`: retry scheduled.
-- `TASK_TIMED_OUT`: task timed out.
-- `HEARTBEAT`: connection keepalive.
+- `TASK_QUEUED`：任务已创建并排队。
+- `TASK_STARTED`：Worker开始执行。
+- `TASK_PROGRESS`：可选的进度更新。
+- `IMAGE_OUTPUT`：已创建输出图像资源。
+- `USAGE_RECORDED`：已创建usage/cost记录。
+- `TASK_FAILED`：任务失败。
+- `TASK_COMPLETED`：任务成功。
+- `TASK_CANCELLED`：任务已取消。
+- `TASK_RETRIED`：已安排重试。
+- `TASK_TIMED_OUT`：任务超时。
+- `HEARTBEAT`：连接保持活动状态。
 
-Status mapping:
+状态映射：
 
-- `TASK_COMPLETED` is an event type, not the canonical terminal task status.
-- Successful task records use status `SUCCEEDED`.
-- Failed/cancelled/timed-out task records use `FAILED`, `CANCELLED`, and `TIMED_OUT`.
+- `TASK_COMPLETED`是一种事件类型，而不是规范的终端任务状态。
+- 成功的任务记录使用状态`SUCCEEDED`。
+- Failed/cancelled/timed-out任务记录使用`FAILED`、`CANCELLED`和`TIMED_OUT`。
 
-## Payload principles
+## 负载原理
 
-- Payloads use camelCase.
-- Payloads must include `taskId`.
-- Project-scoped events include `projectId`.
-- Asset output events include `assetId`, `thumbnailUrl` or an authorized preview URL, dimensions, MIME type, and output index.
-- Error payloads include sanitized `errorCode` and `message`.
-- Payloads must not contain API keys, Authorization headers, Cookies, or image base64.
+- 有效负载使用camelCase。
+- 有效负载必须包含`taskId`。
+- 项目范围内的事件包括`projectId`。
+- 资产输出事件包括`assetId`、`thumbnailUrl`或授权预览URL、尺寸、MIME类型和输出索引。
+- 错误负载包括已脱敏`errorCode`和`message`。
+- 有效负载不得包含 API 密钥、授权标头、Cookie 或图像 base64。
 
-## Persistence rule
+## 持久化规则
 
-For task events:
+对于任务事件：
 
-1. Write the event to MySQL.
-2. Publish or fan out to active SSE clients.
+1. 将事件写入MySQL。
+2. 发布或扇出给活跃的 SSE 客户。
 
-MySQL is the replay source. Redis pub/sub may accelerate live delivery but cannot be the only event source.
+MySQL是重放源。 Redis pub/sub 可以加速实时交付，但不能是唯一的事件源。
 
-Worker processes must not send complete event payloads as the source of truth through Redis. They should publish an event ID/sequence or minimal wakeup message, and the API SSE service must load visible events from MySQL before writing frames.
+Worker进程不得通过Redis发送完整的事件有效负载作为最终事实来源。他们应该发布一个事件 ID/sequence 或最小唤醒消息，并且 API SSE 服务必须在写入帧之前从 MySQL 加载可见事件。
 
-## Authorization
+## 授权
 
-The stream only emits events visible to the authenticated user:
+该流仅发出对经过身份验证的用户可见的事件：
 
-- Tenant must match.
-- User must have project visibility or admin permission.
-- Task filter must still pass object-level checks.
+- 租客必须匹配。
+- 用户必须具有项目可见性或管理员权限。
+- 任务过滤器仍必须通过对象级检查。
 
-P7 tests must prove:
+P7 测试必须证明：
 
-- Reconnect with `Last-Event-ID` replays only visible events after that ID.
-- `lastEventId` query fallback behaves the same as the header.
-- Cross-tenant and non-member project events are not emitted.
-- Heartbeat frames do not leak task metadata.
+- 与`Last-Event-ID`重新连接仅重播ID之后的可见事件。
+- `lastEventId` 查询回退的行为与标头相同。
+- 不发出跨租户和非成员项目事件。
+- 心跳帧不会泄漏任务元数据。

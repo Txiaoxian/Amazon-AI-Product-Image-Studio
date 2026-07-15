@@ -1,49 +1,49 @@
-# Security Rules
+# 安全规则
 
-## Authentication and sessions
+## 身份认证与会话
 
-- Use JWT in HttpOnly Cookie.
-- Cookies must use Secure in production and SameSite protection.
-- Frontend JavaScript must not read auth tokens.
-- Add CSRF protection for state-changing endpoints when Cookie auth is used.
+- 在 HttpOnly Cookie 中使用 JWT。
+- 生产环境 Cookie 必须启用 Secure 和 SameSite 保护。
+- 前端 JavaScript 不得读取认证令牌。
+- 使用 Cookie 认证时，改变状态的端点必须增加 CSRF 防护。
 
-## Authorization
+## 授权
 
-- Use RBAC plus tenant isolation.
-- All object ID endpoints must perform object-level authorization.
-- Project membership must be checked for project and asset access.
-- Admin-only Provider/model/system settings APIs must require explicit permissions.
+- 使用 RBAC 和租户隔离。
+- 所有对象 ID 端点必须执行对象级授权。
+- 访问项目和资产时必须检查项目成员身份。
+- 仅管理员可用的 Provider、模型和系统设置 API 必须要求明确权限。
 
-## Secrets
+## 密钥
 
-- API keys must be encrypted before storing in MySQL.
-- API keys must never be returned in full to the frontend.
-- Responses may include only masked key metadata, such as last 4 characters and update time.
-- Logs must not contain API keys, Authorization headers, Cookies, passwords, or image base64 data.
+- API Key 存入 MySQL 前必须加密。
+- 绝不能向前端完整返回 API Key。
+- 响应只能包含脱敏后的密钥元数据，例如末 4 位和更新时间。
+- 日志不得包含 API Key、Authorization 请求头、Cookie、密码或图片 base64 数据。
 
-## Provider SSRF protection
+## Provider SSRF 防护
 
-Provider `base_url` must be validated before save and before use:
+Provider `base_url` 在保存前和使用前都必须校验：
 
-- Allow only `https://` by default.
-- Block localhost, loopback, private ranges, link-local ranges, multicast ranges, and Docker-internal hostnames.
-- Resolve DNS and validate resolved IPs.
-- Block redirects to forbidden targets.
+- 默认只允许 `https://`。
+- 阻止 localhost、回环地址、私网网段、链路本地网段、组播网段和 Docker 内部主机名。
+- 解析 DNS 并校验解析后的 IP。
+- 阻止重定向到禁止目标。
 
-## Upload security
+## 上传安全
 
-- Validate declared MIME type and magic bytes.
-- Allow only JPEG, PNG, and WebP.
-- Forbid SVG.
-- Enforce file size, dimensions, and pixel-count limits.
-- Store uploads in MinIO, not MySQL.
-- Downloads must go through backend authorization.
+- 校验声明的 MIME 类型和文件魔数。
+- 只允许 JPEG、PNG 和 WebP。
+- 禁止 SVG。
+- 强制执行文件大小、尺寸和像素总数限制。
+- 上传文件存入 MinIO，不得存入 MySQL。
+- 下载必须经过后端鉴权。
 
-## Audit
+## 审计
 
-Record operation logs for sensitive and business actions:
+对敏感操作和业务操作记录操作日志：
 
-- Login and logout.
-- User, role, Provider, model, and system setting changes.
-- Project and asset changes.
-- Task create, cancel, retry, failure, and completion.
+- 登录和退出。
+- 用户、角色、Provider、模型和系统设置变更。
+- 项目和资产变更。
+- 任务创建、取消、重试、失败和完成。

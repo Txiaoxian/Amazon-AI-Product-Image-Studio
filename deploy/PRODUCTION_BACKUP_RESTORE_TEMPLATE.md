@@ -1,30 +1,29 @@
-# Production Backup/Restore/Rollback Evidence Template
+# 生产环境备份/恢复/回滚证据模板
 
-Use this template for operator-reviewed production readiness evidence. Keep
-only sanitized stage results. Do not attach dumps, storage listings, storage
-paths, credentials, secret values, certificates, Provider responses, image
-outputs, or signed URLs.
+使用此模板记录经运维人员审核的生产就绪证据。只保留已脱敏的
+阶段结果。不得附加数据转储、存储列表、存储路径、凭据、密钥值、
+证书、Provider 响应、图片输出或签名 URL。
 
-The repository rehearsal script is limited to its disposable isolated Compose
-project. Production backup and restore must use operator-approved runtime
-tooling and a documented consistency point.
+仓库中的演练脚本仅限用于一次性隔离的 Compose 项目。
+生产环境备份与恢复必须使用运维人员批准的运行时工具，
+并采用有记录的一致性时间点。
 
-## Release Candidate
+## 发布候选版本
 
-- Commit:
-- Operator:
-- Environment:
-- Date:
+- commit：
+- 运维人员：
+- 环境：
+- 日期：
 
-## Isolated Compose Rehearsal
+## 隔离的 Compose 演练
 
-Default guardrail-only check:
+默认仅检查保护机制：
 
 ```bash
 bash scripts/backup-restore-rehearsal.sh
 ```
 
-Explicit live rehearsal:
+显式现场演练：
 
 ```bash
 BACKUP_RESTORE_REHEARSAL_CONFIRM=I_UNDERSTAND_DATA_REPLACEMENT \
@@ -34,34 +33,33 @@ docker volume ls --format '{{.Name}}' |
   rg '^amazon-ai-product-image-studio-backup-restore-rehearsal-' || true
 ```
 
-## Sanitized Evidence
+## 已脱敏证据
 
-| Check | Result | Sanitized note |
+| 检查项 | 结果 | 已脱敏说明 |
 | --- | --- | --- |
-| Default guardrail-only mode | PASS / FAIL | No Docker commands or data replacement. |
-| Isolated Compose startup | PASS / FAIL / NOT RUN | Disposable rehearsal project only. |
-| Matching MySQL and MinIO backup pair | PASS / FAIL / NOT RUN | Do not attach backup content or listings. |
-| Fixture destruction and restore | PASS / FAIL / NOT RUN | Record status only. |
-| Rollback restore from matching pair | PASS / FAIL / NOT RUN | Record status only. |
-| Scoped cleanup | PASS / FAIL / NOT RUN | Record container and volume absence only. |
-| Real Provider calls | NOT RUN | Rehearsal must not call a Provider. |
+| 默认仅保护机制模式 | PASS / FAIL | 不执行 Docker 命令或数据替换。 |
+| 隔离 Compose 启动 | PASS / FAIL / NOT RUN | 只使用一次性演练项目。 |
+| 匹配的 MySQL 与 MinIO 备份对 | PASS / FAIL / NOT RUN | 不得附加备份内容或列表。 |
+| 测试数据销毁与恢复 | PASS / FAIL / NOT RUN | 只记录状态。 |
+| 从匹配备份对执行回滚恢复 | PASS / FAIL / NOT RUN | 只记录状态。 |
+| 范围内清理 | PASS / FAIL / NOT RUN | 只记录容器和数据卷不存在。 |
+| 真实 Provider 调用 | NOT RUN | 演练不得调用 Provider。 |
 
-## Production Operator Procedure
+## 生产环境运维流程
 
-- [ ] Maintenance window or write-stop procedure is approved.
-- [ ] Approved platform backup tool is identified.
-- [ ] MySQL and MinIO are captured at one documented consistency point.
-- [ ] Backup storage is access-restricted and outside the Compose host.
-- [ ] Restore target is stopped or isolated.
-- [ ] Matching MySQL and MinIO restore set is selected.
-- [ ] Approved platform restore tool is used.
-- [ ] Release health, frontend proxy, SSE boundary, login, upload, task, and
-      download checks are assigned before reopening traffic.
-- [ ] Rollback release artifact and matching runtime configuration location are
-      identified without copying values.
+- [ ] 维护窗口或停止写入流程已获批准。
+- [ ] 已确定获准使用的平台备份工具。
+- [ ] MySQL 和 MinIO 在同一个有记录的一致性时间点完成备份。
+- [ ] 备份存储已限制访问，并且位于 Compose 主机之外。
+- [ ] 恢复目标已停止或被隔离。
+- [ ] 选择匹配的 MySQL 和 MinIO 恢复集。
+- [ ] 使用获准的平台恢复工具。
+- [ ] 重新开放流量前，已安排发布健康检查、前端代理、SSE 边界、
+      登录、上传、任务和下载检查。
+- [ ] 已确定回滚发布产物和对应运行时配置的位置，且未复制配置值。
 
-## Decision
+## 决策
 
-Decision: GO / NO-GO
+决策：GO / NO-GO
 
-Blocking issues:
+阻塞问题：

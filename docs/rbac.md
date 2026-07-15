@@ -1,53 +1,53 @@
-# RBAC Plan
+#RBAC计划
 
-## Principles
+## 原则
 
-- RBAC is tenant scoped.
-- `tenant_id` isolation is mandatory.
-- RBAC does not replace object-level authorization.
-- Project membership can further restrict project and asset access.
+- RBAC 属于租户范围。
+- `tenant_id` 强制隔离。
+- RBAC 不取代对象级授权。
+- 项目会员资格可以进一步限制项目和资产访问。
 
-## Built-in roles
+## 内置角色
 
-### admin
+### 管理员
 
-Tenant administrator.
+租户管理员。
 
-Typical permissions:
+典型权限：
 
-- Manage users.
-- Manage roles.
-- Manage Providers and models.
-- Manage system settings.
-- View audit logs.
-- Access all tenant projects.
+- 管理用户。
+- 管理角色。
+- 管理Provider和模型。
+- 管理系统设置。
+- 查看审核日志。
+- 访问所有租户项目。
 
-### seller
+### 卖家
 
-Operational seller user.
+运营卖家用户。
 
-Typical permissions:
+典型权限：
 
-- Create and manage own or assigned projects.
-- Upload assets.
-- Create, cancel, and retry generation tasks.
-- Download visible assets.
-- View usage for visible projects.
+- 创建和管理自己或分配的项目。
+- 上传资产。
+- 创建、取消和重试生成任务。
+- 下载可见资产。
+- 查看可见项目的使用情况。
 
-### viewer
+### 观众
 
-Read-only user.
+只读用户。
 
-Typical permissions:
+典型权限：
 
-- View assigned projects.
-- View assets and task history.
-- Download if explicitly allowed.
-- No Provider, model, user, or system settings access.
+- 查看分配的项目。
+- 查看资产和任务历史记录。
+- 如果明确允许则下载。
+- 没有Provider、模型、用户或系统设置访问权限。
 
-## Permission code groups
+## 权限代码组
 
-User and role:
+用户和角色：
 
 - `user:read`
 - `user:create`
@@ -56,37 +56,37 @@ User and role:
 - `role:read`
 - `role:manage`
 
-P11 user-admin role mapping:
+P11 用户-管理员角色映射：
 
-- User list/detail require tenant admin access or `user:read`.
-- User create requires tenant admin access or `user:create`.
-- Creating a user with one or more `roleIds` also requires tenant admin access or `role:manage`.
-- User safe-field update requires tenant admin access or `user:update`.
-- Changing user `status` through PATCH, `/disable`, or `/enable` requires tenant admin access or `user:disable`.
-- Role replacement requires tenant admin access or `role:manage`.
-- Role and permission reads require tenant admin access or `role:read`.
-- User-admin object APIs must always filter by `tenant_id`; cross-tenant user and role IDs must not leak existence.
-- The backend must reject self-disable and any update that would remove the tenant's last active admin.
-- The frontend user/role admin panel must mirror these boundaries: do not load `/users` without `user:read`, do not load `/roles` or `/permissions` without `role:read`, do not submit `roleIds` without `role:manage`, do not expose status actions without `user:disable`, and disable current-user status actions in the UI.
-- Created-user passwords are transient UI input only. They must not be written to localStorage, sessionStorage, IndexedDB, logs, or rendered after successful creation.
+- 用户list/detail需要租户管理员访问权限或`user:read`。
+- 用户创建需要租户管理员访问权限或`user:create`。
+- 创建具有一个或多个`roleIds`的用户还需要租户管理员访问权限或`role:manage`。
+- 用户安全字段更新需要租户管理员访问权限或`user:update`。
+- 通过PATCH、`/disable`或`/enable`更改用户`status`需要租户管理员访问权限或`user:disable`。
+- 角色替换需要租户管理员访问权限或`role:manage`。
+- 角色和权限读取需要租户管理员访问权限或`role:read`。
+- 用户管理对象 API 必须始终按 `tenant_id` 进行过滤；跨租户用户和角色 ID 不得泄漏存在。
+- 后端必须拒绝自我禁用以及任何会删除租户最后一个活动管理员的更新。
+- 前端user/role管理面板必须镜像这些边界：没有`user:read`就不要加载`/users`，没有`role:read`就不要加载`/roles`或`/permissions`，不要提交没有`role:manage`的`roleIds`，没有`user:disable`的情况下不要公开状态操作，并在UI中禁用当前用户状态操作。
+- 创建的用户密码是暂时的UI输入。它们不得写入 localStorage、sessionStorage、IndexedDB、日志或在成功创建后渲染。
 
-Tenant and custom-role operations:
+租户和自定义角色操作：
 
-- Additional tenant creation is an operator CLI responsibility. Tenant HTTP APIs must never infer a platform-wide super-admin from a tenant admin session.
-- `GET /tenants/current` reads only the authenticated tenant.
-- `PATCH /tenants/current` updates only the authenticated tenant name and requires tenant admin access plus `system:settings:manage`.
-- Built-in `admin`, `seller`, and `viewer` roles are reserved. Tenant HTTP APIs must not mutate, disable, delete, or replace their grants.
-- Custom role create/update/delete and permission replacement require tenant admin access or `role:manage`.
-- Custom role object APIs must filter by `tenant_id`; cross-tenant IDs return the existing sanitized not-found shape.
-- Custom role deletion must fail while users still reference the role. Grant replacement and successful deletion are transactional and auditable.
+- 创建额外租户是运维人员CLI的责任。租户HTTP API 绝不能从租户管理会话推断出平台范围的超级管理员。
+- `GET /tenants/current` 仅读取经过身份验证的租户。
+- `PATCH /tenants/current`仅更新经过身份验证的租户名称，并需要租户管理员访问权限加上`system:settings:manage`。
+- 保留内置`admin`、`seller`和`viewer`角色。租户HTTP API 不得改变、禁用、删除或替换其授权。
+- 自定义角色create/update/delete和权限替换需要租户管理员访问权限或`role:manage`。
+- 自定义角色对象API必须按`tenant_id`过滤；跨租户 ID 返回现有的已脱敏未找到形状。
+- 当用户仍然引用角色时，自定义角色删除必须失败。补助金替换和成功删除是事务性的且可审计的。
 
-P20 status:
+P20状态：
 
-- Additional-tenant provisioning is implemented by the operator-only `backend/cmd/provision-tenant` CLI.
-- Current-tenant read/name update and custom-role CRUD/permission replacement are implemented in the backend.
-- The frontend tenant/custom-role administration UI is implemented. Tenant-name writes and custom-role writes stay same-origin and CSRF protected; built-in roles are rendered as read-only.
+- 额外租户配置仅由运维人员`backend/cmd/provision-tenant`CLI实施。
+- 当前租户read/name更新和自定义角色CRUD/permission替换在后端实现。
+- 前端tenant/custom-role管理UI已实施。租户名称写入和自定义角色写入保持同源并受到 CSRF 保护；内置角色呈现为只读。
 
-Project:
+项目：
 
 - `project:read`
 - `project:create`
@@ -94,7 +94,7 @@ Project:
 - `project:delete`
 - `project:member:manage`
 
-Asset:
+资产：
 
 - `asset:read`
 - `asset:upload`
@@ -102,93 +102,93 @@ Asset:
 - `asset:delete`
 - `asset:download`
 
-Task:
+任务：
 
 - `task:read`
 - `task:create`
 - `task:cancel`
 - `task:retry`
 
-Provider and model:
+Provider和型号：
 
 - `provider:read`
 - `provider:manage`
 - `model:read`
 - `model:manage`
 
-Audit and settings:
+审核和设置：
 
 - `usage:read`
 - `audit:read`
 - `system:settings:manage`
 
-## Object-level authorization
+## 对象级授权
 
-Every API that receives an object ID must verify:
+每个接收对象 ID 的API都必须验证：
 
-1. Object exists.
-2. Object belongs to the current tenant.
-3. User has permission through role, project membership, or ownership.
+1. 对象存在。
+2. 对象属于当前租户。
+3. 用户通过角色、项目成员身份或所有权获得权限。
 
-Returning `404` is preferred when revealing existence would leak cross-tenant data.
+当揭示存在会泄漏跨租户数据时，首选返回`404`。
 
-## Project membership
+## 项目成员资格
 
-Project members can have project-level roles such as:
+项目成员可以具有项目级别的角色，例如：
 
 - `OWNER`
 - `EDITOR`
 - `VIEWER`
 
-Project role checks should combine with tenant RBAC. For example, a user needs `task:create` and project editor access to submit a task in that project.
+项目角色检查应结合租户RBAC。例如，用户需要 `task:create` 和项目编辑器访问权限才能提交该项目中的任务。
 
-Project member writes require tenant admin access or the relevant tenant RBAC permission plus project `OWNER` access. No member write path may leave a project without an `OWNER`: deleting or downgrading the final `OWNER` must fail with a conflict, and owner transfer must happen by adding or promoting another `OWNER` first.
+项目成员写入需要租户管理员访问权限或相关租户RBAC权限加上项目`OWNER`访问权限。任何成员写入路径都不能离开没有 `OWNER` 的项目：删除或降级最终的 `OWNER` 必须因冲突而失败，并且必须首先通过添加或提升另一个 `OWNER` 来进行所有者转移。
 
-Current P5 project/asset role mapping:
+当前 P5 project/asset 角色映射：
 
-- Project create requires tenant RBAC `project:create`; the creator becomes project `OWNER`.
-- Project read accepts tenant admin access or `project:read` plus project membership.
-- Project update/delete require tenant admin access or the matching RBAC permission plus project `OWNER`.
-- Asset read/download accept tenant admin access or `asset:read`/`asset:download` plus project `OWNER`, `EDITOR`, or `VIEWER`.
-- Asset upload/update require tenant admin access or `asset:upload`/`asset:update` plus project `OWNER` or `EDITOR`.
-- Asset delete requires tenant admin access or `asset:delete` plus project `OWNER`.
-- Asset object APIs resolve `asset -> project` first, then apply tenant, RBAC, and project membership checks.
+- 项目创建需要租户RBAC`project:create`；创建者成为项目`OWNER`。
+- 项目读取接受租户管理员访问权限或`project:read`加上项目成员资格。
+- 项目update/delete需要租户管理员访问权限或匹配的RBAC权限加上项目`OWNER`。
+- 资产read/download接受租户管理员访问权限或`asset:read`/`asset:download`加上项目`OWNER`、`EDITOR`或`VIEWER`。
+- 资产upload/update需要租户管理员访问权限或`asset:upload`/`asset:update`加上项目`OWNER`或`EDITOR`。
+- 资产删除需要租户管理员访问权限或`asset:delete`加上项目`OWNER`。
+- 资产对象 API 首先解析 `asset -> project`，然后应用租户、RBAC 和项目成员资格检查。
 
-P6 Provider/model role mapping:
+P6 Provider/model角色映射：
 
-- Provider list/detail/create/update/delete/enable/disable/test are tenant-administrator-only. Custom `provider:*` grants do not turn an ordinary user into a Provider administrator.
-- Model create/update/delete/enable/disable are tenant-administrator-only. Custom `model:manage` does not grant non-admin CRUD access.
-- Non-admin model list/detail requires the model read capability plus an explicit `(tenant_id, user_id, model_id)` assignment. Unassigned models are excluded from lists and hidden by not-found detail responses.
-- `GET /users/{userId}/ai-access` and `PUT /users/{userId}/ai-access` are tenant-administrator-only and replace model assignments transactionally.
-- Assigning a model implicitly assigns use of its owning Provider; ordinary users do not manage or directly select a Provider independently.
-- The frontend must hide Provider/model management and assignment pages from ordinary users. Their only model interaction is selecting an assigned enabled model in generation parameters.
-- Provider/model/grant object APIs must still filter by `tenant_id`; role checks alone are never sufficient.
+- Provider list/detail/create/update/delete/enable/disable/test 仅限租户管理员。自定义 `provider:*` 授权不会将普通用户转变为 Provider 管理员。
+- 型号create/update/delete/enable/disable仅供租户管理员使用。自定义 `model:manage` 不授予非管理员 CRUD 访问权限。
+- 非管理模型list/detail需要模型读取功能加上显式的`(tenant_id, user_id, model_id)`分配。未分配的模型被排除在列表之外，并被未找到的详细响应隐藏。
+- `GET /users/{userId}/ai-access` 和 `PUT /users/{userId}/ai-access` 仅限租户管理员，并以事务方式替换模型分配。
+- 分配模型隐式分配其拥有的Provider的使用；普通用户不独立管理或直接选择Provider。
+- 前端必须对普通用户隐藏Provider/model管理和分配页面。他们唯一的模型交互是在生成参数中选择分配的启用模型。
+- Provider/model/grant 对象 API 仍必须按 `tenant_id` 进行过滤；仅靠角色检查是不够的。
 
-P7 task role mapping:
+P7任务角色映射：
 
-- Task create requires `task:create` plus project `OWNER` or `EDITOR`, unless tenant admin.
-- A non-admin task creator must also have an explicit grant for the selected model. The backend rechecks this before creating task state or enqueueing work.
-- Task list/detail requires `task:read` plus project visibility, unless tenant admin.
-- Task cancel requires `task:cancel` plus project `OWNER` or `EDITOR`, unless tenant admin.
-- Task retry requires `task:retry` plus project `OWNER` or `EDITOR`, unless tenant admin.
-- Task event SSE streams require the same visibility rules as task read. Event filtering must be applied per tenant and per project/task object, not only when the connection is opened.
-- Worker execution uses backend service authority only; it must not bypass tenant/project checks when reading task-related assets and metadata.
+- 任务创建需要`task:create`加上项目`OWNER`或`EDITOR`，除非租户管理员。
+- 非管理任务创建者还必须拥有所选模型的明确授权。后端在创建任务状态或将工作排队之前会重新检查这一点。
+- 任务list/detail需要`task:read`加上项目可见性，除非租户管理员。
+- 任务取消需要`task:cancel`加上项目`OWNER`或`EDITOR`，除非租户管理员。
+- 任务重试需要`task:retry`加上项目`OWNER`或`EDITOR`，除非租户管理员。
+- 任务事件SSE流需要与任务读取相同的可见性规则。事件过滤必须应用于每个租户和每个project/task对象，而不仅仅是在连接打开时。
+- Worker仅使用后端服务权限执行；在读取与任务相关的资产和元数据时，它不得绕过 tenant/project 检查。
 
-P9 audit/settings role mapping:
+P9 audit/settings角色映射：
 
-- Usage summary and usage-record reads require tenant admin access plus `usage:read`.
-- Operation-log and API-call-log list/detail reads require tenant admin access plus `audit:read`.
-- Cross-tenant log/detail probes must return no rows or `404` without existence disclosure.
-- System settings reads and writes must require tenant admin access plus `system:settings:manage`.
+- 使用摘要和使用记录读取需要租户管理员访问权限加上`usage:read`。
+- 操作日志和API-呼叫日志list/detail读取需要租户管理员访问权限加上`audit:read`。
+- 跨租户 log/detail 探针必须不返回任何行或 `404` 且不存在存在泄露。
+- 系统设置读取和写入必须需要租户管理员访问权限加上`system:settings:manage`。
 
-## Audit requirements
+## 审核要求
 
-Record operation logs for:
+记录操作日志：
 
-- Role and permission changes.
-- User creation, disable, and role assignment.
-- User safe-field update and enable.
-- Provider and model changes.
-- Project member changes.
-- Asset deletion and downloads when required by policy.
-- Task create, cancel, retry, failure, timeout, and terminal completion when required by policy.
+- 角色和权限更改。
+- 用户创建、禁用和角色分配。
+- 用户安全字段更新和启用。
+- Provider 和模型更改。
+- 项目成员变更。
+- 根据政策要求删除和下载资产。
+- 根据策略要求，任务创建、取消、重试、失败、超时和终端完成。
