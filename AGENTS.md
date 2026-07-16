@@ -9,6 +9,7 @@
 - 全局 Codex 说明仍然生效；本目录中更具体的项目规则在本仓库内优先级更高。
 - 编辑项目说明时，继续保持“主 `AGENTS.md` + `agent-instructions/` 专项文件”的结构。
 - 进行 worktree 任务规划、迁移任务或审查交接时，除领域专项规则外，还必须阅读 `agent-instructions/07-task-package-and-review-rules.md`。
+- 选择工具或 skill 时，必须阅读 `agent-instructions/08-tool-and-skill-rules.md`；本项目不依赖已删除或当前不可用的专项 skill。
 
 ## 项目决策
 
@@ -49,6 +50,7 @@ P0/P1 已完成，`frontend/`、`backend/`、`deploy/` 和 `docs/` 的目录划�
 | `agent-instructions/05-security-rules.md` | 认证、RBAC、上传、Provider 配置、日志 | Cookie、SSRF、API Key、上传、审计和日志的安全要求。 |
 | `agent-instructions/06-testing-and-delivery.md` | 验证、交付说明、PR 交接 | 分层风险验证、紧凑输出、简体中文 Git 提交信息和按改动类型划分的交付要求。 |
 | `agent-instructions/07-task-package-and-review-rules.md` | Worktree 任务规划、迁移任务、审查交接 | 必需的任务包章节、中间态规则、失败矩阵和回归测试映射。 |
+| `agent-instructions/08-tool-and-skill-rules.md` | 所有任务中的工具和 skill 选择 | 仅使用当前实际可用且适合任务的能力；专项 skill 缺失时直接使用项目内置流程，不得阻塞或提示安装。 |
 
 ## 相关规划文档
 
