@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/jpeg"
@@ -311,6 +312,7 @@ func (p *WorkerProcessor) persistSuccessfulResult(ctx context.Context, scope ten
 					"imageCount":    created.ImageCount,
 					"estimatedCost": created.EstimatedCost,
 					"currency":      created.Currency,
+					"costStatus":    created.CostStatus,
 				}, now)
 				if err != nil {
 					return err
@@ -450,25 +452,31 @@ func (p *WorkerProcessor) createUsageIfAbsent(ctx context.Context, tx *gorm.DB, 
 		return database.UsageRecord{}, nil
 	}
 	cost := usagecost.Estimate(modelRecord.PricingJSON, usagecost.Usage{
-		InputTokens:  nonNegativeInt64(usage.InputTokens),
-		OutputTokens: nonNegativeInt64(usage.OutputTokens),
-		ImageCount:   nonNegativeInt(usage.ImageCount),
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		ImageCount:   usage.ImageCount,
 	})
+	pricingSnapshot := strings.TrimSpace(modelRecord.PricingJSON)
+	if !json.Valid([]byte(pricingSnapshot)) {
+		pricingSnapshot = "{}"
+	}
 	record := database.UsageRecord{
-		ID:            idgen.New(),
-		TenantID:      scope.ID(),
-		TaskID:        taskRecord.ID,
-		UserID:        taskRecord.CreatedBy,
-		ProjectID:     taskRecord.ProjectID,
-		ProviderID:    taskRecord.ProviderID,
-		ModelID:       taskRecord.ModelID,
-		InputTokens:   nonNegativeInt64(usage.InputTokens),
-		OutputTokens:  nonNegativeInt64(usage.OutputTokens),
-		ImageCount:    nonNegativeInt(usage.ImageCount),
-		EstimatedCost: cost.EstimatedCost,
-		Currency:      cost.Currency,
-		RawUsageJSON:  provideradapter.JSONString(usage.Raw),
-		CreatedAt:     now,
+		ID:                  idgen.New(),
+		TenantID:            scope.ID(),
+		TaskID:              taskRecord.ID,
+		UserID:              taskRecord.CreatedBy,
+		ProjectID:           taskRecord.ProjectID,
+		ProviderID:          taskRecord.ProviderID,
+		ModelID:             taskRecord.ModelID,
+		InputTokens:         nonNegativeInt64(usage.InputTokens),
+		OutputTokens:        nonNegativeInt64(usage.OutputTokens),
+		ImageCount:          nonNegativeInt(usage.ImageCount),
+		EstimatedCost:       cost.EstimatedCost,
+		Currency:            cost.Currency,
+		CostStatus:          cost.Status,
+		PricingSnapshotJSON: pricingSnapshot,
+		RawUsageJSON:        provideradapter.JSONString(usage.Raw),
+		CreatedAt:           now,
 	}
 	if err := tx.WithContext(ctx).Create(&record).Error; err != nil {
 		return database.UsageRecord{}, err

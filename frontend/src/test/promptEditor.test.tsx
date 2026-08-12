@@ -4,12 +4,17 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PromptEditor } from '../components/studio/PromptEditor'
 import { db } from '../db/dexie'
+import type { ProjectId } from '../types/platform'
 import type { WorkbenchImageType } from '../types/workbench'
 
-function PromptEditorHarness({ imageType = 'MAIN' }: { imageType?: WorkbenchImageType }) {
+function PromptEditorHarness({ imageType = 'MAIN', projectId, variant = 'default' }: {
+  imageType?: WorkbenchImageType
+  projectId?: string
+  variant?: 'default' | 'compact'
+}) {
   const [prompt, setPrompt] = useState('')
 
-  return <PromptEditor imageType={imageType} onChange={setPrompt} onError={vi.fn()} value={prompt} />
+  return <PromptEditor imageType={imageType} onChange={setPrompt} onError={vi.fn()} projectId={projectId as ProjectId | undefined} value={prompt} variant={variant} />
 }
 
 describe('PromptEditor', () => {
@@ -98,6 +103,22 @@ describe('PromptEditor', () => {
 
     expect(await screen.findByRole('button', { name: /填入模板 Bright kitchen scene/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /填入模板 Living room scene/ })).not.toBeInTheDocument()
+  })
+
+  it('shows product templates and saves the current prompt in the compact canvas editor', async () => {
+    const user = userEvent.setup()
+    render(<PromptEditorHarness projectId="project_1" variant="compact" />)
+
+    expect(screen.getByTestId('compact-prompt-recommendations')).toBeInTheDocument()
+    expect(screen.getByText('合规纯白主图')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '推荐提示词' })).not.toBeInTheDocument()
+
+    const textarea = screen.getByLabelText('提示词')
+    await user.type(textarea, '当前产品专用的场景提示词')
+    await user.click(screen.getByRole('button', { name: '保存到主图模板' }))
+
+    expect(await screen.findByRole('button', { name: /填入模板 当前产品专用的场景提示词/ })).toBeInTheDocument()
+    expect(screen.getByText('仅当前产品')).toBeInTheDocument()
   })
 
   it('opens a centered large editor from inside the textarea and synchronizes changes immediately', async () => {

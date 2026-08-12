@@ -39,6 +39,7 @@ describe('prompt template database migration', () => {
     await expect(migratedDatabase.promptTemplates.get('tpl_legacy')).resolves.toMatchObject({
       id: 'tpl_legacy',
       imageType: 'MAIN',
+      projectId: '__legacy__',
       prompt: '保留这个旧模板',
     })
     migratedDatabase.close()

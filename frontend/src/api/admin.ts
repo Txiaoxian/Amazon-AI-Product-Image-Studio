@@ -12,9 +12,27 @@ import type {
   UsageSummaryQuery,
   AdminUsageQuery,
 } from '../types/admin'
+import type {
+  AnalyticsDataset,
+  AnalyticsExport,
+  AnalyticsOverviewResponse,
+  AnalyticsQuery,
+  AnalyticsRequestsResponse,
+  AnalyticsTaskPage,
+  AnalyticsUsageResponse,
+  AnalyticsUserDetailResponse,
+  AnalyticsUserPage,
+} from '../types/analytics'
 import { apiClient, csrfHeaders, type ApiClient } from './client'
 
 export interface AdminApi {
+  getAnalyticsOverview(params?: AnalyticsQuery): Promise<AnalyticsOverviewResponse>
+  getAnalyticsUsage(params?: AnalyticsQuery): Promise<AnalyticsUsageResponse>
+  getAnalyticsUsers(params?: AnalyticsQuery): Promise<AnalyticsUserPage>
+  getAnalyticsUser(id: string, params?: AnalyticsQuery): Promise<AnalyticsUserDetailResponse>
+  getAnalyticsTasks(params?: AnalyticsQuery): Promise<AnalyticsTaskPage>
+  getAnalyticsRequests(params?: AnalyticsQuery): Promise<AnalyticsRequestsResponse>
+  exportAnalytics(dataset: AnalyticsDataset, params?: AnalyticsQuery): Promise<AnalyticsExport>
   getUsageSummary(params?: UsageSummaryQuery): Promise<UsageSummaryPage>
   listUsageRecords(params?: AdminUsageQuery): Promise<UsageRecordPage>
   listOperationLogs(params?: OperationLogQuery): Promise<OperationLogPage>
@@ -26,6 +44,27 @@ export interface AdminApi {
 
 export function createAdminApi(client: ApiClient = apiClient): AdminApi {
   return {
+    getAnalyticsOverview: (params = {}) =>
+      client.get<AnalyticsOverviewResponse>('/admin/analytics/overview', { query: analyticsQuery(params) }),
+    getAnalyticsUsage: (params = {}) =>
+      client.get<AnalyticsUsageResponse>('/admin/analytics/usage', { query: analyticsQuery(params) }),
+    getAnalyticsUsers: (params = {}) =>
+      client.get<AnalyticsUserPage>('/admin/analytics/users', { query: analyticsQuery(params) }),
+    getAnalyticsUser: (id, params = {}) =>
+      client.get<AnalyticsUserDetailResponse>(`/admin/analytics/users/${encodeURIComponent(id)}`, {
+        query: analyticsQuery(params),
+      }),
+    getAnalyticsTasks: (params = {}) =>
+      client.get<AnalyticsTaskPage>('/admin/analytics/tasks', { query: analyticsQuery(params) }),
+    getAnalyticsRequests: (params = {}) =>
+      client.get<AnalyticsRequestsResponse>('/admin/analytics/requests', { query: analyticsQuery(params) }),
+    exportAnalytics: async (dataset, params = {}) => {
+      const response = await client.raw(`/admin/analytics/exports/${dataset}`, { query: analyticsQuery(params) })
+      return {
+        blob: await response.blob(),
+        filename: exportFilename(response.headers.get('Content-Disposition'), dataset),
+      }
+    },
     getUsageSummary: (params = {}) =>
       client.get<UsageSummaryPage>('/admin/usage/summary', {
         query: usageSummaryQuery(params),
@@ -49,6 +88,43 @@ export function createAdminApi(client: ApiClient = apiClient): AdminApi {
         headers: csrfHeaders(csrfToken),
       }),
   }
+}
+
+function analyticsQuery(params: AnalyticsQuery): QueryParamRecord {
+  return {
+    from: params.from,
+    to: params.to,
+    granularity: params.granularity,
+    compare: params.compare,
+    userId: params.userId,
+    projectId: params.projectId,
+    providerId: params.providerId,
+    modelId: params.modelId,
+    status: params.status,
+    imageType: params.imageType,
+    groupBy: params.groupBy,
+    search: params.search,
+    pageNum: params.pageNum,
+    pageSize: params.pageSize,
+  }
+}
+
+function exportFilename(contentDisposition: string | null, dataset: AnalyticsDataset): string {
+  const encoded = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      // 文件名解析失败时使用稳定的中文兜底名称。
+    }
+  }
+  const labels: Record<AnalyticsDataset, string> = {
+    usage: '用量与费用.csv',
+    users: '用户与活跃.csv',
+    tasks: '生图任务.csv',
+    requests: '模型调用.csv',
+  }
+  return labels[dataset]
 }
 
 function pageQuery(params: UsageSummaryQuery | AdminUsageQuery | OperationLogQuery | ApiCallLogQuery): QueryParamRecord {
@@ -93,6 +169,7 @@ function operationLogQuery(params: OperationLogQuery): QueryParamRecord {
 function apiCallLogQuery(params: ApiCallLogQuery): QueryParamRecord {
   return {
     ...usageQuery(params),
+    imageType: params.imageType,
     status: params.status,
     requestId: params.requestId,
   }

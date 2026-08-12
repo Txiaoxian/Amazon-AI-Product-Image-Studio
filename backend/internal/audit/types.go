@@ -70,6 +70,7 @@ type APICallLogListOptions struct {
 	ProjectID  string
 	ProviderID string
 	ModelID    string
+	ImageType  string
 	Status     string
 	RequestID  string
 }
@@ -126,6 +127,7 @@ type UsageRecordResponse struct {
 	ImageCount    int    `json:"imageCount"`
 	EstimatedCost string `json:"estimatedCost"`
 	Currency      string `json:"currency"`
+	CostStatus    string `json:"costStatus"`
 	RawUsage      any    `json:"rawUsage"`
 	CreatedAt     string `json:"createdAt"`
 }
@@ -146,6 +148,8 @@ type OperationLogResponse struct {
 	ID           string  `json:"id"`
 	TenantID     string  `json:"tenantId"`
 	ActorUserID  *string `json:"actorUserId"`
+	ActorName    string  `json:"actorName"`
+	ActorEmail   string  `json:"actorEmail"`
 	Action       string  `json:"action"`
 	ResourceType string  `json:"resourceType"`
 	ResourceID   string  `json:"resourceId"`
@@ -155,12 +159,29 @@ type OperationLogResponse struct {
 	CreatedAt    string  `json:"createdAt"`
 }
 
+type OperationLogRecord struct {
+	ID           string
+	TenantID     string
+	ActorUserID  *string
+	ActorName    string
+	ActorEmail   string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	IP           string
+	UserAgent    string
+	MetadataJSON string
+	CreatedAt    time.Time
+}
+
 type APICallLogResponse struct {
 	ID               string `json:"id"`
 	TenantID         string `json:"tenantId"`
 	TaskID           string `json:"taskId"`
 	ProviderID       string `json:"providerId"`
+	ProviderName     string `json:"providerName"`
 	ModelID          string `json:"modelId"`
+	ModelName        string `json:"modelName"`
 	Status           string `json:"status"`
 	DurationMs       int64  `json:"durationMs"`
 	RequestID        string `json:"requestId"`
@@ -170,6 +191,12 @@ type APICallLogResponse struct {
 	RedactedRequest  any    `json:"redactedRequest"`
 	RedactedResponse any    `json:"redactedResponse"`
 	CreatedAt        string `json:"createdAt"`
+}
+
+type APICallLogRecord struct {
+	database.APICallLog `gorm:"embedded"`
+	ProviderName        string
+	ModelName           string
 }
 
 func UsageRecordResponseFromRecord(record database.UsageRecord, redactor *redaction.Redactor) UsageRecordResponse {
@@ -187,6 +214,7 @@ func UsageRecordResponseFromRecord(record database.UsageRecord, redactor *redact
 		ImageCount:    record.ImageCount,
 		EstimatedCost: record.EstimatedCost,
 		Currency:      record.Currency,
+		CostStatus:    record.CostStatus,
 		RawUsage:      redactJSONPayload(record.RawUsageJSON, redactor),
 		CreatedAt:     formatTime(record.CreatedAt),
 	}
@@ -206,12 +234,14 @@ func UsageSummaryResponseFromRow(dimension string, row UsageSummaryRow) UsageSum
 	}
 }
 
-func OperationLogResponseFromRecord(record database.OperationLog, redactor *redaction.Redactor) OperationLogResponse {
+func OperationLogResponseFromRecord(record OperationLogRecord, redactor *redaction.Redactor) OperationLogResponse {
 	redactor = ensureRedactor(redactor)
 	return OperationLogResponse{
 		ID:           record.ID,
 		TenantID:     record.TenantID,
 		ActorUserID:  record.ActorUserID,
+		ActorName:    record.ActorName,
+		ActorEmail:   record.ActorEmail,
 		Action:       record.Action,
 		ResourceType: record.ResourceType,
 		ResourceID:   record.ResourceID,
@@ -222,7 +252,7 @@ func OperationLogResponseFromRecord(record database.OperationLog, redactor *reda
 	}
 }
 
-func APICallLogResponseFromRecord(record database.APICallLog, redactor *redaction.Redactor) APICallLogResponse {
+func APICallLogResponseFromRecord(record APICallLogRecord, redactor *redaction.Redactor) APICallLogResponse {
 	redactor = ensureRedactor(redactor)
 	errorMessage := ""
 	if strings.TrimSpace(record.ErrorMessage) != "" {
@@ -233,7 +263,9 @@ func APICallLogResponseFromRecord(record database.APICallLog, redactor *redactio
 		TenantID:         record.TenantID,
 		TaskID:           record.TaskID,
 		ProviderID:       record.ProviderID,
+		ProviderName:     record.ProviderName,
 		ModelID:          record.ModelID,
+		ModelName:        record.ModelName,
 		Status:           record.Status,
 		DurationMs:       record.DurationMs,
 		RequestID:        redactor.RedactString(record.RequestID),

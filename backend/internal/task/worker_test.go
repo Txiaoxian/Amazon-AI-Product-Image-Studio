@@ -29,6 +29,7 @@ import (
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/queue"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/storage"
 	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/tenant"
+	"github.com/Txiaoxian/Amazon-AI-Product-Image-Studio/backend/internal/usagecost"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -270,6 +271,10 @@ func TestWorkerProcessorDuplicateClaimAfterCompletionDoesNotDuplicateTerminalEve
 func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *testing.T) {
 	db := newWorkerTestDB(t)
 	seedWorkerBase(t, db)
+	pricingJSON := `{"currency":"USD","unitPrices":{"inputToken":0.01,"outputToken":0.02,"image":0.25}}`
+	if err := db.Model(&database.AIModel{}).Where("tenant_id = ? AND id = ?", "tenant-worker", "model-worker").Update("pricing_json", pricingJSON).Error; err != nil {
+		t.Fatalf("update model pricing: %v", err)
+	}
 	taskID := seedWorkerTask(t, db, workerTaskSeed{ID: "task-provider-success", Status: StatusQueued})
 	store := newMemoryObjectStore()
 	pngBytes := workerTinyPNG(t)
@@ -327,6 +332,16 @@ func TestWorkerProcessorPersistsProviderOutputsUsageAndAPICallIdempotently(t *te
 	assertTableCount(t, db, &database.TaskOutput{}, 1)
 	assertTableCount(t, db, &database.UsageRecord{}, 1)
 	assertTableCount(t, db, &database.APICallLog{}, 1)
+	var usage database.UsageRecord
+	if err := db.Where("tenant_id = ? AND task_id = ?", "tenant-worker", taskID).First(&usage).Error; err != nil {
+		t.Fatalf("load calculated usage record: %v", err)
+	}
+	if usage.CostStatus != usagecost.StatusCalculated || usage.EstimatedCost != "0.44000000" {
+		t.Fatalf("calculated usage cost = %q/%q, want CALCULATED/0.44000000", usage.CostStatus, usage.EstimatedCost)
+	}
+	if usage.PricingSnapshotJSON != pricingJSON {
+		t.Fatalf("pricing snapshot = %q, want %q", usage.PricingSnapshotJSON, pricingJSON)
+	}
 	if len(store.objects["generated-assets"]) != 1 {
 		t.Fatalf("generated objects = %#v, want one object in generated bucket", store.objects)
 	}
@@ -611,6 +626,12 @@ func TestWorkerProcessorPersistsZeroCostForIncompletePricingWithoutFailingTask(t
 	}
 	if usage.EstimatedCost != "0.00000000" {
 		t.Fatalf("usage estimated cost = %q, want 0.00000000", usage.EstimatedCost)
+	}
+	if usage.CostStatus != usagecost.StatusUnavailable {
+		t.Fatalf("usage cost status = %q, want %q", usage.CostStatus, usagecost.StatusUnavailable)
+	}
+	if usage.PricingSnapshotJSON != `{"currency":"gbp","unitPrices":{"inputToken":0.01}}` {
+		t.Fatalf("usage pricing snapshot = %q", usage.PricingSnapshotJSON)
 	}
 	assertWorkerEvents(t, db, taskID, []string{EventTaskStarted, EventTaskProgress, EventUsageRecorded, EventTaskCompleted})
 }
@@ -3162,6 +3183,8 @@ func newWorkerTestDB(t *testing.T) *gorm.DB {
 		image_count INTEGER NOT NULL,
 		estimated_cost TEXT NOT NULL,
 		currency TEXT NOT NULL,
+		cost_status TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+		pricing_snapshot_json TEXT NULL,
 		raw_usage_json TEXT NULL,
 		created_at TIMESTAMP NOT NULL
 	)`,

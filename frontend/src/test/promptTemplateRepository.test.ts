@@ -3,6 +3,7 @@ import { db } from '../db/dexie'
 import {
   deletePromptTemplate,
   listPromptTemplates,
+  listPromptTemplatesForProject,
   savePromptTemplate,
   updatePromptTemplate,
 } from '../db/promptTemplateRepository'
@@ -34,5 +35,30 @@ describe('prompt template repository', () => {
       title: 'A+ 模板',
       prompt: '原始内容',
     })
+  })
+
+  it('keeps templates isolated by product while allowing CRUD in the owning product', async () => {
+    const firstProductTemplate = await savePromptTemplate('project_1', 'MAIN', '产品一模板', '产品一提示词')
+    await savePromptTemplate('project_2', 'MAIN', '产品二模板', '产品二提示词')
+
+    await expect(listPromptTemplatesForProject('project_1')).resolves.toMatchObject([
+      { projectId: 'project_1', title: '产品一模板', prompt: '产品一提示词' },
+    ])
+    await expect(listPromptTemplatesForProject('project_2')).resolves.toMatchObject([
+      { projectId: 'project_2', title: '产品二模板', prompt: '产品二提示词' },
+    ])
+
+    await expect(updatePromptTemplate(firstProductTemplate.id, 'project_2', 'MAIN', '越权修改', '越权内容')).rejects.toThrow(
+      '当前图片类型下未找到该提示词模板。',
+    )
+    await deletePromptTemplate(firstProductTemplate.id, 'project_2', 'MAIN')
+    await expect(db.promptTemplates.get(firstProductTemplate.id)).resolves.toMatchObject({
+      projectId: 'project_1',
+      title: '产品一模板',
+    })
+
+    await updatePromptTemplate(firstProductTemplate.id, 'project_1', 'MAIN', '已修改模板', '已修改提示词')
+    await deletePromptTemplate(firstProductTemplate.id, 'project_1', 'MAIN')
+    await expect(listPromptTemplatesForProject('project_1')).resolves.toEqual([])
   })
 })

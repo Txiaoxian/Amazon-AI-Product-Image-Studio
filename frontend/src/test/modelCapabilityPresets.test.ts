@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   MODEL_CAPABILITY_TEMPLATES,
+  labelForQualityPreset,
   modelParameterPresetsForProvider,
   parameterLabelsForCapabilities,
 } from '../lib/modelCapabilityPresets'
 
 describe('model capability presets', () => {
-  it('uses official OpenAI quality semantics and the configured aspect-ratio order', () => {
-    const openAI = modelParameterPresetsForProvider('OPENAI_COMPATIBLE')
+  it('uses GPT Image 2 resolution tiers and the configured aspect-ratio order', () => {
+    const openAI = modelParameterPresetsForProvider('OPENAI_COMPATIBLE', 'gpt-image-2')
     const gemini = modelParameterPresetsForProvider('GEMINI')
 
     expect(openAI.sizeLabel).toBe('图片比例')
@@ -28,10 +29,12 @@ describe('model capability presets', () => {
     expect(openAI.qualityLabel).toBe('生成质量')
     expect(openAI.qualityPresets.map(({ value, label }) => ({ value, label }))).toEqual([
       { value: 'auto', label: '自动' },
-      { value: 'low', label: '低质量' },
-      { value: 'medium', label: '中等质量' },
-      { value: 'high', label: '高质量' },
+      { value: 'low', label: '低质量（1K）' },
+      { value: 'medium', label: '中等质量（2K）' },
+      { value: 'high', label: '高质量（4K）' },
     ])
+    expect(labelForQualityPreset('high', { modelName: 'gpt-image-2-2026-04-21' })).toBe('高质量（4K）')
+    expect(labelForQualityPreset('high', { modelName: 'gpt-image-1' })).toBe('高质量')
 
     expect(gemini.sizeLabel).toBe('画面比例')
     expect(gemini.sizePresets.map((preset) => preset.value)).toEqual(

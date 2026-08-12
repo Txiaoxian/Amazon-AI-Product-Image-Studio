@@ -167,8 +167,35 @@ export function AuthProvider({ authApi = defaultAuthApi, children }: AuthProvide
 
 function getAuthErrorMessage(error: unknown, fallback: string): string {
   if (isApiClientError(error)) {
-    return error.message
+    return AUTH_ERROR_MESSAGES[error.code] ?? translateAuthErrorMessage(error.message) ?? fallback
   }
 
   return fallback
+}
+
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  AUTHENTICATION_REQUIRED: '登录状态已失效，请重新登录。',
+  FORBIDDEN: '当前账号没有执行此操作的权限。',
+  INTERNAL_ERROR: '登录服务暂时不可用，请稍后重试。',
+  INVALID_CREDENTIALS: '邮箱或密码不正确。',
+  RATE_LIMITED: '登录尝试次数过多，请稍后再试。',
+  VALIDATION_ERROR: '登录信息不完整，请检查后重试。',
+}
+
+function translateAuthErrorMessage(message: string): string | null {
+  const normalizedMessage = message.trim().toLowerCase()
+
+  if (normalizedMessage === 'too many login attempts. try again later.') {
+    return '登录尝试次数过多，请稍后再试。'
+  }
+
+  if (normalizedMessage === 'invalid email or password.') {
+    return '邮箱或密码不正确。'
+  }
+
+  if (normalizedMessage === 'authentication is required.') {
+    return '登录状态已失效，请重新登录。'
+  }
+
+  return /[\u4e00-\u9fff]/.test(message) ? message : null
 }

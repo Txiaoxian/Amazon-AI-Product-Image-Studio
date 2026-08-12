@@ -254,7 +254,7 @@ func TestOpenAICompatibleEditUsesImageArrayMultipartField(t *testing.T) {
 		if request.FormValue("model") != "gpt-image-2" || request.FormValue("prompt") != "preserve the referenced product" {
 			t.Fatalf("unexpected edit form values: %#v", request.MultipartForm.Value)
 		}
-		if request.FormValue("size") != "1296x800" || request.FormValue("quality") != "high" || request.FormValue("output_format") != "png" {
+		if request.FormValue("size") != "3645x2250" || request.FormValue("quality") != "high" || request.FormValue("output_format") != "png" {
 			t.Fatalf("unexpected image parameters: %#v", request.MultipartForm.Value)
 		}
 		if request.FormValue("response_format") != "b64_json" {
@@ -282,30 +282,52 @@ func TestOpenAICompatibleEditUsesImageArrayMultipartField(t *testing.T) {
 	}
 }
 
-func TestOpenAIGPTImage2MapsSupportedAspectRatiosToOfficialPixelSizes(t *testing.T) {
-	want := map[string]string{
-		"auto":   "auto",
-		"1:1":    "1024x1024",
-		"1.62:1": "1296x800",
-		"2:3":    "1024x1536",
-		"3:2":    "1536x1024",
-		"3:4":    "1152x1536",
-		"4:3":    "1536x1152",
-		"4:5":    "1024x1280",
-		"5:4":    "1280x1024",
-		"9:16":   "864x1536",
-		"16:9":   "1536x864",
-		"21:9":   "1792x768",
+func TestOpenAIGPTImage2MapsAspectRatiosAndQualitiesToResolutionTiers(t *testing.T) {
+	expectedSizes := map[string]map[string]string{
+		"auto": {
+			"1:1": "1024x1024", "1.62:1": "1296x800", "2:3": "1024x1536", "3:2": "1536x1024",
+			"3:4": "1152x1536", "4:3": "1536x1152", "4:5": "1024x1280", "5:4": "1280x1024",
+			"9:16": "864x1536", "16:9": "1536x864", "21:9": "1792x768",
+		},
+		"low": {
+			"1:1": "1024x1024", "1.62:1": "1296x800", "2:3": "1024x1536", "3:2": "1536x1024",
+			"3:4": "1152x1536", "4:3": "1536x1152", "4:5": "1024x1280", "5:4": "1280x1024",
+			"9:16": "864x1536", "16:9": "1536x864", "21:9": "1792x768",
+		},
+		"medium": {
+			"1:1": "2048x2048", "1.62:1": "2592x1600", "2:3": "2048x3072", "3:2": "3072x2048",
+			"3:4": "2304x3072", "4:3": "3072x2304", "4:5": "2048x2560", "5:4": "2560x2048",
+			"9:16": "1728x3072", "16:9": "3072x1728", "21:9": "3584x1536",
+		},
+		"high": {
+			"1:1": "2880x2880", "1.62:1": "3645x2250", "2:3": "2350x3525", "3:2": "3525x2350",
+			"3:4": "2493x3324", "4:3": "3324x2493", "4:5": "2572x3215", "5:4": "3215x2572",
+			"9:16": "2160x3840", "16:9": "3840x2160", "21:9": "3836x1644",
+		},
 	}
 
-	for ratio, expectedSize := range want {
-		t.Run(ratio, func(t *testing.T) {
-			payload := openAIJSONPayload(ImageRequest{
+	for quality, sizes := range expectedSizes {
+		for ratio, expectedSize := range sizes {
+			t.Run(quality+"/"+ratio, func(t *testing.T) {
+				payload := openAIJSONPayload(ImageRequest{
+					Model:      ModelConfig{ModelName: "gpt-image-2"},
+					Parameters: map[string]any{"size": ratio, "quality": quality},
+				}, false)
+				if payload["size"] != expectedSize || payload["quality"] != quality {
+					t.Fatalf("payload = %#v, want size %s and unchanged quality", payload, expectedSize)
+				}
+			})
+		}
+	}
+
+	for _, quality := range []string{"auto", "low", "medium", "high"} {
+		t.Run(quality+"/auto-ratio", func(t *testing.T) {
+			got := openAIImageSize(ImageRequest{
 				Model:      ModelConfig{ModelName: "gpt-image-2"},
-				Parameters: map[string]any{"size": ratio, "quality": "medium"},
-			}, false)
-			if payload["size"] != expectedSize || payload["quality"] != "medium" {
-				t.Fatalf("payload = %#v, want size %s and unchanged quality", payload, expectedSize)
+				Parameters: map[string]any{"size": "auto", "quality": quality},
+			})
+			if got != "auto" {
+				t.Fatalf("openAIImageSize() = %q, want auto", got)
 			}
 		})
 	}
@@ -316,18 +338,20 @@ func TestOpenAIImageSizeLimitsMappingToGPTImage2Ratios(t *testing.T) {
 		name      string
 		modelName string
 		size      string
+		quality   string
 		want      string
 	}{
 		{name: "other model ratio passes through", modelName: "custom-image-model", size: "4:5", want: "4:5"},
-		{name: "legacy pixel size passes through", modelName: "gpt-image-2", size: "1024x1536", want: "1024x1536"},
+		{name: "legacy pixel size passes through", modelName: "gpt-image-2", size: "1024x1536", quality: "high", want: "1024x1536"},
 		{name: "dated snapshot ratio is mapped", modelName: "gpt-image-2-2026-07-01", size: "16:9", want: "1536x864"},
+		{name: "dated snapshot high quality uses 4k tier", modelName: "gpt-image-2-2026-07-01", size: "16:9", quality: "high", want: "3840x2160"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := openAIImageSize(ImageRequest{
 				Model:      ModelConfig{ModelName: test.modelName},
-				Parameters: map[string]any{"size": test.size},
+				Parameters: map[string]any{"size": test.size, "quality": test.quality},
 			})
 			if got != test.want {
 				t.Fatalf("openAIImageSize() = %q, want %q", got, test.want)

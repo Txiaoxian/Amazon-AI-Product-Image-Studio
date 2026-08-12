@@ -1,28 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Settings, UserCog } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AuthStatus } from './components/auth/AuthStatus'
 import { LoginPanel } from './components/auth/LoginPanel'
-import { AdminObservabilitySettingsPanel } from './components/admin/AdminObservabilitySettingsPanel'
-import { ProviderModelAdminPanel } from './components/admin/ProviderModelAdminPanel'
-import { UserRoleAdminPanel } from './components/admin/UserRoleAdminPanel'
 import { AppShell } from './components/layout/AppShell'
+import { WorkspaceShell } from './components/layout/WorkspaceShell'
 import { HistoryPanel } from './components/history/HistoryPanel'
 import { ImageDetailModal, type ImageDetail } from './components/modals/ImageDetailModal'
 import { AssetDetailModal } from './components/projects/AssetDetailModal'
 import { ProjectAssetsPanel } from './components/projects/ProjectAssetsPanel'
 import { ProjectManagementModal } from './components/projects/ProjectManagementModal'
-import { ProjectTabs } from './components/projects/ProjectTabs'
-import { ManagementMenu, type ManagementMenuItem } from './components/layout/ManagementMenu'
 import { BackendControlPanel, type BackendControlPanelDraft } from './components/studio/BackendControlPanel'
-import { ResultCanvas } from './components/studio/ResultCanvas'
-import { GenerationHistoryRail, TaskNotifications } from './components/tasks/TaskCenter'
-import { Modal } from './components/ui/Modal'
-import {
-  ImageTypeTabs,
-  type ImageTypeActivity,
-  ModelSetupBanner,
-  WorkspaceOnboarding,
-} from './components/studio/WorkbenchNavigation'
+import { CanvasStudioLayout } from './components/studio/CanvasStudioLayout'
+import { ResultCanvas, type CompareItemRef } from './components/studio/ResultCanvas'
+import { TemplateLibraryPage } from './components/templates/TemplateLibraryPage'
+import { TaskCenter, TaskNotifications } from './components/tasks/TaskCenter'
+import { ContextDrawer } from './components/ui/ContextDrawer'
+import { type ImageTypeActivity, WorkspaceOnboarding } from './components/studio/WorkbenchNavigation'
 import { useWorkbenchModels } from './components/studio/useWorkbenchModels'
 import { AuthProvider } from './hooks/AuthProvider'
 import { useAuth } from './hooks/useAuth'
@@ -32,9 +24,11 @@ import { useProjectAssets } from './hooks/useProjectAssets'
 import { downloadBlob } from './lib/download'
 import type { AuthSession } from './types/auth'
 import type { BackendHistoryItem } from './types/history'
+import { normalizeWorkspacePathname, primaryRouteFromPathname } from './types/navigation'
 import type { Asset, Project, ProjectMemberRole, TaskId, UserId } from './types/platform'
 import {
   DEFAULT_WORKBENCH_IMAGE_TYPE,
+  WORKBENCH_IMAGE_TYPE_OPTIONS,
   normalizeWorkbenchImageType,
   type AssetReferenceInput,
   type WorkbenchImageType,
@@ -42,6 +36,8 @@ import {
   type WorkbenchTaskInput,
   type WorkbenchTaskSubmission,
 } from './types/workbench'
+
+const AdminConsole = lazy(() => import('./components/admin/console/AdminConsole').then((module) => ({ default: module.AdminConsole })))
 
 function App() {
   return (
@@ -53,6 +49,19 @@ function App() {
 
 function AppContent() {
   const auth = useAuth()
+  const [pathname, setPathname] = useState(() => window.location.pathname)
+
+  useEffect(() => {
+    const handlePopState = () => setPathname(window.location.pathname)
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const navigate = useCallback((nextPathname: string) => {
+    if (window.location.pathname === nextPathname && !window.location.search) return
+    window.history.pushState({}, '', nextPathname)
+    setPathname(nextPathname)
+  }, [])
 
   if (auth.status === 'loading') {
     return (
@@ -72,11 +81,26 @@ function AppContent() {
     )
   }
 
+  if (pathname.startsWith('/admin')) {
+    return (
+      <Suspense fallback={<div aria-busy="true" className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-600" role="status">正在加载管理控制台...</div>}>
+        <AdminConsole
+          isAuthSubmitting={auth.isSubmitting}
+          onWorkspaceNavigate={navigate}
+          onLogout={auth.logout}
+          session={auth.session}
+        />
+      </Suspense>
+    )
+  }
+
   return (
     <StudioWorkbench
       authError={auth.error}
       isAuthSubmitting={auth.isSubmitting}
       onLogout={auth.logout}
+      onNavigate={navigate}
+      pathname={normalizeWorkspacePathname(pathname)}
       session={auth.session}
     />
   )
@@ -87,9 +111,11 @@ interface StudioWorkbenchProps {
   isAuthSubmitting: boolean
   session: AuthSession
   onLogout: () => Promise<void>
+  onNavigate: (pathname: string) => void
+  pathname: string
 }
 
-function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: StudioWorkbenchProps) {
+function StudioWorkbench({ authError, isAuthSubmitting, onLogout, onNavigate, pathname, session }: StudioWorkbenchProps) {
   const projectAssets = useProjectAssets({ csrfToken: session.csrfToken })
   const { refreshProjectMemberCandidates, refreshProjectMembers } = projectAssets
   const workbenchModels = useWorkbenchModels()
@@ -126,9 +152,6 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
     return activity
   }, [generation.tasks, projectAssets.selectedProjectId])
-  const [isAdminOpen, setAdminOpen] = useState(false)
-  const [isObservabilityAdminOpen, setObservabilityAdminOpen] = useState(false)
-  const [isIdentityAdminOpen, setIdentityAdminOpen] = useState(false)
   const [isDetailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<ImageDetail | null>(null)
   const [detailError, setDetailError] = useState('')
@@ -139,8 +162,10 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({})
   const [referenceToAdd, setReferenceToAdd] = useState<WorkbenchReferenceInput | null>(null)
   const [isWorkspaceLibraryOpen, setWorkspaceLibraryOpen] = useState(false)
-  const [isProjectManagementOpen, setProjectManagementOpen] = useState(false)
+  const [isTaskCenterOpen, setTaskCenterOpen] = useState(false)
   const [projectToManage, setProjectToManage] = useState<Project | null>(null)
+  const [shouldOpenProjectEditor, setShouldOpenProjectEditor] = useState(false)
+  const [comparisonSourceByTaskId, setComparisonSourceByTaskId] = useState<Record<string, AssetReferenceInput>>({})
   const [pendingEditSourceAssetId, setPendingEditSourceAssetId] = useState<Asset['id'] | null>(null)
   const [editSourceReference, setEditSourceReference] = useState<AssetReferenceInput | null>(null)
   const selectedProjectIdRef = useRef(projectAssets.selectedProjectId)
@@ -200,57 +225,59 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   const tenantAdmin = isTenantAdmin(session)
   const canManageProviders = tenantAdmin && hasPermission(session, 'provider:manage')
   const canManageModels = tenantAdmin && hasPermission(session, 'model:manage')
+  const canReadProviders = tenantAdmin && hasPermission(session, 'provider:read')
+  const canReadModels = tenantAdmin && hasPermission(session, 'model:read')
   const canReadUsage = hasPermission(session, 'usage:read')
+  const canReadUsers = hasPermission(session, 'user:read')
   const canReadAudit = hasPermission(session, 'audit:read')
   const canManageSystemSettings = hasPermission(session, 'system:settings:manage')
-  const canReadUsers = hasPermission(session, 'user:read')
-  const canCreateUsers = hasPermission(session, 'user:create')
-  const canUpdateUsers = hasPermission(session, 'user:update')
-  const canDisableUsers = hasPermission(session, 'user:disable')
-  const canReadRoles = hasPermission(session, 'role:read')
-  const canManageRoles = hasPermission(session, 'role:manage')
-  const canManageTenant = tenantAdmin && canManageSystemSettings
   const canManageProjectMembers = hasPermission(session, 'project:member:manage')
   const canCreateProject = hasPermission(session, 'project:create')
   const canDeleteProject = hasPermission(session, 'project:delete')
   const canOpenAdmin = canManageProviders || canManageModels
-  const canOpenObservabilityAdmin = canReadUsage || canReadAudit || canManageSystemSettings
-  const canOpenIdentityAdmin = canReadUsers || canCreateUsers || canUpdateUsers || canDisableUsers || canReadRoles || canManageRoles || canManageTenant
+  const canViewAnalytics = tenantAdmin && (canReadUsage || canReadUsers || canReadAudit)
+  const canViewSettings = tenantAdmin && (
+    canManageProviders || canManageModels || canReadProviders || canReadModels || canManageSystemSettings
+  )
+  const defaultAnalyticsPath = canReadUsage ? '/admin/overview'
+    : canReadUsers ? '/admin/users'
+      : '/admin/requests'
+  const defaultSettingsPath = canManageSystemSettings ? '/admin/settings' : '/admin/providers'
+  const selectedProject = projectAssets.projects.find((project) => project.id === projectAssets.selectedProjectId) ?? null
+  const activeTaskCount = generation.tasks.filter((item) => {
+    const status = item.state.status ?? item.task.status
+    return status === 'QUEUED' || status === 'RUNNING' || status === 'RETRYING'
+  }).length
+  const completedImageTypeCount = new Set(
+    projectAssets.assets
+      .filter((asset) => asset.kind === 'GENERATED' || asset.kind === 'EDITED')
+      .map((asset) => normalizeWorkbenchImageType(asset.imageType ?? asset.category)),
+  ).size
+  const productPreviewUrl = projectAssets.assets.find(
+    (asset) => asset.kind === 'REFERENCE' && (asset.thumbnailUrl || asset.previewUrl),
+  )?.thumbnailUrl ?? projectAssets.assets.find(
+    (asset) => asset.kind === 'REFERENCE' && asset.previewUrl,
+  )?.previewUrl
+  const activePrimaryRoute = primaryRouteFromPathname(pathname)
 
-  const managementItems: ManagementMenuItem[] = [
-    ...(canOpenAdmin
-      ? [
-          {
-            description: '配置 AI 中转站、模型能力与价格信息',
-            icon: Settings,
-            label: '中转站与模型管理',
-            onSelect: () => setAdminOpen(true),
-          },
-        ]
-      : []),
-    ...(canOpenObservabilityAdmin
-      ? [
-          {
-            description: '查看用量、审计事件与平台运行设置',
-            icon: BarChart3,
-            label: '观测与设置',
-            onSelect: () => setObservabilityAdminOpen(true),
-          },
-        ]
-      : []),
-    ...(canOpenIdentityAdmin
-      ? [
-          {
-            description: '管理租户用户、角色与权限',
-            icon: UserCog,
-            label: '用户/角色管理',
-            onSelect: () => setIdentityAdminOpen(true),
-          },
-        ]
-      : []),
-  ]
+  useEffect(() => {
+    if (activePrimaryRoute === 'products') return
+    setShouldOpenProjectEditor(false)
+    setProjectToManage(null)
+  }, [activePrimaryRoute])
+
+  const currentComparisonSource: CompareItemRef | undefined = (() => {
+    if (generation.current?.task.type !== 'IMAGE_EDIT') return undefined
+    const localSource = comparisonSourceByTaskId[generation.current.task.id]
+    if (localSource) return { id: localSource.assetId, label: '原图', url: localSource.previewUrl }
+    const sourceAsset = projectAssets.assets.find((asset) => generation.current?.task.inputAssetIds.includes(asset.id))
+    if (!sourceAsset) return undefined
+    const reference = projectAssets.createReferenceFromAsset(sourceAsset)
+    return { id: reference.assetId, label: '原图', url: reference.previewUrl }
+  })()
 
   const handleGenerateTask = async (request: WorkbenchTaskSubmission, workbenchInput: WorkbenchTaskInput) => {
+    const submittedEditSource = editSourceReference
     if (pendingEditSourceAssetId) {
       const isAvailable = await history.ensureBackendAssetAvailable(pendingEditSourceAssetId)
       if (!isAvailable) {
@@ -267,6 +294,9 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     )
 
     if (task) {
+      if (submittedEditSource) {
+        setComparisonSourceByTaskId((sources) => ({ ...sources, [task.id]: submittedEditSource }))
+      }
       setPendingEditSourceAssetId(null)
       setEditSourceReference(null)
       setNotice('任务已创建，结果会通过实时事件流更新。')
@@ -361,8 +391,9 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
     if (project) {
       setNotice(`已创建产品：${project.name}`)
-      setProjectManagementOpen(false)
       setProjectToManage(null)
+      setShouldOpenProjectEditor(false)
+      onNavigate('/studio')
     }
   }
 
@@ -385,8 +416,9 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
     const deleted = await projectAssets.deleteProject(project.id)
     if (deleted) {
       setNotice(`产品“${project.name}”已删除。`)
-      setProjectManagementOpen(false)
       setProjectToManage(null)
+      setShouldOpenProjectEditor(false)
+      onNavigate('/studio')
     }
   }
 
@@ -428,7 +460,16 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
 
   const handleManageProject = (project?: Project) => {
     setProjectToManage(project ?? null)
-    setProjectManagementOpen(true)
+    setShouldOpenProjectEditor(true)
+    onNavigate('/products')
+  }
+
+  const handleUseTemplate = (nextImageType: WorkbenchImageType, nextPrompt: string) => {
+    const nextKey = `${projectAssets.selectedProjectId ?? 'none'}:${nextImageType}`
+    setImageType(nextImageType)
+    setPromptDrafts((currentDrafts) => ({ ...currentDrafts, [nextKey]: nextPrompt }))
+    setNotice('模板已套用，可在创作室继续调整。')
+    onNavigate('/studio')
   }
 
   const refreshProjectMembersForModal = useCallback(
@@ -577,216 +618,181 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
   }
 
   return (
-    <AppShell
-      accountSlot={
-        <>
-          <ManagementMenu items={managementItems} />
-          <AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} />
-        </>
-      }
-      notice={authError ?? notice}
-    >
-      <div className="grid gap-2 sm:gap-3">
-        {projectAssets.isLoadingProjects ? (
-          <div aria-busy="true" className="panel px-5 py-16 text-center text-sm text-ink-600" role="status">
-            正在加载产品...
-          </div>
-        ) : !projectAssets.selectedProjectId ? (
-          <WorkspaceOnboarding
+    <AppShell immersive notice={authError ?? notice}>
+      <WorkspaceShell
+        accountSlot={<AuthStatus isSubmitting={isAuthSubmitting} onLogout={onLogout} session={session} variant="compact" />}
+        activeRoute={activePrimaryRoute}
+        analyticsPathname={defaultAnalyticsPath}
+        canViewAnalytics={canViewAnalytics}
+        canViewSettings={canViewSettings}
+        onNavigate={onNavigate}
+        settingsPathname={defaultSettingsPath}
+        surfaceMode={activePrimaryRoute === 'studio' ? 'workbench' : 'light'}
+      >
+        {activePrimaryRoute === 'products' ? (
+          <ProjectManagementModal
+            actionUserId={projectAssets.projectMemberActionUserId}
             canCreateProject={canCreateProject}
-            hasLoadError={projectAssets.projectStatus === 'error'}
-            onCreateProject={() => handleManageProject()}
-            onRetry={() => void projectAssets.refreshProjects()}
+            canDeleteProject={canDeleteProject}
+            canManageProjectMembers={canManageProjectMembers}
+            candidateStatus={projectAssets.projectMemberCandidateStatus}
+            candidates={projectAssets.projectMemberCandidates}
+            error={projectAssets.error}
+            initialProject={shouldOpenProjectEditor ? projectToManage : selectedProject}
+            isCreatingProject={projectAssets.isCreatingProject}
+            isDeletingProject={projectAssets.isDeletingProject}
+            isOpen
+            isSavingMember={projectAssets.isSavingProjectMember}
+            isUpdatingProject={projectAssets.isUpdatingProject}
+            memberError={projectAssets.projectMemberError}
+            members={projectAssets.projectMembers}
+            memberStatus={projectAssets.projectMemberStatus}
+            onAddMember={(projectId, request) => void handleAddProjectMember(projectId, request)}
+            onClose={() => onNavigate('/studio')}
+            onCreateProject={handleCreateProject}
+            onDeleteProject={(project) => void handleDeleteProject(project)}
+            onRefreshCandidates={refreshProjectMemberCandidatesForModal}
+            onRefreshMembers={refreshProjectMembersForModal}
+            onRemoveMember={(projectId, userId) => void handleRemoveProjectMember(projectId, userId)}
+            onSelectProject={projectAssets.selectProject}
+            onUpdateMember={(projectId, userId, request) => void handleUpdateProjectMember(projectId, userId, request)}
+            onUpdateProject={(projectId, request) => void handleUpdateProject(projectId, request)}
+            openEditorOnMount={shouldOpenProjectEditor}
+            projects={projectAssets.projects}
+            variant="page"
           />
-        ) : (
-          <div
-            className="grid min-h-0 gap-2 sm:gap-3 lg:h-[calc(100dvh-88px)] lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden"
-            data-testid="fixed-product-workspace"
-          >
-            <div className="grid shrink-0 gap-2 sm:gap-3">
-              <ProjectTabs
-                onManageProject={handleManageProject}
-                onSelectProject={projectAssets.selectProject}
-                projects={projectAssets.projects}
-                selectedProjectId={projectAssets.selectedProjectId}
-              />
+        ) : null}
 
-              {workbenchModels.status !== 'loading' && workbenchModels.models.length === 0 ? (
-                <ModelSetupBanner canManageModels={canOpenAdmin} onOpen={() => setAdminOpen(true)} />
-              ) : null}
+        {activePrimaryRoute === 'assets' ? (
+          <ProjectAssetsPanel
+            actionAssetId={projectAssets.actionAssetId}
+            assetFilters={projectAssets.assetFilters}
+            assetStatus={projectAssets.assetStatus}
+            assets={projectAssets.assets}
+            error={projectAssets.error}
+            isLoadingAssets={projectAssets.isLoadingAssets}
+            isUploadingAsset={projectAssets.isUploadingAsset}
+            onDeleteAsset={handleDeleteAsset}
+            onDownloadAsset={handleDownloadAsset}
+            onOpenAsset={setAssetDetail}
+            onRefreshAssets={() => void projectAssets.refreshAssets()}
+            onSelectProject={projectAssets.selectProject}
+            onToggleFavorite={(asset) => void handleToggleAssetFavorite(asset)}
+            onUpdateAssetFilters={projectAssets.updateAssetFilters}
+            onUploadReferences={(files) => void handleUploadReferences(files)}
+            onUseAssetAsReference={(asset) => {
+              void handleUseAssetAsReference(asset).then(() => onNavigate('/studio'))
+            }}
+            selectedProjectId={projectAssets.selectedProjectId}
+            projects={projectAssets.projects}
+            variant="page"
+          />
+        ) : null}
+
+        {activePrimaryRoute === 'templates' ? (
+          <TemplateLibraryPage
+            onNotice={setNotice}
+            onSelectProject={projectAssets.selectProject}
+            onUseTemplate={handleUseTemplate}
+            projectId={projectAssets.selectedProjectId}
+            projectName={selectedProject?.name}
+            projects={projectAssets.projects}
+          />
+        ) : null}
+
+        {activePrimaryRoute === 'studio' ? (
+          projectAssets.isLoadingProjects ? (
+            <div aria-busy="true" className="flex min-h-[calc(100dvh-68px)] items-center justify-center text-sm text-slate-300" role="status">
+              正在加载产品...
             </div>
-
-            <div
-              className="grid min-w-0 grid-cols-1 gap-2 sm:gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[104px_minmax(0,1fr)_300px] lg:overflow-hidden xl:grid-cols-[112px_minmax(0,1fr)_340px]"
-              data-testid="generation-workbench"
-            >
-              <ImageTypeTabs activityByType={imageTypeActivity} imageType={imageType} onChange={setImageType} />
-
-              <section aria-label="图片生成工作区" className="min-h-0 min-w-0">
-                <div className="grid h-full min-h-0 min-w-0 grid-cols-1 gap-2 sm:gap-3 xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)]">
-                  <BackendControlPanel
-                    availableReferences={projectAssets.assets
-                      .filter((asset) => asset.kind === 'REFERENCE')
-                      .map((asset) => projectAssets.createReferenceFromAsset(asset))}
-                    draft={draft}
-                    editSourceReference={editSourceReference}
-                    imageType={imageType}
-                    isGenerating={generation.isSubmitting}
-                    modelStatus={workbenchModels.status}
-                    models={workbenchModels.models}
-                    onError={showNotice}
-                    onEditSourceRemoved={() => {
-                      setPendingEditSourceAssetId(null)
-                      setEditSourceReference(null)
-                      setNotice('已取消编辑原图。')
-                    }}
-                    onGenerate={handleGenerateTask}
-                    onImageTypeChange={setImageType}
-                    onPromptChange={updatePromptDraft}
-                    onReferenceAdded={() => setReferenceToAdd(null)}
-                    onRefreshModels={() => void workbenchModels.refreshModels()}
-                    onSavePendingReferences={handleSavePendingReferences}
-                    referenceToAdd={referenceToAdd}
-                    prompt={promptDraft}
-                    resetKey={projectAssets.selectedProjectId}
-                  />
-
-                  <ResultCanvas
-                    canCancelTask={generation.canCancelCurrentTask}
-                    canRetryTask={generation.canRetryCurrentTask}
-                    current={generation.current}
-                    currentItems={generation.currentItems}
-                    error={generation.error}
-                    onCancelTask={() => void generation.cancelCurrentTask()}
-                    onDownload={() => void handleDownloadCurrent()}
-                    onOpenDetail={handleOpenCurrentDetail}
-                    onRename={() => void handleRenameCurrent()}
-                    onRetryTask={() => void generation.retryCurrentTask()}
-                    onOpenAssets={() => setWorkspaceLibraryOpen(true)}
-                    onSelect={generation.selectCurrent}
-                    pendingTaskAction={generation.pendingTaskAction}
-                    selectedIndex={generation.selectedIndex}
-                    status={generation.status}
-                    taskStatus={generation.taskState?.status}
-                  />
-                </div>
-              </section>
-
-              <GenerationHistoryRail
-                history={
-                  <HistoryPanel
-                    embedded
-                    error={history.error}
-                    isLoading={history.isLoading}
-                    items={history.items}
-                    kind={history.kind}
-                    onDownload={(item) => void handleDownloadBackendHistory(item)}
-                    onEdit={(item) => void handleEditBackendHistory(item)}
-                    onRename={(item) => setAssetDetail(item.asset)}
-                    favoriteActionAssetId={history.favoriteActionAssetId}
-                    onKindChange={history.setKind}
-                    onPageChange={history.setPageNum}
-                    onPageSizeChange={history.setPageSize}
-                    onRefresh={() => void history.refresh()}
-                    onToggleFavorite={(item) => {
-                      void history.toggleFavorite(item).then((updated) => {
-                        if (updated) {
-                          setNotice(updated.isFavorite ? '图片已收藏。' : '已取消收藏。')
-                          void projectAssets.refreshAssets()
-                        }
-                      })
-                    }}
-                    onView={(item) => void handleOpenBackendDetail(item.asset.id, item.task.id)}
-                    pageNum={history.pageNum}
-                    pageSize={history.pageSize}
-                    total={history.total}
-                  />
-                }
-                onCancel={(taskId) => void generation.cancelTask(taskId)}
-                onView={handleViewTask}
-                imageType={imageType}
-                pendingTaskId={generation.pendingAction?.taskId}
-                projectId={projectAssets.selectedProjectId}
-                projects={projectAssets.projects}
-                tasks={generation.tasks}
+          ) : !selectedProject ? (
+            <div className="workspace-page">
+              <WorkspaceOnboarding
+                canCreateProject={canCreateProject}
+                hasLoadError={projectAssets.projectStatus === 'error'}
+                onCreateProject={() => handleManageProject()}
+                onRetry={() => void projectAssets.refreshProjects()}
               />
             </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <CanvasStudioLayout
+              activeTaskCount={activeTaskCount}
+              activityByType={imageTypeActivity}
+              completedImageTypeCount={completedImageTypeCount}
+              controlPanel={
+                <BackendControlPanel
+                  availableReferences={projectAssets.assets
+                    .filter((asset) => asset.kind === 'REFERENCE')
+                    .map((asset) => projectAssets.createReferenceFromAsset(asset))}
+                  draft={draft}
+                  editSourceReference={editSourceReference}
+                  imageType={imageType}
+                  isGenerating={generation.isSubmitting}
+                  modelStatus={workbenchModels.status}
+                  models={workbenchModels.models}
+                  onError={showNotice}
+                  onEditSourceRemoved={() => {
+                    setPendingEditSourceAssetId(null)
+                    setEditSourceReference(null)
+                    setNotice('已取消编辑原图。')
+                  }}
+                  onGenerate={handleGenerateTask}
+                  onImageTypeChange={setImageType}
+                  onPromptChange={updatePromptDraft}
+                  onReferenceAdded={() => setReferenceToAdd(null)}
+                  onOpenModelSettings={canOpenAdmin ? () => onNavigate('/admin/providers') : undefined}
+                  onRefreshModels={() => void workbenchModels.refreshModels()}
+                  onSavePendingReferences={handleSavePendingReferences}
+                  prompt={promptDraft}
+                  projectId={projectAssets.selectedProjectId}
+                  referenceToAdd={referenceToAdd}
+                  resetKey={projectAssets.selectedProjectId}
+                  variant="canvas"
+                />
+              }
+              imageType={imageType}
+              isGenerating={generation.isSubmitting}
+              onImageTypeChange={setImageType}
+              onManageProject={handleManageProject}
+              onOpenTaskCenter={() => setTaskCenterOpen(true)}
+              onSaveDraft={() => setNotice('当前创作要求已保留为本页草稿。')}
+              onSelectProject={projectAssets.selectProject}
+              productPreviewUrl={productPreviewUrl || undefined}
+              projects={projectAssets.projects}
+              resultCanvas={
+                <ResultCanvas
+                  canCancelTask={generation.canCancelCurrentTask}
+                  canRetryTask={generation.canRetryCurrentTask}
+                  comparisonSource={currentComparisonSource}
+                  current={generation.current}
+                  currentItems={generation.currentItems}
+                  error={generation.error}
+                  imageTypeLabel={WORKBENCH_IMAGE_TYPE_OPTIONS.find((option) => option.value === imageType)?.label}
+                  onCancelTask={() => void generation.cancelCurrentTask()}
+                  onDownload={() => void handleDownloadCurrent()}
+                  onOpenAssets={() => setWorkspaceLibraryOpen(true)}
+                  onOpenDetail={handleOpenCurrentDetail}
+                  onRename={() => void handleRenameCurrent()}
+                  onRetryTask={() => void generation.retryCurrentTask()}
+                  onSelect={generation.selectCurrent}
+                  pendingTaskAction={generation.pendingTaskAction}
+                  selectedIndex={generation.selectedIndex}
+                  status={generation.status}
+                  taskStatus={generation.taskState?.status}
+                  variant="canvas"
+                />
+              }
+              selectedProject={selectedProject}
+            />
+          )
+        ) : null}
+      </WorkspaceShell>
 
-      {canOpenAdmin ? (
-        <ProviderModelAdminPanel
-          canManageModels={canManageModels}
-          canManageProviders={canManageProviders}
-          csrfToken={session.csrfToken}
-          isOpen={isAdminOpen}
-          onClose={() => setAdminOpen(false)}
-        />
-      ) : null}
-
-      {canOpenObservabilityAdmin ? (
-        <AdminObservabilitySettingsPanel
-          canManageSystemSettings={canManageSystemSettings}
-          canReadAudit={canReadAudit}
-          canReadUsage={canReadUsage}
-          csrfToken={session.csrfToken}
-          isOpen={isObservabilityAdminOpen}
-          onClose={() => setObservabilityAdminOpen(false)}
-        />
-      ) : null}
-
-      {canOpenIdentityAdmin ? (
-        <UserRoleAdminPanel
-          canCreateUsers={canCreateUsers}
-          canDisableUsers={canDisableUsers}
-          canManageRoles={canManageRoles}
-          canManageModelAccess={tenantAdmin}
-          canManageTenant={canManageTenant}
-          canReadRoles={canReadRoles}
-          canReadUsers={canReadUsers}
-          canUpdateUsers={canUpdateUsers}
-          csrfToken={session.csrfToken}
-          currentUserId={session.user.id}
-          isOpen={isIdentityAdminOpen}
-          onClose={() => setIdentityAdminOpen(false)}
-        />
-      ) : null}
-
-      <ProjectManagementModal
-        actionUserId={projectAssets.projectMemberActionUserId}
-        canDeleteProject={canDeleteProject}
-        canManageProjectMembers={canManageProjectMembers}
-        candidateStatus={projectAssets.projectMemberCandidateStatus}
-        candidates={projectAssets.projectMemberCandidates}
-        error={projectAssets.error}
-        initialProject={projectToManage}
-        isCreatingProject={projectAssets.isCreatingProject}
-        isDeletingProject={projectAssets.isDeletingProject}
-        isOpen={isProjectManagementOpen}
-        isSavingMember={projectAssets.isSavingProjectMember}
-        isUpdatingProject={projectAssets.isUpdatingProject}
-        memberError={projectAssets.projectMemberError}
-        members={projectAssets.projectMembers}
-        memberStatus={projectAssets.projectMemberStatus}
-        onAddMember={(projectId, request) => void handleAddProjectMember(projectId, request)}
-        onClose={() => setProjectManagementOpen(false)}
-        onCreateProject={handleCreateProject}
-        onDeleteProject={(project) => void handleDeleteProject(project)}
-        onRefreshCandidates={refreshProjectMemberCandidatesForModal}
-        onRefreshMembers={refreshProjectMembersForModal}
-        onRemoveMember={(projectId, userId) => void handleRemoveProjectMember(projectId, userId)}
-        onSelectProject={projectAssets.selectProject}
-        onUpdateMember={(projectId, userId, request) => void handleUpdateProjectMember(projectId, userId, request)}
-        onUpdateProject={(projectId, request) => void handleUpdateProject(projectId, request)}
-        projects={projectAssets.projects}
-      />
-
-      <Modal
-        isOpen={isWorkspaceLibraryOpen}
-        maxWidthClass="max-w-6xl"
+      <ContextDrawer
+        description="快捷选择当前产品素材，不会遮挡或锁定创作画布。"
+        isOpen={activePrimaryRoute === 'studio' && isWorkspaceLibraryOpen}
         onClose={() => setWorkspaceLibraryOpen(false)}
-        title="产品素材"
+        title="选择素材"
       >
         <ProjectAssetsPanel
           actionAssetId={projectAssets.actionAssetId}
@@ -806,7 +812,56 @@ function StudioWorkbench({ authError, isAuthSubmitting, onLogout, session }: Stu
           onUseAssetAsReference={(asset) => void handleUseAssetAsReference(asset)}
           selectedProjectId={projectAssets.selectedProjectId}
         />
-      </Modal>
+      </ContextDrawer>
+
+      <TaskCenter
+        history={
+          <HistoryPanel
+            embedded
+            error={history.error}
+            favoriteActionAssetId={history.favoriteActionAssetId}
+            isLoading={history.isLoading}
+            items={history.items}
+            kind={history.kind}
+            onDownload={(item) => void handleDownloadBackendHistory(item)}
+            onEdit={(item) => {
+              setTaskCenterOpen(false)
+              void handleEditBackendHistory(item)
+            }}
+            onKindChange={history.setKind}
+            onPageChange={history.setPageNum}
+            onPageSizeChange={history.setPageSize}
+            onRefresh={() => void history.refresh()}
+            onRename={(item) => setAssetDetail(item.asset)}
+            onToggleFavorite={(item) => {
+              void history.toggleFavorite(item).then((updated) => {
+                if (updated) {
+                  setNotice(updated.isFavorite ? '图片已收藏。' : '已取消收藏。')
+                  void projectAssets.refreshAssets()
+                }
+              })
+            }}
+            onView={(item) => {
+              setTaskCenterOpen(false)
+              void handleOpenBackendDetail(item.asset.id, item.task.id)
+            }}
+            pageNum={history.pageNum}
+            pageSize={history.pageSize}
+            total={history.total}
+          />
+        }
+        isOpen={isTaskCenterOpen}
+        onCancel={(taskId) => void generation.cancelTask(taskId)}
+        onClose={() => setTaskCenterOpen(false)}
+        onRetry={(taskId) => void generation.retryTask(taskId)}
+        onView={(taskId) => {
+          handleViewTask(taskId)
+          setTaskCenterOpen(false)
+        }}
+        pendingTaskId={generation.pendingAction?.taskId}
+        projects={projectAssets.projects}
+        tasks={generation.tasks}
+      />
 
       <TaskNotifications
         notifications={generation.notifications}

@@ -13,6 +13,7 @@ interface ImageDropzoneProps {
   allowUpload?: boolean
   editSourceReference?: AssetReferenceInput | null
   onEditSourceRemoved?: () => void
+  variant?: 'default' | 'canvas'
 }
 
 export function ImageDropzone({
@@ -25,6 +26,7 @@ export function ImageDropzone({
   allowUpload = true,
   editSourceReference,
   onEditSourceRemoved,
+  variant = 'default',
 }: ImageDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -90,6 +92,123 @@ export function ImageDropzone({
     }
 
     onChange([...references, candidate])
+  }
+
+  if (variant === 'canvas') {
+    const roleLabels = ['产品主体', '构图参考', '风格参考']
+    const fallbackImages = [
+      '/studio-assets/demo-bottle-candidate-studio.jpg',
+      '/studio-assets/demo-bottle-candidate-cool.jpg',
+      '/studio-assets/demo-bottle-candidate-warm.jpg',
+    ]
+    const availableAssetIds = new Set(
+      availableReferences
+        .filter((reference): reference is Extract<WorkbenchReferenceInput, { kind: 'asset' }> => reference.kind === 'asset')
+        .map((reference) => reference.assetId),
+    )
+    const referencesOutsideLibrary = references.filter((reference) => {
+      if (reference.kind === 'pending') {
+        return true
+      }
+      return !availableAssetIds.has(reference.assetId)
+    })
+    const roleCandidates = uniqueReferences([
+      ...(editSourceReference ? [editSourceReference] : []),
+      ...availableReferences,
+      ...referencesOutsideLibrary,
+    ]).slice(0, 3)
+
+    return (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-white">参考素材</h3>
+        </div>
+
+        <div className="grid gap-2">
+          {roleLabels.map((roleLabel, index) => {
+            const candidate = roleCandidates[index]
+            const filename = candidate ? getReferenceFilename(candidate) : ''
+            const isEditSource = Boolean(editSourceReference && candidate?.previewUrl === editSourceReference.previewUrl)
+            const visibleRoleLabel = isEditSource ? '编辑原图' : roleLabel
+            const isSelected = Boolean(candidate && (
+              isEditSource || references.some((reference) => reference.previewUrl === candidate.previewUrl)
+            ))
+            const actionLabel = candidate
+              ? isEditSource
+                ? `取消编辑 ${filename}`
+                : `${isSelected ? '取消选择' : '选择'}产品参考图 ${filename}`
+              : `为${roleLabel}添加参考图`
+
+            return (
+              <button
+                aria-label={actionLabel}
+                aria-pressed={candidate ? isSelected : undefined}
+                className={`group flex min-h-[74px] items-center gap-3 rounded-xl border px-2.5 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-amazon-500/30 ${
+                  isSelected
+                    ? 'border-amazon-500/55 bg-amazon-500/10'
+                    : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]'
+                }`}
+                disabled={disabled}
+                key={roleLabel}
+                onClick={() => {
+                  if (!candidate) {
+                    if (allowUpload) {
+                      inputRef.current?.click()
+                    }
+                    return
+                  }
+                  if (isEditSource) {
+                    onEditSourceRemoved?.()
+                    return
+                  }
+                  if (candidate.kind === 'pending') {
+                    removeReference(candidate.previewUrl)
+                    return
+                  }
+                  toggleAvailableReference(candidate)
+                }}
+                type="button"
+              >
+                <span className="relative h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-800">
+                  <img
+                    alt={candidate ? filename : ''}
+                    className={`h-full w-full object-cover ${candidate ? '' : 'opacity-55'}`}
+                    src={candidate?.previewUrl ?? fallbackImages[index]}
+                  />
+                  {isSelected ? (
+                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amazon-500 text-slate-950">
+                      <Check className="h-3.5 w-3.5" />
+                    </span>
+                  ) : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-slate-100">{visibleRoleLabel}</span>
+                  <span className="mt-1 block truncate text-xs text-slate-400">
+                    {candidate ? (isSelected ? '已选择' : '点击选择') : (allowUpload ? '点击添加参考图' : '当前模型暂不支持')}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        <input
+          ref={inputRef}
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          disabled={disabled || !allowUpload}
+          id="reference-images"
+          multiple
+          onChange={(event) => {
+            if (event.target.files) {
+              addFiles(event.target.files)
+            }
+            event.target.value = ''
+          }}
+          type="file"
+        />
+      </section>
+    )
   }
 
   return (
@@ -230,4 +349,16 @@ export function ImageDropzone({
 
 function getReferenceFilename(reference: WorkbenchReferenceInput): string {
   return reference.kind === 'asset' ? reference.filename : reference.file.name
+}
+
+function uniqueReferences(references: WorkbenchReferenceInput[]): WorkbenchReferenceInput[] {
+  const seen = new Set<string>()
+  return references.filter((reference) => {
+    const key = reference.kind === 'asset' ? `asset:${reference.assetId}` : `preview:${reference.previewUrl}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
 }

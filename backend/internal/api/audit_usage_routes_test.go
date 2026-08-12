@@ -22,6 +22,12 @@ func TestAdminAuditUsageReadRoutesRejectNonAdmin(t *testing.T) {
 	sellerSession := loginProjectRouteUser(t, router, adminSession.tenantID, "seller-audit@example.com", "seller-audit-password-123")
 
 	for _, path := range []string{
+		"/api/v1/admin/analytics/overview",
+		"/api/v1/admin/analytics/usage",
+		"/api/v1/admin/analytics/users",
+		"/api/v1/admin/analytics/tasks",
+		"/api/v1/admin/analytics/requests",
+		"/api/v1/admin/analytics/exports/usage",
 		"/api/v1/admin/usage/summary",
 		"/api/v1/admin/usage/records",
 		"/api/v1/admin/operation-logs",
@@ -434,6 +440,9 @@ func TestAdminOperationLogsListTenantIsolationAndRecursiveRedaction(t *testing.T
 	if len(records) != 1 {
 		t.Fatalf("operation records len = %d, want 1", len(records))
 	}
+	if stringField(t, records[0].(map[string]any), "actorName") != "Admin User" || stringField(t, records[0].(map[string]any), "actorEmail") != "admin@example.com" {
+		t.Fatalf("operation actor display fields = %#v", records[0])
+	}
 	metadata := objectField(t, records[0].(map[string]any), "metadata")
 	if metadata["safe"] != "ok" {
 		t.Fatalf("operation metadata.safe = %#v, want ok", metadata["safe"])
@@ -451,6 +460,8 @@ func TestAdminOperationLogsListTenantIsolationAndRecursiveRedaction(t *testing.T
 func TestAdminAPICallLogsListDetailTenantIsolationAndProviderPayloadRedaction(t *testing.T) {
 	router, db, adminSession := newProjectRouteTestRouter(t)
 	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	seedTaskProviderModel(t, db, adminSession.tenantID, "a", "ENABLED", "ENABLED", true, true, false, false, 1)
+	seedTaskProviderModel(t, db, "tenant-b", "b", "ENABLED", "ENABLED", true, true, false, false, 1)
 	seedGenerationTaskForAPILog(t, db, adminSession.tenantID, "task-a", "project-a", adminSession.userID, now)
 	seedGenerationTaskForAPILog(t, db, "tenant-b", "task-b", "project-b", "user-b", now)
 	statusOK := 200
@@ -487,7 +498,7 @@ func TestAdminAPICallLogsListDetailTenantIsolationAndProviderPayloadRedaction(t 
 		CreatedAt:            now.Add(time.Minute),
 	})
 
-	list := performJSON(router, http.MethodGet, "/api/v1/admin/api-call-logs?projectId=project-a&userId="+adminSession.userID+"&status=SUCCESS&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
+	list := performJSON(router, http.MethodGet, "/api/v1/admin/api-call-logs?projectId=project-a&userId="+adminSession.userID+"&imageType=MAIN&status=SUCCESS&pageNum=1&pageSize=10", nil, adminSession.cookies, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("api call list status = %d, want %d: %s", list.Code, http.StatusOK, list.Body.String())
 	}
@@ -501,6 +512,9 @@ func TestAdminAPICallLogsListDetailTenantIsolationAndProviderPayloadRedaction(t 
 	if stringField(t, records[0].(map[string]any), "errorMessage") != "Provider error message redacted." {
 		t.Fatalf("api call errorMessage = %#v", records[0].(map[string]any)["errorMessage"])
 	}
+	if stringField(t, records[0].(map[string]any), "providerName") != "Provider a" || stringField(t, records[0].(map[string]any), "modelName") != "Model a" {
+		t.Fatalf("api call display fields = %#v", records[0])
+	}
 
 	detail := performJSON(router, http.MethodGet, "/api/v1/admin/api-call-logs/api-log-a", nil, adminSession.cookies, nil)
 	if detail.Code != http.StatusOK {
@@ -510,6 +524,10 @@ func TestAdminAPICallLogsListDetailTenantIsolationAndProviderPayloadRedaction(t 
 	requestMetadata := objectField(t, decodeData(t, detail), "redactedRequest")
 	if requestMetadata["prompt"] != "safe" {
 		t.Fatalf("redactedRequest.prompt = %#v, want safe", requestMetadata["prompt"])
+	}
+	detailData := decodeData(t, detail)
+	if stringField(t, detailData, "providerName") != "Provider a" || stringField(t, detailData, "modelName") != "Model a" {
+		t.Fatalf("api call detail display fields = %#v", detailData)
 	}
 
 	crossTenantDetail := performJSON(router, http.MethodGet, "/api/v1/admin/api-call-logs/api-log-b", nil, adminSession.cookies, nil)
@@ -536,6 +554,8 @@ type usageSeed struct {
 	ImageCount    int
 	EstimatedCost string
 	Currency      string
+	CostStatus    string
+	PricingJSON   string
 	RawUsageJSON  string
 	CreatedAt     time.Time
 }
@@ -547,20 +567,22 @@ func seedUsageRecord(t *testing.T, db *gorm.DB, seed usageSeed) {
 		currency = "USD"
 	}
 	if err := db.Create(&database.UsageRecord{
-		ID:            seed.ID,
-		TenantID:      seed.TenantID,
-		TaskID:        seed.TaskID,
-		UserID:        seed.UserID,
-		ProjectID:     seed.ProjectID,
-		ProviderID:    seed.ProviderID,
-		ModelID:       seed.ModelID,
-		InputTokens:   seed.InputTokens,
-		OutputTokens:  seed.OutputTokens,
-		ImageCount:    seed.ImageCount,
-		EstimatedCost: seed.EstimatedCost,
-		Currency:      currency,
-		RawUsageJSON:  seed.RawUsageJSON,
-		CreatedAt:     seed.CreatedAt,
+		ID:                  seed.ID,
+		TenantID:            seed.TenantID,
+		TaskID:              seed.TaskID,
+		UserID:              seed.UserID,
+		ProjectID:           seed.ProjectID,
+		ProviderID:          seed.ProviderID,
+		ModelID:             seed.ModelID,
+		InputTokens:         seed.InputTokens,
+		OutputTokens:        seed.OutputTokens,
+		ImageCount:          seed.ImageCount,
+		EstimatedCost:       seed.EstimatedCost,
+		Currency:            currency,
+		CostStatus:          seed.CostStatus,
+		PricingSnapshotJSON: seed.PricingJSON,
+		RawUsageJSON:        seed.RawUsageJSON,
+		CreatedAt:           seed.CreatedAt,
 	}).Error; err != nil {
 		t.Fatalf("seed usage record %s: %v", seed.ID, err)
 	}

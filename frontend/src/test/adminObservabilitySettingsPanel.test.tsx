@@ -211,6 +211,13 @@ function page<TRecord>(records: TRecord[], options: Partial<Omit<ApiPage<TRecord
 
 function createMockAdminApi(overrides: Partial<AdminApi> = {}): AdminApi {
   return {
+    getAnalyticsOverview: vi.fn(),
+    getAnalyticsUsage: vi.fn(),
+    getAnalyticsUsers: vi.fn(),
+    getAnalyticsUser: vi.fn(),
+    getAnalyticsTasks: vi.fn(),
+    getAnalyticsRequests: vi.fn(),
+    exportAnalytics: vi.fn(),
     getUsageSummary: vi.fn().mockResolvedValue(page([])),
     listUsageRecords: vi.fn().mockResolvedValue(page([])),
     listOperationLogs: vi.fn().mockResolvedValue(page([])),

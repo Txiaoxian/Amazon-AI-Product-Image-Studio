@@ -213,8 +213,10 @@ function page(records: unknown[], pageSize = 50) {
 }
 
 async function openHistoryTab(user = userEvent.setup()) {
-  void user
-  await screen.findByRole('heading', { name: '已完成' })
+  await user.click(await screen.findByRole('button', { name: /任务中心/ }))
+  const taskCenter = await screen.findByRole('dialog', { name: '任务中心' })
+  await user.click(within(taskCenter).getByRole('tab', { name: '生成历史' }))
+  await screen.findByRole('complementary', { name: '图片生成历史' })
 }
 
 describe('backend history asset source', () => {
@@ -479,9 +481,8 @@ describe('backend history asset source', () => {
 
     await user.click(await screen.findByRole('button', { name: '再次编辑 hero.png' }))
     expect(await screen.findByText('已准备基于后端资产再次编辑。')).toBeInTheDocument()
-    const editSource = screen.getByText('编辑原图').parentElement
-    expect(editSource).not.toBeNull()
-    expect(within(editSource as HTMLElement).getByRole('img', { name: 'hero.png' })).toHaveAttribute(
+    const editSource = screen.getByRole('button', { name: '取消编辑 hero.png' })
+    expect(within(editSource).getByRole('img', { name: 'hero.png' })).toHaveAttribute(
       'src',
       '/api/v1/assets/asset_generated_1/download',
     )
@@ -566,9 +567,11 @@ describe('backend history asset source', () => {
     await openHistoryTab(user)
     expect(await screen.findByRole('button', { name: '取消收藏 hero.png' })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '产品素材' }))
-    const dialog = await screen.findByRole('dialog', { name: '产品素材' })
-    await user.click(within(dialog).getByRole('button', { name: '取消收藏 hero.png' }))
+    await user.click(screen.getByRole('button', { name: '素材库' }))
+    const assetHeading = await screen.findByRole('heading', { name: '产品素材库' })
+    const assetPage = assetHeading.closest('section')
+    expect(assetPage).not.toBeNull()
+    await user.click(within(assetPage as HTMLElement).getByRole('button', { name: '取消收藏 hero.png' }))
 
     const historyPanel = screen.getByRole('complementary', { name: '图片生成历史' })
     expect(await within(historyPanel).findByRole('button', { name: '收藏 hero.png' })).toBeInTheDocument()

@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	defaultCurrency = "USD"
-	zeroCost        = "0.00000000"
+	defaultCurrency   = "USD"
+	zeroCost          = "0.00000000"
+	StatusCalculated  = "CALCULATED"
+	StatusUnavailable = "UNAVAILABLE"
 )
 
 var maxUnitPrice = big.NewRat(1000000, 1)
@@ -24,6 +26,7 @@ type Usage struct {
 type Result struct {
 	Currency      string
 	EstimatedCost string
+	Status        string
 }
 
 type pricingConfig struct {
@@ -37,26 +40,29 @@ func Estimate(pricingJSON string, usage Usage) Result {
 	if ok {
 		currency = normalizeCurrency(config.Currency)
 	}
+	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.ImageCount < 0 {
+		return unavailableResult(currency)
+	}
 	if !ok || config.UnitPrices == nil {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
 
 	prices, ok := parseUnitPrices(config.UnitPrices)
 	if !ok {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
 
 	inputPrice, ok := requiredPrice(nonNegativeInt64(usage.InputTokens) > 0, prices, "inputToken", "input_token", "inputTokens", "input_tokens")
 	if !ok {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
 	outputPrice, ok := requiredPrice(nonNegativeInt64(usage.OutputTokens) > 0, prices, "outputToken", "output_token", "outputTokens", "output_tokens")
 	if !ok {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
 	imagePrice, ok := requiredPrice(nonNegativeInt(usage.ImageCount) > 0, prices, "image", "images", "outputImage", "output_image")
 	if !ok {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
 
 	total := new(big.Rat)
@@ -64,9 +70,13 @@ func Estimate(pricingJSON string, usage Usage) Result {
 	addCost(total, nonNegativeInt64(usage.OutputTokens), outputPrice)
 	addCost(total, int64(nonNegativeInt(usage.ImageCount)), imagePrice)
 	if total.Sign() < 0 {
-		return Result{Currency: currency, EstimatedCost: zeroCost}
+		return unavailableResult(currency)
 	}
-	return Result{Currency: currency, EstimatedCost: total.FloatString(8)}
+	return Result{Currency: currency, EstimatedCost: total.FloatString(8), Status: StatusCalculated}
+}
+
+func unavailableResult(currency string) Result {
+	return Result{Currency: currency, EstimatedCost: zeroCost, Status: StatusUnavailable}
 }
 
 func FormatDecimal8(value string) string {
@@ -90,6 +100,18 @@ func SumDecimal8(values []string) string {
 		return zeroCost
 	}
 	return total.FloatString(8)
+}
+
+func DivideDecimal8(value string, denominator int64) string {
+	if denominator <= 0 {
+		return zeroCost
+	}
+	amount, ok := parseNonNegativeAmount(value)
+	if !ok {
+		return zeroCost
+	}
+	amount.Quo(amount, new(big.Rat).SetInt64(denominator))
+	return amount.FloatString(8)
 }
 
 func decodePricing(raw string) (pricingConfig, bool) {

@@ -625,6 +625,8 @@ var authRouteTestSchema = []string{
 		image_count INTEGER NOT NULL,
 		estimated_cost TEXT NOT NULL,
 		currency TEXT NOT NULL,
+		cost_status TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+		pricing_snapshot_json TEXT NULL,
 		raw_usage_json TEXT NULL,
 		created_at TIMESTAMP NOT NULL
 	)`,

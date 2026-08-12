@@ -7,6 +7,7 @@ import {
   updatePromptTemplate,
 } from '../../db/promptTemplateRepository'
 import type { PromptTemplate } from '../../db/dexie'
+import type { ProjectId } from '../../types/platform'
 import { WORKBENCH_IMAGE_TYPE_OPTIONS, type WorkbenchImageType } from '../../types/workbench'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
@@ -15,13 +16,15 @@ import { SavedPromptTemplateList } from './SavedPromptTemplateList'
 
 interface PromptEditorProps {
   imageType: WorkbenchImageType
+  projectId?: ProjectId | null
   value: string
   onChange: (value: string) => void
   disabled?: boolean
   onError: (message: string) => void
+  variant?: 'default' | 'compact'
 }
 
-export function PromptEditor({ imageType, value, onChange, disabled, onError }: PromptEditorProps) {
+export function PromptEditor({ imageType, projectId, value, onChange, disabled, onError, variant = 'default' }: PromptEditorProps) {
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [templateTitleHint, setTemplateTitleHint] = useState('')
@@ -32,11 +35,12 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
   const onErrorRef = useRef(onError)
   const templateRequestVersionRef = useRef(0)
   const imageTypeLabel = WORKBENCH_IMAGE_TYPE_OPTIONS.find((option) => option.value === imageType)?.label ?? '当前图片类型'
+  const isCompact = variant === 'compact'
 
   const refreshTemplates = useCallback(async () => {
     const requestVersion = ++templateRequestVersionRef.current
     try {
-      const nextTemplates = await listPromptTemplates(imageType)
+      const nextTemplates = await listPromptTemplates(projectId, imageType)
       if (isMounted.current && requestVersion === templateRequestVersionRef.current) {
         setTemplates(nextTemplates)
       }
@@ -45,7 +49,7 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
         onErrorRef.current(error instanceof Error ? error.message : '提示词模板读取失败。')
       }
     }
-  }, [imageType])
+  }, [imageType, projectId])
 
   useEffect(() => {
     onErrorRef.current = onError
@@ -93,10 +97,10 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
     const title = editingTemplateId ? createTemplateTitle(prompt) : templateTitleHint || createTemplateTitle(prompt)
     try {
       if (editingTemplateId) {
-        await updatePromptTemplate(editingTemplateId, imageType, title, prompt)
+        await updatePromptTemplate(editingTemplateId, projectId, imageType, title, prompt)
         setStatus(`已更新${imageTypeLabel}模板。`)
       } else {
-        const template = await savePromptTemplate(imageType, title, prompt)
+        const template = await savePromptTemplate(projectId, imageType, title, prompt)
         setEditingTemplateId(template.id)
         setTemplateTitleHint('')
         setStatus(`已保存到${imageTypeLabel}模板。`)
@@ -116,7 +120,7 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
 
   const deleteSavedTemplate = async (template: PromptTemplate) => {
     try {
-      await deletePromptTemplate(template.id, imageType)
+      await deletePromptTemplate(template.id, projectId, imageType)
       if (editingTemplateId === template.id) {
         setEditingTemplateId(null)
       }
@@ -131,27 +135,35 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <label className="field-label" htmlFor="prompt">
-          提示词
+          {isCompact ? '创作要求' : '提示词'}
         </label>
-        <Button disabled={disabled} icon={<Bookmark className="h-4 w-4" />} onClick={saveCurrentPrompt} variant="ghost">
-          {editingTemplateId ? `更新${imageTypeLabel}模板` : `保存到${imageTypeLabel}模板`}
-        </Button>
+        {isCompact ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[11px] text-slate-400">用自然语言描述画面</span>
+            <button
+              aria-label={editingTemplateId ? `更新${imageTypeLabel}模板` : `保存到${imageTypeLabel}模板`}
+              className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border border-amazon-500/35 bg-amazon-500/10 px-2 text-[11px] font-semibold text-amazon-300 transition hover:bg-amazon-500/20 focus:outline-none focus:ring-2 focus:ring-amazon-500/30 disabled:opacity-50"
+              disabled={disabled}
+              onClick={() => void saveCurrentPrompt()}
+              title="保存到当前产品模板库"
+              type="button"
+            >
+              <Bookmark className="h-3.5 w-3.5" />
+              保存模板
+            </button>
+          </div>
+        ) : (
+          <Button disabled={disabled} icon={<Bookmark className="h-4 w-4" />} onClick={saveCurrentPrompt} variant="ghost">
+            {editingTemplateId ? `更新${imageTypeLabel}模板` : `保存到${imageTypeLabel}模板`}
+          </Button>
+        )}
       </div>
-      <PromptRecommendationPicker
-        disabled={disabled}
-        imageType={imageType}
-        imageTypeLabel={imageTypeLabel}
-        key={imageType}
-        onSelect={(recommendation) => {
-          setEditingTemplateId(null)
-          setTemplateTitleHint(`${recommendation.title}（自定义）`)
-          setStatus(`已填入“${recommendation.title}”，可继续修改。`)
-          onChange(recommendation.prompt)
-        }}
-      />
       <div className="relative">
         <textarea
-          className="field-input min-h-40 resize-y pr-12 leading-6"
+          aria-label={isCompact ? '提示词' : undefined}
+          className={isCompact
+            ? 'min-h-24 w-full resize-none rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2.5 pr-11 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-amazon-500/70 focus:ring-2 focus:ring-amazon-500/15'
+            : 'field-input min-h-40 resize-y pr-12 leading-6'}
           disabled={disabled}
           id="prompt"
           maxLength={4000}
@@ -159,12 +171,14 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
             setStatus('')
             onChange(event.target.value)
           }}
-          placeholder={`描述${imageTypeLabel}的产品、背景、光线、构图、材质和使用要求。`}
+          placeholder={isCompact ? `描述${imageTypeLabel}的场景、光线、构图和氛围。` : `描述${imageTypeLabel}的产品、背景、光线、构图、材质和使用要求。`}
           value={value}
         />
         <button
           aria-label="放大编辑提示词"
-          className="icon-button absolute right-2 top-2 h-9 w-9 bg-white/95 shadow-sm"
+          className={isCompact
+            ? 'absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-amazon-500/30'
+            : 'icon-button absolute right-2 top-2 h-9 w-9 bg-white/95 shadow-sm'}
           disabled={disabled}
           onClick={openExpandedEditor}
           title="放大编辑提示词"
@@ -173,6 +187,19 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
           <Maximize2 className="h-4 w-4" />
         </button>
       </div>
+      <PromptRecommendationPicker
+        disabled={disabled}
+        imageType={imageType}
+        imageTypeLabel={imageTypeLabel}
+        key={`${imageType}-${variant}`}
+        onSelect={(recommendation) => {
+          setEditingTemplateId(null)
+          setTemplateTitleHint(`${recommendation.title}（自定义）`)
+          setStatus(`已填入“${recommendation.title}”，可继续修改。`)
+          onChange(recommendation.prompt)
+        }}
+        variant={isCompact ? 'compact' : 'default'}
+      />
       {status ? (
         <p className="text-xs leading-5 text-ink-500" role="status">
           {status}
@@ -184,6 +211,7 @@ export function PromptEditor({ imageType, value, onChange, disabled, onError }: 
         onDelete={(template) => void deleteSavedTemplate(template)}
         onSelect={selectSavedTemplate}
         templates={templates}
+        variant={isCompact ? 'compact' : 'default'}
       />
       <Modal
         isOpen={isExpandedEditorOpen}

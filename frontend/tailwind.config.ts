@@ -18,10 +18,21 @@ export default {
           900: '#111827',
         },
         amazon: {
+          50: '#fff7e6',
+          100: '#ffebc2',
+          200: '#ffd58a',
+          300: '#ffc45c',
           400: '#f7b733',
           500: '#ff9900',
           600: '#dd7d00',
+          700: '#b86600',
+          800: '#8f4f00',
         },
+      },
+      borderRadius: {
+        md: '8px',
+        lg: '8px',
+        xl: '12px',
       },
       boxShadow: {
         panel: '0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06)',

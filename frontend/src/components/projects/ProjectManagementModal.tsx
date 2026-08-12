@@ -1,6 +1,7 @@
 import { Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { type FormEvent, type ReactElement, useEffect, useMemo, useState } from 'react'
 import type { Project, ProjectId, ProjectMember, ProjectMemberCandidate, ProjectMemberRole, ProjectStatus, UserId } from '../../types/platform'
+import { PageHeader } from '../layout/PageHeader'
 import { Button } from '../ui/Button'
 import { EditorDrawer } from '../ui/EditorDrawer'
 import { Modal } from '../ui/Modal'
@@ -19,6 +20,7 @@ interface ProjectManagementModalProps {
   actionUserId: UserId | string | null
   candidates: ProjectMemberCandidate[]
   candidateStatus: 'idle' | 'loading' | 'success' | 'error'
+  canCreateProject?: boolean
   canDeleteProject: boolean
   canManageProjectMembers: boolean
   error: string | null
@@ -42,12 +44,15 @@ interface ProjectManagementModalProps {
   onSelectProject: (projectId: ProjectId) => void
   onUpdateMember: (projectId: ProjectId, userId: UserId | string, request: { role: ProjectMemberRole }) => void
   onUpdateProject: (projectId: ProjectId, request: { name?: string; brand?: string; asin?: string; site?: string; notes?: string; status?: ProjectStatus; sortOrder?: number }) => void
+  openEditorOnMount?: boolean
+  variant?: 'modal' | 'page'
 }
 
 export function ProjectManagementModal({
   actionUserId,
   candidates,
   candidateStatus,
+  canCreateProject = true,
   canDeleteProject,
   canManageProjectMembers,
   error,
@@ -71,6 +76,8 @@ export function ProjectManagementModal({
   onSelectProject,
   onUpdateMember,
   onUpdateProject,
+  openEditorOnMount = false,
+  variant = 'modal',
 }: ProjectManagementModalProps) {
   const [activeProjectId, setActiveProjectId] = useState<ProjectId | null>(null)
   const [isProjectEditorOpen, setProjectEditorOpen] = useState(false)
@@ -88,9 +95,12 @@ export function ProjectManagementModal({
     if (!isOpen) {
       return
     }
-    setActiveProjectId(initialProject?.id ?? null)
-    setProjectEditorOpen(true)
-  }, [initialProject?.id, isOpen])
+    setActiveProjectId(openEditorOnMount ? initialProject?.id ?? null : initialProject?.id ?? projects[0]?.id ?? null)
+    const shouldOpenEditor = variant === 'modal' || openEditorOnMount
+    if (shouldOpenEditor) {
+      setProjectEditorOpen(true)
+    }
+  }, [initialProject?.id, isOpen, openEditorOnMount, projects, variant])
 
   useEffect(() => {
     if (!activeProject) {
@@ -149,14 +159,12 @@ export function ProjectManagementModal({
     setMemberDraft({ userId: '', role: 'VIEWER' })
   }
 
-  return (
-    <>
-      <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={onClose} title="产品管理">
-        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+  const managementContent = (
+    <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="rounded-lg border border-ink-200 bg-ink-50 p-3">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-ink-900">产品列表</h3>
-            <button
+            {canCreateProject ? <button
               className="text-xs font-semibold text-amazon-700"
               onClick={() => {
                 setActiveProjectId(null)
@@ -166,7 +174,7 @@ export function ProjectManagementModal({
               type="button"
             >
               新建
-            </button>
+            </button> : null}
           </div>
           <div className="grid gap-2">
             {projects.map((project) => (
@@ -215,12 +223,12 @@ export function ProjectManagementModal({
             <section className="rounded-lg border border-dashed border-ink-200 bg-ink-50 px-4 py-10 text-center">
               <h3 className="text-sm font-semibold text-ink-800">选择一个产品查看详情</h3>
               <p className="mt-1 text-xs text-ink-500">编辑表单会在独立侧栏中打开，不会挤压产品列表和成员信息。</p>
-              <Button className="mt-4" icon={<Plus className="h-4 w-4" />} onClick={() => {
+              {canCreateProject ? <Button className="mt-4" icon={<Plus className="h-4 w-4" />} onClick={() => {
                 setDraft(emptyDraft())
                 setProjectEditorOpen(true)
               }} variant="primary">
                 新建产品
-              </Button>
+              </Button> : null}
             </section>
           )}
 
@@ -323,7 +331,27 @@ export function ProjectManagementModal({
           ) : null}
           </div>
         </div>
-      </Modal>
+  )
+
+  return (
+    <>
+      {variant === 'page' ? (
+        <div className="workspace-page">
+          <div className="workspace-page-inner">
+            <PageHeader
+              actions={canCreateProject ? createProjectAction(setActiveProjectId, setDraft, setProjectEditorOpen) : undefined}
+              description="集中管理产品资料、状态和协作成员；新建与编辑在右侧面板完成。"
+              eyebrow="产品与协作"
+              title="产品中心"
+            />
+            <div className="workspace-card p-4">{managementContent}</div>
+          </div>
+        </div>
+      ) : (
+        <Modal isOpen={isOpen} maxWidthClass="max-w-6xl" onClose={onClose} title="产品管理">
+          {managementContent}
+        </Modal>
+      )}
 
       <EditorDrawer
         isOpen={isOpen && isProjectEditorOpen}
@@ -412,6 +440,26 @@ function emptyDraft(): ProjectDraft {
     status: 'ACTIVE',
     sortOrder: '0',
   }
+}
+
+function createProjectAction(
+  setActiveProjectId: (projectId: ProjectId | null) => void,
+  setDraft: (draft: ProjectDraft) => void,
+  setProjectEditorOpen: (isOpen: boolean) => void,
+) {
+  return (
+    <Button
+      icon={<Plus className="h-4 w-4" />}
+      onClick={() => {
+        setActiveProjectId(null)
+        setDraft(emptyDraft())
+        setProjectEditorOpen(true)
+      }}
+      variant="primary"
+    >
+      新建产品
+    </Button>
+  )
 }
 
 function parseSortOrder(value: string): number | undefined {

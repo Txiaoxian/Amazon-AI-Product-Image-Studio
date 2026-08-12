@@ -47,6 +47,13 @@ func newAdminAuditUsageService(db *gorm.DB, log *slog.Logger, redactor *redactio
 
 func (s *adminAuditUsageService) RegisterRoutes(group *gin.RouterGroup) {
 	admin := group.Group("/admin")
+	admin.GET("/analytics/overview", s.AnalyticsOverview)
+	admin.GET("/analytics/usage", s.AnalyticsUsage)
+	admin.GET("/analytics/users", s.AnalyticsUsers)
+	admin.GET("/analytics/users/:id", s.AnalyticsUserDetail)
+	admin.GET("/analytics/tasks", s.AnalyticsTasks)
+	admin.GET("/analytics/requests", s.AnalyticsRequests)
+	admin.GET("/analytics/exports/:dataset", s.ExportAnalytics)
 	admin.GET("/usage/summary", s.UsageSummary)
 	admin.GET("/usage/records", s.ListUsageRecords)
 	admin.GET("/operation-logs", s.ListOperationLogs)
@@ -340,6 +347,10 @@ func parseAPICallLogListQuery(c *gin.Context) (auditlog.APICallLogListOptions, e
 	if err != nil {
 		return auditlog.APICallLogListOptions{}, err
 	}
+	imageType, err := cleanAdminReadFilter(c.Query("imageType"))
+	if err != nil {
+		return auditlog.APICallLogListOptions{}, err
+	}
 	status, err := cleanAPICallStatus(c.Query("status"))
 	if err != nil {
 		return auditlog.APICallLogListOptions{}, err
@@ -355,6 +366,7 @@ func parseAPICallLogListQuery(c *gin.Context) (auditlog.APICallLogListOptions, e
 		ProjectID:   projectID,
 		ProviderID:  providerID,
 		ModelID:     modelID,
+		ImageType:   imageType,
 		Status:      status,
 		RequestID:   requestID,
 	}, nil

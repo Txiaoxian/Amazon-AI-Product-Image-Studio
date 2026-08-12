@@ -22,6 +22,9 @@ func TestEstimateUsesDeterministicEightDecimalCostAndPricingAliases(t *testing.T
 	if result.EstimatedCost != "1.00000000" {
 		t.Fatalf("estimated cost = %q, want 1.00000000", result.EstimatedCost)
 	}
+	if result.Status != StatusCalculated {
+		t.Fatalf("status = %q, want %q", result.Status, StatusCalculated)
+	}
 }
 
 func TestEstimateRoundsDeterministicallyToEightDecimals(t *testing.T) {
@@ -103,6 +106,9 @@ func TestEstimateReturnsZeroForMissingInvalidNegativeOrIncompletePricing(t *test
 			if result.EstimatedCost != "0.00000000" {
 				t.Fatalf("estimated cost = %q, want 0.00000000", result.EstimatedCost)
 			}
+			if result.Status != StatusUnavailable {
+				t.Fatalf("status = %q, want %q", result.Status, StatusUnavailable)
+			}
 		})
 	}
 }
@@ -117,5 +123,14 @@ func TestSumDecimal8PreservesLargeDecimalWithoutFloat(t *testing.T) {
 	got := SumDecimal8([]string{"9999999999.99999999", "0.00000001"})
 	if got != "10000000000.00000000" {
 		t.Fatalf("sum decimal = %q, want 10000000000.00000000", got)
+	}
+}
+
+func TestDivideDecimal8UsesExactDecimalAndHandlesZeroDenominator(t *testing.T) {
+	if got := DivideDecimal8("1.00000000", 3); got != "0.33333333" {
+		t.Fatalf("divided decimal = %q, want 0.33333333", got)
+	}
+	if got := DivideDecimal8("1.00000000", 0); got != "0.00000000" {
+		t.Fatalf("zero denominator = %q, want 0.00000000", got)
 	}
 }

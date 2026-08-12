@@ -38,7 +38,7 @@ if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
     --volume "${REPO_ROOT}/frontend:/workspace" \
     --workdir /workspace \
     "${FRONTEND_TEST_NODE_IMAGE:-docker.m.daocloud.io/library/node:24-alpine}" \
-    sh -lc 'npm ci && npm run lint && npm run type-check && npm test && npm audit --omit=dev --audit-level=high'
+    sh -lc 'npm ci && npm run lint && npm run type-check && npm test -- --no-file-parallelism && npm audit --omit=dev --audit-level=high'
 else
   printf '警告：SKIP_TESTS=1，已跳过源码测试。\n' >&2
 fi

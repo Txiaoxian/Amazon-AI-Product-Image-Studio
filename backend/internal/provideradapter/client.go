@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -23,20 +24,27 @@ const (
 	defaultMaxResponseBytes = 1 << 30
 	defaultMaxImageBytes    = 512 << 20
 	maxProviderErrorBytes   = 1 << 20
+	gptImage2MaxEdge        = 3840
+	gptImage2MaxPixels      = 3840 * 2160
 )
 
-var gptImage2AspectRatioSizes = map[string]string{
-	"1:1":    "1024x1024",
-	"1.62:1": "1296x800",
-	"2:3":    "1024x1536",
-	"3:2":    "1536x1024",
-	"3:4":    "1152x1536",
-	"4:3":    "1536x1152",
-	"4:5":    "1024x1280",
-	"5:4":    "1280x1024",
-	"9:16":   "864x1536",
-	"16:9":   "1536x864",
-	"21:9":   "1792x768",
+type imageDimensions struct {
+	width  int
+	height int
+}
+
+var gptImage2AspectRatioSizes = map[string]imageDimensions{
+	"1:1":    {width: 1024, height: 1024},
+	"1.62:1": {width: 1296, height: 800},
+	"2:3":    {width: 1024, height: 1536},
+	"3:2":    {width: 1536, height: 1024},
+	"3:4":    {width: 1152, height: 1536},
+	"4:3":    {width: 1536, height: 1152},
+	"4:5":    {width: 1024, height: 1280},
+	"5:4":    {width: 1280, height: 1024},
+	"9:16":   {width: 864, height: 1536},
+	"16:9":   {width: 1536, height: 864},
+	"21:9":   {width: 1792, height: 768},
 }
 
 type ClientOptions struct {
@@ -395,10 +403,53 @@ func openAIImageSize(req ImageRequest) string {
 	if modelName != "gpt-image-2" && !strings.HasPrefix(modelName, "gpt-image-2-") {
 		return size
 	}
-	if mapped, exists := gptImage2AspectRatioSizes[size]; exists {
-		return mapped
+	if dimensions, exists := gptImage2AspectRatioSizes[size]; exists {
+		dimensions = gptImage2ResolutionDimensions(dimensions, parameterString(req.Parameters, "quality"))
+		return fmt.Sprintf("%dx%d", dimensions.width, dimensions.height)
 	}
 	return size
+}
+
+func gptImage2ResolutionDimensions(base imageDimensions, quality string) imageDimensions {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "medium":
+		return imageDimensions{width: base.width * 2, height: base.height * 2}
+	case "high":
+		return maxDimensionsForAspectRatio(base, gptImage2MaxEdge, gptImage2MaxPixels)
+	default:
+		return base
+	}
+}
+
+func maxDimensionsForAspectRatio(base imageDimensions, maxEdge int, maxPixels int) imageDimensions {
+	divisor := greatestCommonDivisor(base.width, base.height)
+	if divisor <= 0 || maxEdge <= 0 || maxPixels <= 0 {
+		return base
+	}
+
+	ratioWidth := base.width / divisor
+	ratioHeight := base.height / divisor
+	longestRatioEdge := ratioWidth
+	if ratioHeight > longestRatioEdge {
+		longestRatioEdge = ratioHeight
+	}
+	multipleByEdge := maxEdge / longestRatioEdge
+	multipleByPixels := int(math.Sqrt(float64(maxPixels) / float64(ratioWidth*ratioHeight)))
+	multiple := multipleByEdge
+	if multipleByPixels < multiple {
+		multiple = multipleByPixels
+	}
+	if multiple <= 0 {
+		return base
+	}
+	return imageDimensions{width: ratioWidth * multiple, height: ratioHeight * multiple}
+}
+
+func greatestCommonDivisor(left int, right int) int {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	return left
 }
 
 func geminiPayload(req ImageRequest) map[string]any {

@@ -207,6 +207,28 @@ func TestUserModelAccessGrantMigrationUsesTenantScopedForeignKeys(t *testing.T) 
 	}
 }
 
+func TestAdminAnalyticsFoundationMigrationKeepsHistoricalCostUnknownAndAddsTenantTimeIndexes(t *testing.T) {
+	statements := findMigrationStatements(t, "202608110001_admin_analytics_foundation")
+	joined := strings.Join(statements, "\n")
+	for _, required := range []string{
+		"cost_status VARCHAR(32) NOT NULL DEFAULT 'LEGACY_UNKNOWN'",
+		"pricing_snapshot_json JSON NULL",
+		"idx_generation_tasks_tenant_created ON generation_tasks (tenant_id, created_at)",
+		"idx_task_outputs_tenant_created ON task_outputs (tenant_id, created_at)",
+		"idx_api_call_logs_tenant_provider_created ON api_call_logs (tenant_id, provider_id, created_at)",
+		"idx_usage_records_tenant_provider_created ON usage_records (tenant_id, provider_id, created_at)",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("admin analytics foundation migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"UPDATE usage_records SET estimated_cost", "DROP TABLE", "DELETE FROM"} {
+		if strings.Contains(strings.ToUpper(joined), strings.ToUpper(forbidden)) {
+			t.Fatalf("admin analytics foundation migration must not include %q", forbidden)
+		}
+	}
+}
+
 func TestImageAssetsMigrationStoresMetadataOnly(t *testing.T) {
 	statement := findCreateTableStatement(t, "image_assets")
 	for _, required := range []string{

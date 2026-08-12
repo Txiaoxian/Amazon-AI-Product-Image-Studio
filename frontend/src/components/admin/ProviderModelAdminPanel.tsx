@@ -3,6 +3,7 @@ import { cloneElement, useCallback, useEffect, useMemo, useState, type ReactElem
 import { isApiClientError } from '../../api/client'
 import { modelApi as defaultModelApi, type CreateModelRequest, type ModelApi, type UpdateModelRequest } from '../../api/models'
 import { providerApi as defaultProviderApi, type ProviderApi } from '../../api/providers'
+import { apiCallStatusLabel, entityStatusLabel, formatDuration, providerTypeLabel } from '../../lib/adminPresentation'
 import {
   MODEL_CAPABILITY_TEMPLATES,
   labelForQualityPreset,
@@ -69,16 +70,9 @@ interface ModelDraft {
 const PAGE_SIZE = 50
 const MAX_PROVIDER_TIMEOUT_SECONDS = 600
 
-const providerTypeOptions: Array<{ value: ProviderType; label: string }> = [
-  { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-Compatible 中转接口' },
-  { value: 'OPENAI', label: 'OpenAI 官方接口' },
-  { value: 'GEMINI', label: 'Gemini 官方接口' },
-]
+const providerTypeOptions = (['OPENAI_COMPATIBLE', 'OPENAI', 'GEMINI'] as const).map((value) => ({ value, label: providerTypeLabel(value) })) satisfies Array<{ value: ProviderType; label: string }>
 
-const statusOptions: Array<{ value: ProviderStatus; label: string }> = [
-  { value: 'ENABLED', label: '启用' },
-  { value: 'DISABLED', label: '禁用' },
-]
+const statusOptions = (['ENABLED', 'DISABLED'] as const).map((value) => ({ value, label: entityStatusLabel(value) })) satisfies Array<{ value: ProviderStatus; label: string }>
 
 export function ProviderModelAdminPanel({
   isOpen,
@@ -205,7 +199,7 @@ export function ProviderModelAdminPanel({
 
   const submitProvider = async () => {
     if (!csrfToken) {
-      setProviderFormError('登录状态缺少 CSRF 凭据，请重新登录。')
+      setProviderFormError('登录状态缺少安全凭据，请重新登录。')
       return
     }
 
@@ -232,7 +226,7 @@ export function ProviderModelAdminPanel({
 
   const submitModel = async () => {
     if (!csrfToken) {
-      setModelFormError('登录状态缺少 CSRF 凭据，请重新登录。')
+      setModelFormError('登录状态缺少安全凭据，请重新登录。')
       return
     }
 
@@ -259,7 +253,7 @@ export function ProviderModelAdminPanel({
 
   const runProviderAction = async (provider: Provider, action: 'enable' | 'disable' | 'delete' | 'test') => {
     if (!csrfToken) {
-      setProviderError('登录状态缺少 CSRF 凭据，请重新登录。')
+      setProviderError('登录状态缺少安全凭据，请重新登录。')
       return
     }
     if (action === 'delete' && !window.confirm(`确定删除中转站 ${provider.name} 吗？`)) {
@@ -277,14 +271,14 @@ export function ProviderModelAdminPanel({
       } else if (action === 'disable') {
         const saved = await providerApi.disable(provider.id, csrfToken)
         setProviders((current) => upsertById(current, saved))
-        setProviderNotice('中转站已禁用。')
+        setProviderNotice('中转站已停用。')
       } else if (action === 'delete') {
         await providerApi.delete(provider.id, csrfToken)
         setProviders((current) => current.filter((item) => item.id !== provider.id))
         setProviderNotice('中转站已删除。')
       } else {
         const result = await providerApi.test(provider.id, csrfToken)
-        setProviderNotice(`${result.message} ${result.durationMs}ms`)
+        setProviderNotice(`连接测试${apiCallStatusLabel(result.status)}，耗时${formatDuration(result.durationMs)}。`)
         await refreshProviders()
       }
     } catch (error) {
@@ -296,7 +290,7 @@ export function ProviderModelAdminPanel({
 
   const runModelAction = async (model: Model, action: 'enable' | 'disable' | 'delete') => {
     if (!csrfToken) {
-      setModelError('登录状态缺少 CSRF 凭据，请重新登录。')
+      setModelError('登录状态缺少安全凭据，请重新登录。')
       return
     }
     if (action === 'delete' && !window.confirm(`确定删除模型 ${model.displayName} 吗？`)) {
@@ -314,7 +308,7 @@ export function ProviderModelAdminPanel({
       } else if (action === 'disable') {
         const saved = await modelApi.disable(model.id, csrfToken)
         setModels((current) => upsertById(current, saved))
-        setModelNotice('模型已禁用。')
+        setModelNotice('模型已停用。')
       } else {
         await modelApi.delete(model.id, csrfToken)
         setModels((current) => current.filter((item) => item.id !== model.id))
@@ -489,7 +483,7 @@ function ProviderManagementView({
 
         {isLoading ? <p className="rounded-md bg-ink-50 px-4 py-8 text-center text-sm text-ink-500">正在加载中转站...</p> : null}
         {!isLoading && providers.length === 0 ? (
-          <EmptyState title="暂无中转站" body="创建中转站后可在这里启用、禁用、测试或维护密钥元数据。" />
+          <EmptyState title="暂无中转站" body="创建中转站后可在这里启用、停用、测试或维护密钥信息。" />
         ) : null}
 
         <div className="space-y-2">
@@ -555,11 +549,11 @@ function ProviderListItem({ provider, actionId, onAction, onEdit }: ProviderList
           </button>
           {provider.status === 'ENABLED' ? (
             <button
-              aria-label={`禁用中转站 ${provider.name}`}
+              aria-label={`停用中转站 ${provider.name}`}
               className="icon-button h-8 w-8"
               disabled={isPending}
               onClick={() => onAction(provider, 'disable')}
-              title="禁用"
+              title="停用"
               type="button"
             >
               <PowerOff className="h-4 w-4" />
@@ -799,11 +793,11 @@ function ModelListItem({ model, actionId, onAction, onEdit }: ModelListItemProps
           </button>
           {model.status === 'ENABLED' ? (
             <button
-              aria-label={`禁用模型 ${model.displayName}`}
+              aria-label={`停用模型 ${model.displayName}`}
               className="icon-button h-8 w-8"
               disabled={isPending}
               onClick={() => onAction(model, 'disable')}
-              title="禁用"
+              title="停用"
               type="button"
             >
               <PowerOff className="h-4 w-4" />
@@ -847,7 +841,7 @@ interface ModelFormProps {
 
 function ModelForm({ providers, draft, error, isSaving, onDraftChange, onSubmit }: ModelFormProps) {
   const selectedProvider = providers.find((provider) => provider.id === draft.providerId)
-  const parameterPresets = modelParameterPresetsForProvider(selectedProvider?.type ?? 'OPENAI_COMPATIBLE')
+  const parameterPresets = modelParameterPresetsForProvider(selectedProvider?.type ?? 'OPENAI_COMPATIBLE', draft.modelName)
   const templateOptions = selectedProvider
     ? MODEL_CAPABILITY_TEMPLATES.filter((template) => template.providerType === selectedProvider.type)
     : MODEL_CAPABILITY_TEMPLATES
@@ -1165,7 +1159,7 @@ function StatusBadge({ status }: { status: ProviderStatus | ModelStatus }) {
 
   return (
     <span className={`rounded-md px-2 py-1 text-xs font-semibold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
-      {enabled ? '启用' : '禁用'}
+      {entityStatusLabel(status)}
     </span>
   )
 }
@@ -1327,7 +1321,7 @@ function formatSizeList(values: string[]): string {
 }
 
 function formatQualityList(values: string[]): string {
-  return values.map(labelForQualityPreset).join(', ')
+  return values.map((value) => labelForQualityPreset(value)).join(', ')
 }
 
 function parseUnitPrices(value: string): Record<string, number> {
@@ -1384,11 +1378,15 @@ function formatAdminError(error: unknown): string {
         ? message
         : '表单内容未通过校验，请检查填写内容。'
     }
-    return error.message
+    if (error.status === 0) {
+      return '网络连接异常，中转站与模型管理暂时无法完成请求，请稍后重试。'
+    }
+    return '中转站与模型管理服务暂时不可用，请稍后重试。'
   }
 
   if (error instanceof Error) {
-    return error.message
+    const message = error.message.trim()
+    return /[\u3400-\u9fff]/.test(message) ? message : '请求未完成，请检查输入后重试。'
   }
 
   return '请求失败，请稍后重试。'
@@ -1400,7 +1398,7 @@ function formatProviderTest(provider: Provider): string {
   }
 
   const testedAt = provider.lastTestedAt ? ` · ${formatDateTime(provider.lastTestedAt)}` : ''
-  return `${provider.lastTestStatus}${testedAt}`
+  return `${apiCallStatusLabel(provider.lastTestStatus)}${testedAt}`
 }
 
 function formatDateTime(value: string): string {

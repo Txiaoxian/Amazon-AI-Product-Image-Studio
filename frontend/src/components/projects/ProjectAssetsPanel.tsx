@@ -1,8 +1,9 @@
 import { Download, Eye, ImagePlus, Loader2, RefreshCw, Star, Trash2, UploadCloud } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { formatBytes } from '../../lib/storageLimit'
-import type { Asset, AssetKind, ProjectId } from '../../types/platform'
+import type { Asset, AssetKind, Project, ProjectId } from '../../types/platform'
 import { WORKBENCH_IMAGE_TYPE_OPTIONS, type WorkbenchImageType } from '../../types/workbench'
+import { PageHeader } from '../layout/PageHeader'
 import { Button } from '../ui/Button'
 
 interface ProjectAssetsPanelProps {
@@ -26,6 +27,9 @@ interface ProjectAssetsPanelProps {
   onUpdateAssetFilters: (filters: { favorite?: boolean; kind?: AssetKind; imageType?: WorkbenchImageType }) => void
   onUploadReferences: (files: FileList) => void
   onUseAssetAsReference: (asset: Asset) => void
+  onSelectProject?: (projectId: ProjectId) => void
+  projects?: Project[]
+  variant?: 'panel' | 'page'
 }
 
 export function ProjectAssetsPanel({
@@ -45,6 +49,9 @@ export function ProjectAssetsPanel({
   onUpdateAssetFilters,
   onUploadReferences,
   onUseAssetAsReference,
+  onSelectProject,
+  projects = [],
+  variant = 'panel',
 }: ProjectAssetsPanelProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const [kind, setKind] = useState<AssetKind | ''>(assetFilters.kind ?? '')
@@ -80,8 +87,8 @@ export function ProjectAssetsPanel({
     })
   }
 
-  return (
-    <aside className="flex min-h-0 flex-col rounded-lg border border-ink-200 bg-white">
+  const panel = (
+    <section className={`flex min-h-0 flex-col rounded-xl border border-ink-200 bg-white ${variant === 'page' ? 'project-assets-page-panel' : ''}`}>
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-ink-900">产品素材库</h2>
@@ -271,7 +278,7 @@ export function ProjectAssetsPanel({
           </div>
         ) : null}
 
-        <div className="space-y-2">
+        <div className={variant === 'page' ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}>
           {assets.map((asset) => (
             <AssetListItem
               asset={asset}
@@ -286,8 +293,33 @@ export function ProjectAssetsPanel({
           ))}
         </div>
       </div>
-    </aside>
+    </section>
   )
+
+  if (variant === 'page') {
+    return (
+      <div className="workspace-page">
+        <div className="workspace-page-inner">
+          <PageHeader
+            actions={projects.length > 0 && onSelectProject ? (
+              <label className="grid min-w-56 gap-1 text-xs font-semibold text-ink-600">
+                当前产品
+                <select className="field-input bg-white" onChange={(event) => onSelectProject(event.target.value as ProjectId)} value={selectedProjectId ?? ''}>
+                  {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                </select>
+              </label>
+            ) : undefined}
+            description="上传、筛选和复用产品参考图及生成结果，所有资产操作都保留在当前页面。"
+            eyebrow="图片资源"
+            title="素材库"
+          />
+          {panel}
+        </div>
+      </div>
+    )
+  }
+
+  return panel
 }
 
 interface AssetListItemProps {

@@ -1,7 +1,9 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { ProviderModelAdminPanel } from '../components/admin/ProviderModelAdminPanel'
 
 const baseSession = {
   user: {
@@ -106,6 +108,26 @@ function getBrowserStorage(prefix: string): Storage {
   return Reflect.get(globalThis, `${prefix}Storage`) as Storage
 }
 
+function ProviderPanelHarness() {
+  const [isOpen, setOpen] = useState(true)
+  return (
+    <>
+      {!isOpen ? <button onClick={() => setOpen(true)} type="button">重新打开中转站与模型配置</button> : null}
+      <ProviderModelAdminPanel
+        canManageModels
+        canManageProviders
+        csrfToken="csrf_from_me"
+        isOpen={isOpen}
+        onClose={() => setOpen(false)}
+      />
+    </>
+  )
+}
+
+function renderProviderPanel() {
+  render(<ProviderPanelHarness />)
+}
+
 describe('admin Provider and model management UI', () => {
   beforeEach(() => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -139,14 +161,14 @@ describe('admin Provider and model management UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: '中转站与模型管理' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: '观测与设置' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '管理控制台' })).not.toBeInTheDocument()
+    expect(screen.queryByText('中转站与模型管理')).not.toBeInTheDocument()
+    expect(screen.queryByText('观测与设置')).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => url.startsWith('/api/v1/admin/'))).toBe(false)
   })
 
-  it('shows the observability/settings entry from current session permissions without exposing Provider management', async () => {
-    const user = userEvent.setup()
+  it('uses the unified workspace navigation and removes the legacy modal entries', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
 
@@ -162,32 +184,20 @@ describe('admin Provider and model management UI', () => {
       if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
         return successResponse(page([]))
       }
-      if (url === '/api/v1/admin/usage/summary?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc&dimension=provider') {
-        return successResponse(page([]))
-      }
-      if (url === '/api/v1/admin/usage/records?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc') {
-        return successResponse(page([]))
-      }
-
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
+    const navigation = screen.getByRole('navigation', { name: '工作区导航' })
+    expect(within(navigation).getByRole('button', { name: '数据看板' })).toBeInTheDocument()
+    expect(within(navigation).queryByRole('button', { name: '设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '管理控制台' })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: '中转站与模型管理' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '观测与设置' }))
-
-    expect(await screen.findByRole('heading', { name: '管理端观测与设置' })).toBeInTheDocument()
-    expect(await screen.findByText('暂无用量汇总')).toBeInTheDocument()
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain(
-      '/api/v1/admin/usage/summary?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc&dimension=provider',
-    )
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain(
-      '/api/v1/admin/usage/records?pageNum=1&pageSize=10&sortBy=createdAt&sortOrder=desc',
-    )
+    expect(screen.queryByRole('menuitem', { name: '观测与设置' })).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => url.startsWith('/api/v1/admin/'))).toBe(false)
   })
 
   it('submits Provider keys once and keeps only masked metadata visible after save', async () => {
@@ -219,10 +229,8 @@ describe('admin Provider and model management UI', () => {
     })
     vi.stubGlobal('fetch', fetchImpl)
 
-    render(<App />)
+    renderProviderPanel()
 
-    await user.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '中转站与模型管理' }))
     expect(await screen.findByRole('heading', { name: 'AI 中转站与模型管理' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '新建中转站' }))
 
@@ -281,17 +289,14 @@ describe('admin Provider and model management UI', () => {
     })
     vi.stubGlobal('fetch', fetchImpl)
 
-    render(<App />)
+    renderProviderPanel()
 
-    await user.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '中转站与模型管理' }))
     await user.click(screen.getByRole('button', { name: '新建中转站' }))
     await user.type(await screen.findByLabelText('密钥（API Key）'), plainKey)
     expect(screen.getByLabelText('密钥（API Key）')).toHaveValue(plainKey)
 
     await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
-    await user.click(screen.getByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '中转站与模型管理' }))
+    await user.click(screen.getByRole('button', { name: '重新打开中转站与模型配置' }))
     await user.click(screen.getByRole('button', { name: '新建中转站' }))
 
     expect(await screen.findByLabelText('密钥（API Key）')).toHaveValue('')
@@ -328,10 +333,8 @@ describe('admin Provider and model management UI', () => {
     })
     vi.stubGlobal('fetch', fetchImpl)
 
-    render(<App />)
+    renderProviderPanel()
 
-    await user.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '中转站与模型管理' }))
 
     expect(await screen.findByText('当前账号没有此管理权限。')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '新建中转站' }))
@@ -368,10 +371,8 @@ describe('admin Provider and model management UI', () => {
     })
     vi.stubGlobal('fetch', fetchImpl)
 
-    render(<App />)
+    renderProviderPanel()
 
-    await user.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await user.click(screen.getByRole('menuitem', { name: '中转站与模型管理' }))
     await user.click(await screen.findByRole('button', { name: '模型' }))
 
     expect(screen.queryByRole('dialog', { name: '新建模型' })).not.toBeInTheDocument()

@@ -1,5 +1,5 @@
 import { Bell, CheckCircle2, Clock3, Eye, Loader2, RotateCcw, X, XCircle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { GenerationNotification, ManagedGenerationTask } from '../../hooks/useGeneration'
 import type { Project, ProjectId, TaskId, TaskStatus } from '../../types/platform'
 import { normalizeWorkbenchImageType, WORKBENCH_IMAGE_TYPE_OPTIONS, type WorkbenchImageType } from '../../types/workbench'
@@ -19,7 +19,7 @@ export function TaskCenterButton({ activeTaskCount, onClick }: TaskCenterButtonP
       type="button"
     >
       <Bell className="h-4 w-4" />
-      <span className="hidden sm:inline">任务</span>
+      <span className="hidden sm:inline">任务中心</span>
       {activeTaskCount > 0 ? (
         <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amazon-500 px-1.5 py-0.5 text-xs font-bold text-ink-950">
           {activeTaskCount}
@@ -30,6 +30,7 @@ export function TaskCenterButton({ activeTaskCount, onClick }: TaskCenterButtonP
 }
 
 interface TaskCenterProps {
+  history?: ReactNode
   isOpen: boolean
   tasks: ManagedGenerationTask[]
   projects: Project[]
@@ -41,6 +42,7 @@ interface TaskCenterProps {
 }
 
 export function TaskCenter({
+  history,
   isOpen,
   tasks,
   projects,
@@ -50,9 +52,38 @@ export function TaskCenter({
   onRetry,
   onView,
 }: TaskCenterProps) {
+  const [section, setSection] = useState<'tasks' | 'history'>('tasks')
+
   return (
     <Modal isOpen={isOpen} maxWidthClass="max-w-2xl" onClose={onClose} title="任务中心">
-      {tasks.length === 0 ? (
+      {history ? (
+        <div aria-label="任务中心内容" className="mb-4 grid grid-cols-2 rounded-lg bg-ink-100 p-1" role="tablist">
+          <button
+            aria-selected={section === 'tasks'}
+            className={`min-h-10 rounded-md px-3 text-sm font-semibold transition ${section === 'tasks' ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-900'}`}
+            onClick={() => setSection('tasks')}
+            role="tab"
+            type="button"
+          >
+            进行中任务
+          </button>
+          <button
+            aria-selected={section === 'history'}
+            className={`min-h-10 rounded-md px-3 text-sm font-semibold transition ${section === 'history' ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-900'}`}
+            onClick={() => setSection('history')}
+            role="tab"
+            type="button"
+          >
+            生成历史
+          </button>
+        </div>
+      ) : null}
+
+      {section === 'history' && history ? (
+        <aside aria-label="图片生成历史" className="max-h-[65dvh] overflow-y-auto rounded-lg border border-ink-200">
+          {history}
+        </aside>
+      ) : tasks.length === 0 ? (
         <div className="rounded-lg border border-dashed border-ink-300 bg-ink-50 px-5 py-12 text-center">
           <Clock3 className="mx-auto h-9 w-9 text-ink-300" />
           <p className="mt-3 text-sm font-semibold text-ink-700">还没有生成任务</p>

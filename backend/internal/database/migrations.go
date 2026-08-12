@@ -1000,4 +1000,28 @@ JOIN ai_models ON ai_models.tenant_id = users.tenant_id AND ai_models.deleted_at
 `,
 		},
 	},
+	{
+		ID:   "202608110001_admin_analytics_foundation",
+		Name: "add admin analytics cost provenance and tenant time indexes",
+		Checks: []SchemaCheck{
+			schemaCheck("generation_tasks", nil, []string{"idx_generation_tasks_tenant_created", "idx_generation_tasks_tenant_provider_created", "idx_generation_tasks_tenant_model_created"}),
+			schemaCheck("task_outputs", nil, []string{"idx_task_outputs_tenant_created"}),
+			schemaCheck("api_call_logs", nil, []string{"idx_api_call_logs_tenant_provider_created", "idx_api_call_logs_tenant_model_created", "idx_api_call_logs_tenant_status_created"}),
+			schemaCheck("usage_records", []string{"cost_status", "pricing_snapshot_json"}, []string{"idx_usage_records_tenant_created", "idx_usage_records_tenant_provider_created", "idx_usage_records_tenant_model_created"}),
+		},
+		Statements: []string{
+			`ALTER TABLE usage_records ADD COLUMN cost_status VARCHAR(32) NOT NULL DEFAULT 'LEGACY_UNKNOWN'`,
+			`ALTER TABLE usage_records ADD COLUMN pricing_snapshot_json JSON NULL`,
+			`CREATE INDEX idx_generation_tasks_tenant_created ON generation_tasks (tenant_id, created_at)`,
+			`CREATE INDEX idx_generation_tasks_tenant_provider_created ON generation_tasks (tenant_id, provider_id, created_at)`,
+			`CREATE INDEX idx_generation_tasks_tenant_model_created ON generation_tasks (tenant_id, model_id, created_at)`,
+			`CREATE INDEX idx_task_outputs_tenant_created ON task_outputs (tenant_id, created_at)`,
+			`CREATE INDEX idx_api_call_logs_tenant_provider_created ON api_call_logs (tenant_id, provider_id, created_at)`,
+			`CREATE INDEX idx_api_call_logs_tenant_model_created ON api_call_logs (tenant_id, model_id, created_at)`,
+			`CREATE INDEX idx_api_call_logs_tenant_status_created ON api_call_logs (tenant_id, status, created_at)`,
+			`CREATE INDEX idx_usage_records_tenant_created ON usage_records (tenant_id, created_at)`,
+			`CREATE INDEX idx_usage_records_tenant_provider_created ON usage_records (tenant_id, provider_id, created_at)`,
+			`CREATE INDEX idx_usage_records_tenant_model_created ON usage_records (tenant_id, model_id, created_at)`,
+		},
+	},
 }

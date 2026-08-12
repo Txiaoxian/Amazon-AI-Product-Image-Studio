@@ -43,6 +43,7 @@ export interface OperationLogQuery extends AdminPageQuery {
 }
 
 export interface ApiCallLogQuery extends AdminUsageQuery {
+  imageType?: string
   status?: ApiCallLogStatus
   requestId?: string
 }
@@ -72,6 +73,7 @@ export interface UsageRecord {
   imageCount: number
   estimatedCost: string
   currency: string
+  costStatus: string
   rawUsage: RedactedMetadata
   createdAt: ISODateTimeString
 }
@@ -80,6 +82,8 @@ export interface OperationLog {
   id: string
   tenantId: TenantId
   actorUserId: UserId | null
+  actorName?: string
+  actorEmail?: string
   action: string
   resourceType: string
   resourceId: string
@@ -94,7 +98,9 @@ export interface ApiCallLog {
   tenantId: TenantId
   taskId: TaskId
   providerId: ProviderId
+  providerName?: string
   modelId: ModelId
+  modelName?: string
   status: ApiCallLogStatus
   durationMs: number
   requestId: string

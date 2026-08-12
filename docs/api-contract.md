@@ -410,9 +410,9 @@ P6 的模型请求字段：
 - `supportsGenerate`、`supportsEdit`、`supportsMultiReference`、`supportsN`。
 - `maxOutputCount`：正整数，受`supportsN`约束。
 - `supportedSizes`、`supportedQualities`、`supportedOutputFormats`：字符串数组，按结构化JSON进行验证和存储。
-- `supportedQualities` accepts normalized values for two Provider-specific meanings. OpenAI `gpt-image-2` uses the official ordered values `auto`, `low`, `medium`, `high`; the frontend displays them as “自动、低质量、中等质量、高质量”, while the adapter sends the original protocol values unchanged. Gemini output resolution remains `1k`, `2k`, `4k`, stored in lowercase and converted to Provider-required uppercase at request time. Legacy `standard`/`hd` values remain readable for existing rows but are not offered by the `gpt-image-2` preset.
-- 对于OpenAI和OpenAI兼容`gpt-image-2`、`supportedSizes`存储平台的有序宽高比选择：`auto`、`1:1`， `1.62:1`、`2:3`、`3:2`、`3:4`、`4:3`、`4:5`、`5:4`、 `9:16`，`16:9`，`21:9`。在Provider调用时，后端适配器将非自动比率转换为OpenAI兼容的`WIDTHxHEIGHT`值。现有的显式像素值仍然被接受并保持不变以实现向后兼容性。
-- Frontend model editing and generation use matching labels for those semantics: OpenAI-style `gpt-image-2` models show “图片比例 / 生成质量”; Gemini models show “画面比例 / 输出分辨率”. Presets are UI helpers only; the backend model row remains the trusted persisted capability source.
+- `supportedQualities` accepts normalized values for two Provider-specific meanings. OpenAI `gpt-image-2` uses the official ordered values `auto`, `low`, `medium`, `high`; the frontend displays them as “自动、低质量（1K）、中等质量（2K）、高质量（4K）”. The adapter sends the original quality value unchanged and also uses `low`/`medium`/`high` to select the platform 1K/2K/4K pixel-size tier. Gemini output resolution remains `1k`, `2k`, `4k`, stored in lowercase and converted to Provider-required uppercase at request time. Legacy `standard`/`hd` values remain readable for existing rows but are not offered by the `gpt-image-2` preset.
+- 对于OpenAI和OpenAI兼容`gpt-image-2`、`supportedSizes`存储平台的有序宽高比选择：`auto`、`1:1`， `1.62:1`、`2:3`、`3:2`、`3:4`、`4:3`、`4:5`、`5:4`、 `9:16`，`16:9`，`21:9`。在Provider调用时，后端适配器结合非自动比例与质量值生成OpenAI兼容的`WIDTHxHEIGHT`：`low`使用1K基础尺寸，`medium`将宽高各放大2倍，`high`在保持比例的前提下使用不超过最长边`3840`且不超过`8,294,400`总像素的最大4K档尺寸；`auto`质量使用基础尺寸。现有的显式像素值仍然被接受并保持不变以实现向后兼容性。
+- Frontend model editing and generation use matching labels for those semantics: OpenAI-style `gpt-image-2` models show “图片比例 / 生成质量” and include the 1K/2K/4K tier in each fixed quality option; Gemini models show “画面比例 / 输出分辨率”. Presets are UI helpers only; the backend model row remains the trusted persisted capability source.
 - `pricing`：结构化JSON，包含货币和单价；准确的Provider计费解释可以在P7使用量核算之前细化。
 - `status`：`ENABLED`或`DISABLED`； enable/disable端点是首选状态转换API。
 
@@ -475,6 +475,46 @@ P14 usage/cost 报告合同：
 - Usage/cost查询保持租户范围，分页，在相同时间戳下稳定，并且已脱敏。仅在递归编辑后才能返回原始使用情况。
 - 汇总成本字符串保留精确的小数值，并且不会通过浮点转换进行舍入。多币种结果按维度和币种分组。
 - 当前P14实施状态：后端usage/cost报告、前端成本可观察性和R14已合并和审查。前端管理使用选项卡使用此合同来获取租户总数、tenant/user/project/Provider/model摘要、过滤器、深入分析、多货币显示和使用记录，而无需客户端权威成本重新计算。
+
+### 新版管理统计 API
+
+新版 `/admin/*` 控制台使用后端聚合接口，不再下载明细后由浏览器临时汇总：
+
+- `GET /admin/analytics/overview`：经营总览、对比变化、趋势、排行和异常聚合。
+- `GET /admin/analytics/usage`：用量、预计费用、定价覆盖率、实际出图、单张预计费用和分组明细。
+- `GET /admin/analytics/users`：用户活跃与生命周期分页列表。
+- `GET /admin/analytics/users/:id`：单个用户趋势、常用项目/模型、费用和失败任务。
+- `GET /admin/analytics/tasks`：生图任务汇总与分页明细。
+- `GET /admin/analytics/requests`：模型调用趋势、中转站健康和异常聚合。
+- `GET /admin/analytics/exports/:dataset`：导出 `usage|users|tasks|requests`，文件名和表头使用简体中文并带 UTF-8 BOM。
+
+通用查询参数：
+
+- `from`、`to`：统计日期或 RFC3339 时间；日期按 `Asia/Shanghai` 解释，结束日期包含当天。默认最近 30 天，最长 366 天。
+- `granularity=hour|day|week`、`compare=true|false`。
+- `userId`、`projectId`、`providerId`、`modelId`、`status`、`imageType`。
+- 用量接口额外支持 `groupBy=user|project|provider|model|imageType`；用户与任务列表支持 `pageNum`、`pageSize`，用户列表还支持 `search`。
+
+响应规则：
+
+- `meta` 返回实际时间边界、时区、粒度、对比周期、`costType=ESTIMATED` 和生成时间。
+- 聚合同时返回稳定 ID 与显示名称；默认界面优先使用名称，ID 仅用于钻取和技术详情。
+- 金额均为精确十进制字符串并按币种分组。`usage.unitCosts` 由后端按“该币种预计费用 ÷ 实际出图张数”计算；无出图时 `available=false`。
+- `pricingCoverage` 等于 `CALCULATED` 用量记录数除以全部用量记录数。历史零费用不会按当前模型价格倒算。
+- 生图活跃用户为周期内创建过至少一个生成或编辑任务的去重用户；登录活跃用户为存在成功登录操作日志的去重用户。
+- 任务成功率只使用终态任务作为分母；调用成功率使用全部模型调用作为分母，两者不得混用。
+- `errorGroups` 先把原始错误码归入超时、限流、鉴权、参数、连接、服务和其他异常等稳定业务类别，再按 `task_id` 去重统计受影响任务；原始错误码仅保留在单次调用技术详情中。
+- 任务与调用接口中的错误信息继续脱敏。只有同时具备 `usage:read` 时，`audit:read` 调用者才能在任务/调用统计中看到费用字段。
+- 聚合、详情和导出都先验证租户管理员身份，再应用租户范围与 RBAC；未知数据集返回 `404`，无效时间或状态返回中文 `422`。
+
+权限映射：
+
+- 经营总览、用量与费用：`usage:read`。
+- 用户与活跃：`user:read`；预计费用、币种和计费用量仍额外需要 `usage:read`，缺少该权限时列表、详情与导出保留可访问性但隐藏费用。
+- 生图任务、模型调用和操作审计：`audit:read`；费用仍额外需要 `usage:read`。
+- 中转站、模型和系统设置继续使用各自既有权限。
+
+旧的 `/admin/usage/*`、`/admin/operation-logs` 和 `/admin/api-call-logs` 接口保持兼容；其中模型调用列表新增 `imageType` 筛选，以保证新控制台图表与明细使用同一条件。操作审计记录增量返回 `actorName`、`actorEmail`，模型调用记录增量返回 `providerName`、`modelName`；这些名称均通过同租户关联获取，稳定 ID 继续保留给技术详情使用。
 
 当前设置合同：
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -345,13 +345,12 @@ describe('user and role admin UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: '用户/角色管理' })).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url)).some((url) => ['/api/v1/users', '/api/v1/roles', '/api/v1/permissions'].includes(url))).toBe(false)
   })
 
-  it('App allows role:read users to view roles without calling /users', async () => {
-    const browserUser = userEvent.setup()
+  it('App does not expose a dead console entry when role viewing is the only identity permission', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
 
@@ -367,30 +366,20 @@ describe('user and role admin UI', () => {
       if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
         return successResponse(page([]))
       }
-      if (url === '/api/v1/roles') {
-        return successResponse([sellerRole])
-      }
-      if (url === '/api/v1/permissions') {
-        return successResponse(sellerRole.permissions)
-      }
-
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
 
-    await browserUser.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await browserUser.click(screen.getByRole('menuitem', { name: '用户/角色管理' }))
-    expect(await screen.findByRole('heading', { name: '用户与角色管理' })).toBeInTheDocument()
-    expect(await screen.findByText('Seller')).toBeInTheDocument()
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/roles')
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/permissions')
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '管理控制台' })).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/roles')
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/permissions')
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/users')
   })
 
-  it('App exposes tenant editing only for tenant admin sessions with system settings permission', async () => {
-    const browserUser = userEvent.setup()
+  it('App exposes the unified console entry to tenant admins with system settings permission', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
 
@@ -406,21 +395,41 @@ describe('user and role admin UI', () => {
       if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
         return successResponse(page([]))
       }
-      if (url === '/api/v1/tenants/current') {
-        return successResponse(currentTenant)
-      }
-
       return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
     })
     vi.stubGlobal('fetch', fetchImpl)
 
     render(<App />)
 
-    await browserUser.click(await screen.findByRole('button', { name: '打开管理菜单' }))
-    await browserUser.click(screen.getByRole('menuitem', { name: '用户/角色管理' }))
-    expect(await screen.findByRole('button', { name: '编辑当前租户名称' })).toBeInTheDocument()
-    expect(screen.queryByText('当前账号没有 user:read 权限，面板不会调用用户列表接口。')).not.toBeInTheDocument()
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toContain('/api/v1/tenants/current')
+    const navigation = await screen.findByRole('navigation', { name: '工作区导航' })
+    expect(within(navigation).getByRole('button', { name: '设置' })).toBeInTheDocument()
+    expect(within(navigation).queryByRole('button', { name: '数据看板' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '用户/角色管理' })).not.toBeInTheDocument()
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/tenants/current')
+  })
+
+  it('App exposes the unified console entry to tenant admins with user read permission', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      if (url === '/api/v1/me') {
+        return successResponse({ ...baseSession, permissions: ['user:read'] })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return successResponse(page([]))
+      }
+      if (url === '/api/v1/models?enabled=true&capability=generate&pageNum=1&pageSize=100') {
+        return successResponse(page([]))
+      }
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    const navigation = await screen.findByRole('navigation', { name: '工作区导航' })
+    expect(within(navigation).getByRole('button', { name: '数据看板' })).toBeInTheDocument()
+    expect(within(navigation).queryByRole('button', { name: '设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '用户/角色管理' })).not.toBeInTheDocument()
   })
 
   it('App does not treat system settings permission alone as tenant-admin identity access', async () => {
@@ -447,8 +456,8 @@ describe('user and role admin UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '用户/角色管理' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '管理控制台' })).not.toBeInTheDocument()
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain('/api/v1/tenants/current')
   })
 

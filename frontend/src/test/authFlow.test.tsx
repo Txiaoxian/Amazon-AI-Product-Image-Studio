@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { REMEMBERED_LOGIN_EMAIL_KEY } from '../components/auth/LoginPanel'
 
 const authenticatedSession = {
   user: {
@@ -84,6 +85,7 @@ describe('auth flow', () => {
 
     render(<App />)
 
+    await userEvent.setup().click(await screen.findByRole('button', { name: '打开账户菜单' }))
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
     expect(screen.getByText('Studio Tenant')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
@@ -119,7 +121,8 @@ describe('auth flow', () => {
 
     await user.click(screen.getByRole('button', { name: '创建第一个产品' }))
 
-    expect(screen.getByRole('dialog', { name: '产品管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '产品中心' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: '新建产品' })).toBeInTheDocument()
   })
 
   it('shows a login screen when unauthenticated and stores the returned CSRF token only in memory', async () => {
@@ -158,6 +161,7 @@ describe('auth flow', () => {
     await user.type(screen.getByLabelText('密码'), 'valid-password-123')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
+    await user.click(await screen.findByRole('button', { name: '打开账户菜单' }))
     expect(await screen.findByText('Admin User')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '从创建第一个产品开始' })).toBeInTheDocument()
 
@@ -177,6 +181,115 @@ describe('auth flow', () => {
     })
     expect(localStorage.getItem('csrf_from_login')).toBeNull()
     expect(sessionStorage.getItem('csrf_from_login')).toBeNull()
+  })
+
+  it('supports password visibility and remembers only the login email', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+      if (url === '/api/v1/auth/captcha') {
+        return successResponse({
+          captchaId: 'captcha_visibility',
+          imageUrl: '/api/v1/auth/captcha/captcha_visibility/image',
+          expiresAt: '2026-07-13T12:00:00Z',
+        }, 201)
+      }
+      if (url === '/api/v1/auth/login') {
+        return successResponse({ ...authenticatedSession, csrfToken: 'csrf_from_login' })
+      }
+      if (url === '/api/v1/projects?status=ACTIVE&pageNum=1&pageSize=50') {
+        return emptyProjectPageResponse()
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
+    const passwordInput = screen.getByLabelText('密码')
+    expect(passwordInput).toHaveAttribute('type', 'password')
+
+    await user.click(screen.getByRole('button', { name: '显示密码' }))
+    expect(passwordInput).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: '隐藏密码' })).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('邮箱'), 'admin@example.com')
+    await user.type(passwordInput, 'valid-password-123')
+    await user.click(screen.getByRole('checkbox', { name: /记住账号/ }))
+    await user.click(screen.getByRole('button', { name: '登录' }))
+
+    await user.click(await screen.findByRole('button', { name: '打开账户菜单' }))
+    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(localStorage.getItem(REMEMBERED_LOGIN_EMAIL_KEY)).toBe('admin@example.com')
+    expect(localStorage.getItem('password')).toBeNull()
+    expect(localStorage.getItem('csrf_from_login')).toBeNull()
+  })
+
+  it('prefills a remembered email without remembering the password', async () => {
+    localStorage.setItem(REMEMBERED_LOGIN_EMAIL_KEY, 'remembered@example.com')
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+      if (url === '/api/v1/auth/captcha') {
+        return successResponse({
+          captchaId: 'captcha_remembered',
+          imageUrl: '/api/v1/auth/captcha/captcha_remembered/image',
+          expiresAt: '2026-07-13T12:00:00Z',
+        }, 201)
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
+    expect(screen.getByLabelText('邮箱')).toHaveValue('remembered@example.com')
+    expect(screen.getByLabelText('密码')).toHaveValue('')
+    expect(screen.getByRole('checkbox', { name: /记住账号/ })).toBeChecked()
+  })
+
+  it('translates rate-limit login errors into simplified Chinese', async () => {
+    const user = userEvent.setup()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+
+      if (url === '/api/v1/me') {
+        return errorResponse(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.')
+      }
+      if (url === '/api/v1/auth/captcha') {
+        return successResponse({
+          captchaId: 'captcha_rate_limit',
+          imageUrl: '/api/v1/auth/captcha/captcha_rate_limit/image',
+          expiresAt: '2026-07-13T12:00:00Z',
+        }, 201)
+      }
+      if (url === '/api/v1/auth/login') {
+        return errorResponse(429, 'RATE_LIMITED', 'Too many login attempts. Try again later.')
+      }
+
+      return errorResponse(404, 'NOT_FOUND', `Unexpected ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    render(<App />)
+
+    await user.type(await screen.findByLabelText('邮箱'), 'admin@example.com')
+    await user.type(screen.getByLabelText('密码'), 'invalid-password')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('登录尝试次数过多，请稍后再试。')
+    expect(screen.queryByText('Too many login attempts. Try again later.')).not.toBeInTheDocument()
   })
 
   it('logs out with the in-memory CSRF token and returns to the login screen', async () => {
@@ -200,7 +313,8 @@ describe('auth flow', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: '退出' }))
+    await user.click(await screen.findByRole('button', { name: '打开账户菜单' }))
+    await user.click(screen.getByRole('menuitem', { name: '退出登录' }))
 
     expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
     const logoutCall = fetchImpl.mock.calls.find(([url]) => url === '/api/v1/auth/logout')
@@ -229,7 +343,8 @@ describe('auth flow', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: '退出' }))
+    await user.click(await screen.findByRole('button', { name: '打开账户菜单' }))
+    await user.click(screen.getByRole('menuitem', { name: '退出登录' }))
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument()

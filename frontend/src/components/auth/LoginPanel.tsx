@@ -1,4 +1,4 @@
-import { Loader2, LogIn, RefreshCw } from 'lucide-react'
+import { Eye, EyeOff, Loader2, LogIn, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { authApi as defaultAuthApi, type AuthApi } from '../../api/auth'
 import type { CaptchaChallenge, LoginRequest } from '../../types/auth'
@@ -11,9 +11,14 @@ interface LoginPanelProps {
   authApi?: Pick<AuthApi, 'createCaptcha'>
 }
 
+export const REMEMBERED_LOGIN_EMAIL_KEY = 'amazon-ai-product-image-studio.remembered-login-email'
+
 export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSubmit }: LoginPanelProps) {
-  const [email, setEmail] = useState('')
+  const [rememberedEmail] = useState(readRememberedLoginEmail)
+  const [email, setEmail] = useState(rememberedEmail)
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberAccount, setRememberAccount] = useState(Boolean(rememberedEmail))
   const [captchaCode, setCaptchaCode] = useState('')
   const [captcha, setCaptcha] = useState<CaptchaChallenge | null>(null)
   const [isLoadingCaptcha, setLoadingCaptcha] = useState(false)
@@ -50,6 +55,7 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
     })
 
     if (didLogin) {
+      persistRememberedLoginEmail(email, rememberAccount)
       setPassword('')
       setCaptchaCode('')
     } else {
@@ -87,19 +93,52 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
             />
           </label>
 
-          <label className="space-y-2" htmlFor="login-password">
-            <span className="field-label">密码</span>
+          <div className="space-y-2">
+            <label className="field-label" htmlFor="login-password">
+              密码
+            </label>
+            <div className="relative">
+              <input
+                autoComplete="current-password"
+                className="field-input pr-11"
+                disabled={isSubmitting}
+                id="login-password"
+                name="password"
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+              />
+              <button
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                className="absolute inset-y-0 right-1 inline-flex w-9 items-center justify-center rounded-md text-ink-500 transition hover:text-ink-900 focus:outline-none focus:ring-2 focus:ring-amazon-500/30 disabled:text-ink-300"
+                disabled={isSubmitting}
+                onClick={() => setShowPassword((visible) => !visible)}
+                title={showPassword ? '隐藏密码' : '显示密码'}
+                type="button"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          <label className="inline-flex min-h-8 items-center gap-2 text-xs text-ink-500" htmlFor="login-remember-account">
             <input
-              autoComplete="current-password"
-              className="field-input"
+              checked={rememberAccount}
+              className="h-4 w-4 rounded border-ink-300 accent-amazon-500"
               disabled={isSubmitting}
-              id="login-password"
-              name="password"
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              type="password"
-              value={password}
+              id="login-remember-account"
+              onChange={(event) => {
+                const nextValue = event.target.checked
+                setRememberAccount(nextValue)
+                if (!nextValue) {
+                  removeRememberedLoginEmail()
+                }
+              }}
+              type="checkbox"
             />
+            <span>记住账号</span>
+            <span className="text-ink-400">（仅保存邮箱，不保存密码）</span>
           </label>
 
           <div className="space-y-2">
@@ -146,4 +185,33 @@ export function LoginPanel({ authApi = defaultAuthApi, error, isSubmitting, onSu
       </section>
     </div>
   )
+}
+
+function readRememberedLoginEmail(): string {
+  try {
+    return window.localStorage.getItem(REMEMBERED_LOGIN_EMAIL_KEY)?.trim() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function persistRememberedLoginEmail(email: string, remember: boolean): void {
+  try {
+    if (remember && email.trim()) {
+      window.localStorage.setItem(REMEMBERED_LOGIN_EMAIL_KEY, email.trim())
+      return
+    }
+
+    removeRememberedLoginEmail()
+  } catch {
+    // 浏览器禁用本地存储时，登录流程仍然可以正常使用。
+  }
+}
+
+function removeRememberedLoginEmail(): void {
+  try {
+    window.localStorage.removeItem(REMEMBERED_LOGIN_EMAIL_KEY)
+  } catch {
+    // 浏览器禁用本地存储时，忽略清理失败。
+  }
 }

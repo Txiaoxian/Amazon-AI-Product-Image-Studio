@@ -57,6 +57,13 @@ const OPENAI_QUALITY_PRESETS: CapabilityPreset[] = [
   { value: 'high', label: '高质量', description: '更适合最终出图' },
 ]
 
+const GPT_IMAGE_2_QUALITY_PRESETS: CapabilityPreset[] = [
+  { value: 'auto', label: '自动', description: '由模型决定渲染质量，使用基础分辨率' },
+  { value: 'low', label: '低质量（1K）', description: '1K 基础分辨率，适合快速草稿' },
+  { value: 'medium', label: '中等质量（2K）', description: '宽高为 1K 档的 2 倍，适合通用商品图' },
+  { value: 'high', label: '高质量（4K）', description: '在 Provider 上限内使用 4K 像素档，适合最终交付' },
+]
+
 const GEMINI_RESOLUTION_PRESETS: CapabilityPreset[] = [
   { value: '1k', label: '1K', description: '常规商品图与快速预览' },
   { value: '2k', label: '2K', description: '详情页、A+ 图和场景图' },
@@ -85,7 +92,7 @@ export interface ModelParameterPresetConfig {
   qualityPresets: CapabilityPreset[]
 }
 
-export function modelParameterPresetsForProvider(providerType: ProviderType): ModelParameterPresetConfig {
+export function modelParameterPresetsForProvider(providerType: ProviderType, modelName = ''): ModelParameterPresetConfig {
   if (providerType === 'GEMINI') {
     return {
       sizeLabel: '画面比例',
@@ -102,8 +109,10 @@ export function modelParameterPresetsForProvider(providerType: ProviderType): Mo
     sizeHelp: '比例决定画面形状；生成时由后端转换为符合 OpenAI 要求的像素尺寸。',
     sizePresets: OPENAI_ASPECT_RATIO_PRESETS,
     qualityLabel: '生成质量',
-    qualityHelp: '按 OpenAI 官方语义配置：自动、低、中、高；质量与图片比例互相独立。',
-    qualityPresets: OPENAI_QUALITY_PRESETS,
+    qualityHelp: isGPTImage2ModelName(modelName)
+      ? 'GPT Image 2 会同时应用渲染质量和平台分辨率档位：低 1K、中 2K、高 4K。'
+      : '按 OpenAI 官方语义配置：自动、低、中、高。',
+    qualityPresets: isGPTImage2ModelName(modelName) ? GPT_IMAGE_2_QUALITY_PRESETS : OPENAI_QUALITY_PRESETS,
   }
 }
 
@@ -175,6 +184,12 @@ export function labelForSizePreset(value: string): string {
   return MODEL_SIZE_PRESETS.find((preset) => preset.value === value)?.label ?? value
 }
 
-export function labelForQualityPreset(value: string): string {
-  return MODEL_QUALITY_PRESETS.find((preset) => preset.value === value)?.label ?? value
+export function labelForQualityPreset(value: string, options?: { modelName?: string }): string {
+  const presets = isGPTImage2ModelName(options?.modelName ?? '') ? GPT_IMAGE_2_QUALITY_PRESETS : MODEL_QUALITY_PRESETS
+  return presets.find((preset) => preset.value === value)?.label ?? value
+}
+
+function isGPTImage2ModelName(modelName: string): boolean {
+  const normalized = modelName.trim().toLowerCase()
+  return normalized === 'gpt-image-2' || normalized.startsWith('gpt-image-2-')
 }

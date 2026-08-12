@@ -3,12 +3,15 @@ import type { WorkbenchImageType } from '../types/workbench'
 
 export interface PromptTemplate {
   id: string
+  projectId: string
   imageType: WorkbenchImageType
   title: string
   prompt: string
   createdAt: string
   updatedAt: string
 }
+
+export const LEGACY_PROMPT_TEMPLATE_PROJECT_ID = '__legacy__'
 
 export class StudioDatabase extends Dexie {
   promptTemplates!: Table<PromptTemplate, string>
@@ -36,6 +39,18 @@ export class StudioDatabase extends Dexie {
           .toCollection()
           .modify((template) => {
             template.imageType = template.imageType ?? 'MAIN'
+          }),
+      )
+    this.version(4)
+      .stores({
+        promptTemplates: '&id, [projectId+imageType], projectId, imageType, updatedAt',
+      })
+      .upgrade((transaction) =>
+        transaction
+          .table<PromptTemplate, string>('promptTemplates')
+          .toCollection()
+          .modify((template) => {
+            template.projectId = template.projectId ?? LEGACY_PROMPT_TEMPLATE_PROJECT_ID
           }),
       )
   }

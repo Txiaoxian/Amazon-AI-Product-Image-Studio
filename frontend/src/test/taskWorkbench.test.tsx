@@ -238,16 +238,13 @@ describe('task-backed workbench', () => {
     render(<App />)
 
     await screen.findByLabelText('当前产品')
-    await user.click(screen.getByRole('button', { name: '产品素材' }))
+    await user.click(screen.getByRole('button', { name: '素材库' }))
     expect(await screen.findByRole('heading', { name: '产品素材库' })).toBeInTheDocument()
     expect(await screen.findByText('reference.png')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '作为参考图 reference.png' }))
-    await user.click(
-      within(screen.getByRole('dialog')).getByRole('button', {
-        name: '关闭弹窗',
-      }),
-    )
+    expect(await screen.findByAltText('reference.png')).toBeInTheDocument()
     await user.type(screen.getByLabelText('提示词'), 'Clean Amazon product image')
+    await user.click(screen.getByRole('tab', { name: '参数' }))
     await user.selectOptions(screen.getByLabelText('图片比例'), '1536x1024')
     await user.selectOptions(screen.getByLabelText('生成质量'), 'hd')
     await user.selectOptions(screen.getByLabelText('输出格式'), 'jpeg')
@@ -310,7 +307,7 @@ describe('task-backed workbench', () => {
     const outputImage = await screen.findByAltText('生成结果')
     expect(outputImage).toHaveAttribute('src', '/api/v1/assets/asset_output_1/download')
     expect(outputImage.getAttribute('src')).not.toMatch(/^(blob:|data:)/)
-    expect(screen.getByText(/RUNNING/)).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '主图候选' })).getByText('生成中')).toBeInTheDocument()
 
     stream.emit(
       'TASK_COMPLETED',
@@ -324,10 +321,11 @@ describe('task-backed workbench', () => {
       'evt_3',
     )
 
-    expect(await screen.findByText(/SUCCEEDED/)).toBeInTheDocument()
+    expect(await within(screen.getByRole('region', { name: '主图候选' })).findByText('已完成')).toBeInTheDocument()
   })
 
   it('uses the model configuration names for size and quality options', async () => {
+    const user = userEvent.setup()
     vi.stubGlobal(
       'fetch',
       createWorkbenchFetch({
@@ -336,6 +334,7 @@ describe('task-backed workbench', () => {
             [{
               ...model,
               providerType: 'OPENAI_COMPATIBLE',
+              modelName: 'gpt-image-2',
               supportedSizes: ['auto', '1:1', '1.62:1', '16:9'],
               supportedQualities: ['auto', 'low', 'medium', 'high'],
             }],
@@ -347,6 +346,7 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
+    await user.click(await screen.findByRole('tab', { name: '参数' }))
     const sizeSelect = await screen.findByLabelText('图片比例')
     const qualitySelect = screen.getByLabelText('生成质量')
 
@@ -358,9 +358,9 @@ describe('task-backed workbench', () => {
     ])
     expect(within(qualitySelect).getAllByRole('option').map((option) => option.textContent)).toEqual([
       '自动',
-      '低质量',
-      '中等质量',
-      '高质量',
+      '低质量（1K）',
+      '中等质量（2K）',
+      '高质量（4K）',
     ])
   })
 
@@ -390,6 +390,7 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
+    await user.click(await screen.findByRole('tab', { name: '参数' }))
     const sizeSelect = await screen.findByLabelText('图片比例')
     const qualitySelect = screen.getByLabelText('生成质量')
 
@@ -436,7 +437,7 @@ describe('task-backed workbench', () => {
     })
   })
 
-  it('keeps generation history visible while opening product assets on demand', async () => {
+  it('keeps generation history out of the canvas and opens it from task center on demand', async () => {
     const user = userEvent.setup()
     const fetchImpl = createWorkbenchFetch()
     vi.stubGlobal('fetch', fetchImpl)
@@ -445,10 +446,15 @@ describe('task-backed workbench', () => {
 
     await screen.findByLabelText('当前产品')
     expect(screen.queryByRole('heading', { name: '产品素材库' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '生成历史' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '产品素材' }))
+    expect(screen.queryByRole('complementary', { name: '图片生成历史' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /任务中心/ }))
+    const taskCenter = await screen.findByRole('dialog', { name: '任务中心' })
+    await user.click(within(taskCenter).getByRole('tab', { name: '生成历史' }))
+    expect(within(taskCenter).getByRole('complementary', { name: '图片生成历史' })).toBeInTheDocument()
+    await user.click(within(taskCenter).getByRole('button', { name: '关闭弹窗' }))
+    await user.click(screen.getByRole('button', { name: '素材库' }))
     expect(await screen.findByRole('heading', { name: '产品素材库' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '生成历史' })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: '图片生成历史' })).not.toBeInTheDocument()
   })
 
   it('normalizes an invalid edit draft image type before it can be submitted', async () => {
@@ -558,7 +564,7 @@ describe('task-backed workbench', () => {
     })
   })
 
-  it('allows a second image task while the first task is still running and tracks both through one global event stream', async () => {
+  it('allows a second image task while the first is running and tracks both in one global task center stream', async () => {
     const user = userEvent.setup()
     let createCount = 0
     const fetchImpl = createWorkbenchFetch({
@@ -607,11 +613,12 @@ describe('task-backed workbench', () => {
       ),
     ).toHaveLength(2)
     expect(FakeEventSource.instances).toHaveLength(1)
-    const historyRail = screen.getByRole('complementary', {
-      name: '图片生成历史',
-    })
-    expect(within(historyRail).getByText('1 个进行中')).toBeInTheDocument()
-    expect(within(historyRail).queryByText('White background hero image')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /任务中心，2 个进行中任务/ }))
+    const taskCenter = await screen.findByRole('dialog', { name: '任务中心' })
+    expect(within(taskCenter).getByText('White background hero image')).toBeInTheDocument()
+    expect(within(taskCenter).getByText('A+ lifestyle banner')).toBeInTheDocument()
+    expect(within(taskCenter).getByText('生成中')).toBeInTheDocument()
+    expect(within(taskCenter).getByText('排队中')).toBeInTheDocument()
   })
 
   it('shows independent generating and completed indicators on image type tabs', async () => {
@@ -678,6 +685,7 @@ describe('task-backed workbench', () => {
   })
 
   it('restores active tasks from the backend after the workbench is refreshed', async () => {
+    const user = userEvent.setup()
     const runningTask = {
       ...task,
       status: 'RUNNING',
@@ -689,11 +697,10 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
-    const historyRail = await screen.findByRole('complementary', {
-      name: '图片生成历史',
-    })
-    expect(await within(historyRail).findByText('1 个进行中')).toBeInTheDocument()
-    expect(within(historyRail).getByText('刷新后仍应显示的主图任务')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /任务中心，1 个进行中任务/ }))
+    const taskCenter = await screen.findByRole('dialog', { name: '任务中心' })
+    expect(within(taskCenter).getByText('刷新后仍应显示的主图任务')).toBeInTheDocument()
+    expect(within(taskCenter).getByText('生成中')).toBeInTheDocument()
     expect(FakeEventSource.instances).toHaveLength(1)
     expect(FakeEventSource.instances[0].url).toBe('/api/v1/events/tasks')
   })
@@ -824,7 +831,7 @@ describe('task-backed workbench', () => {
     expect(screen.getByRole('tab', { name: 'A+ 图片' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('uses product language and keeps assets and records out of the default generation workspace', async () => {
+  it('uses product language and keeps assets and history out of the default canvas', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', createWorkbenchFetch())
 
@@ -833,46 +840,34 @@ describe('task-backed workbench', () => {
     expect(await screen.findByLabelText('当前产品')).toHaveValue('project_1')
     expect(screen.getByRole('button', { name: '新增产品' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '项目资产库' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '产品素材' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '生成历史' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '素材库' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /任务中心/ })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: '图片生成历史' })).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '工作区导航' })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '产品素材' }))
+    await user.click(screen.getByRole('button', { name: '素材库' }))
     expect(await screen.findByRole('heading', { name: '产品素材库' })).toBeInTheDocument()
   })
 
-  it('renders products as top tabs with the add action at the end', async () => {
+  it('renders a compact product context selector with a nearby add action', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', createWorkbenchFetch({ projects: [project, secondProject] }))
 
     render(<App />)
 
-    const productTabs = await screen.findByRole('tablist', {
-      name: '产品列表',
-    })
+    const productSelect = await screen.findByLabelText('当前产品')
     const fixedWorkspace = screen.getByTestId('fixed-product-workspace')
     const workbench = screen.getByTestId('generation-workbench')
-    expect(fixedWorkspace).toContainElement(productTabs)
-    expect(fixedWorkspace).toHaveClass('lg:h-[calc(100dvh-88px)]', 'lg:overflow-hidden')
-    expect(workbench).toHaveClass('lg:h-full', 'lg:min-h-0')
-    expect(workbench).not.toHaveClass('lg:h-[calc(100dvh-152px)]', 'lg:min-h-[680px]')
-    expect(productTabs.closest('section')).toHaveClass('sticky', 'top-16')
-    expect(productTabs).toHaveAttribute('data-fill-axis', 'horizontal')
-    expect(productTabs).toHaveAttribute('data-layout', 'wrapped')
-    expect(productTabs).toHaveAttribute('data-scroll-behavior', 'fixed')
-    expect(productTabs).toHaveClass('flex-wrap', 'overflow-visible')
-    expect(productTabs).not.toHaveClass('overflow-x-auto')
-    const selectedProductTab = within(productTabs).getByRole('tab', { name: /Summer Launch/ })
-    const unselectedProductTab = within(productTabs).getByRole('tab', { name: /Winter Launch/ })
-    expect(selectedProductTab).toHaveAttribute('aria-selected', 'true')
-    expect(selectedProductTab).toHaveClass('flex-none', 'max-w-72', 'border-ink-600', 'bg-white', 'ring-1', 'ring-ink-600')
-    expect(selectedProductTab).not.toHaveClass('flex-1', 'bg-ink-900', 'focus:ring-amazon-500/30')
-    expect(within(selectedProductTab).getByText('当前')).toBeInTheDocument()
-    expect(unselectedProductTab).toHaveClass('border-ink-200', 'bg-ink-50')
-    expect(within(unselectedProductTab).queryByText('当前')).not.toBeInTheDocument()
-    await user.click(unselectedProductTab)
-    expect(unselectedProductTab).toHaveAttribute('aria-selected', 'true')
-    expect(within(unselectedProductTab).getByText('当前')).toBeInTheDocument()
-    expect(within(productTabs).getByRole('button', { name: '新增产品' })).toBeInTheDocument()
+    expect(fixedWorkspace).toContainElement(productSelect)
+    expect(fixedWorkspace).toHaveClass('canvas-studio-view')
+    expect(workbench).toHaveClass('canvas-workspace')
+    expect(within(productSelect).getByRole('option', { name: 'Summer Launch' })).toBeInTheDocument()
+    expect(within(productSelect).getByRole('option', { name: 'Winter Launch' })).toBeInTheDocument()
+    expect(productSelect).toHaveValue('project_1')
+    await user.selectOptions(productSelect, 'project_2')
+    expect(productSelect).toHaveValue('project_2')
+    expect(screen.getByAltText('Winter Launch产品图')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新增产品' })).toBeInTheDocument()
   })
 
   it('opens an empty create form from the product add button', async () => {
@@ -881,16 +876,16 @@ describe('task-backed workbench', () => {
 
     render(<App />)
 
-    const productTabs = await screen.findByRole('tablist', { name: '产品列表' })
-    await user.click(within(productTabs).getByRole('button', { name: '新增产品' }))
+    await screen.findByLabelText('当前产品')
+    await user.click(screen.getByRole('button', { name: '新增产品' }))
 
-    expect(await screen.findByRole('dialog', { name: '产品管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '产品中心' })).toBeInTheDocument()
     const editor = await screen.findByRole('dialog', { name: '新建产品' })
     expect(within(editor).getByLabelText('产品名称')).toHaveValue('')
     expect(screen.queryByRole('dialog', { name: '编辑产品' })).not.toBeInTheDocument()
   })
 
-  it('places image types on the left and generation history on the right of the workbench', async () => {
+  it('places image types across the top and keeps the canvas free of a permanent history rail', async () => {
     vi.stubGlobal('fetch', createWorkbenchFetch())
 
     render(<App />)
@@ -899,23 +894,47 @@ describe('task-backed workbench', () => {
       name: '商品图片类型选项',
     })
     const workbench = screen.getByTestId('generation-workbench')
-    const historyRail = screen.getByRole('complementary', {
-      name: '图片生成历史',
-    })
 
-    expect(imageTypeNavigation).toHaveAttribute('data-desktop-position', 'left')
-    expect(imageTypeNavigation).toHaveAttribute('data-fill-axis', 'vertical')
-    expect(imageTypeNavigation).toHaveAttribute('data-layout', 'content-sized')
+    expect(imageTypeNavigation).toHaveAttribute('data-desktop-position', 'top')
+    expect(imageTypeNavigation).toHaveAttribute('data-fill-axis', 'horizontal')
+    expect(imageTypeNavigation).toHaveAttribute('data-layout', 'scrollable')
     const imageTypeTabList = within(imageTypeNavigation).getByRole('tablist', { name: '选择图片类型' })
     const selectedImageType = within(imageTypeTabList).getByRole('tab', { name: '主图' })
-    expect(selectedImageType).toHaveClass('bg-ink-100', 'border-ink-300', 'focus:ring-ink-300')
-    expect(selectedImageType).not.toHaveClass('bg-amazon-500', 'lg:h-full', 'focus:ring-amazon-500/30')
-    expect(historyRail).toHaveAttribute('data-desktop-position', 'right')
-    expect(workbench.firstElementChild).toBe(imageTypeNavigation)
-    expect(workbench.lastElementChild).toBe(historyRail)
+    expect(selectedImageType).toHaveClass('canvas-image-type-tab', 'is-selected')
+    expect(workbench.firstElementChild).toHaveClass('canvas-control-column')
+    expect(workbench.children[1]).toHaveClass('canvas-result-slot')
+    expect(within(workbench.firstElementChild as HTMLElement).getByRole('button', { name: '生成图片' })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: '图片生成历史' })).not.toBeInTheDocument()
   })
 
-  it('selects an existing product reference above the prompt and submits its asset id', async () => {
+  it('groups canvas controls into keyboard-accessible task tabs', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', createWorkbenchFetch())
+
+    render(<App />)
+
+    const tabList = await screen.findByRole('tablist', { name: '创作参数分区' })
+    const promptTab = within(tabList).getByRole('tab', { name: '画面' })
+    const referenceTab = within(tabList).getByRole('tab', { name: '参考' })
+    const settingsTab = within(tabList).getByRole('tab', { name: '参数' })
+
+    expect(promptTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: '画面' })).toBeVisible()
+
+    await user.click(referenceTab)
+    expect(referenceTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: '参考' })).toBeVisible()
+
+    await user.click(settingsTab)
+    expect(settingsTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: '参数' })).toBeVisible()
+
+    await user.keyboard('{Home}')
+    expect(promptTab).toHaveAttribute('aria-selected', 'true')
+    expect(promptTab).toHaveFocus()
+  })
+
+  it('selects an existing product reference from its dedicated tab and submits its asset id', async () => {
     const user = userEvent.setup()
     const fetchImpl = createWorkbenchFetch()
     vi.stubGlobal('fetch', fetchImpl)
@@ -923,12 +942,14 @@ describe('task-backed workbench', () => {
     render(<App />)
 
     const prompt = await screen.findByLabelText('提示词')
+    await user.click(screen.getByRole('tab', { name: '参考' }))
     const referenceButton = await screen.findByRole('button', {
       name: '选择产品参考图 reference.png',
     })
-    expect(referenceButton.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(referenceButton).toBeVisible()
 
     await user.click(referenceButton)
+    await user.click(screen.getByRole('tab', { name: '画面' }))
     await user.type(prompt, 'Use the selected product as the visual reference')
     await user.click(screen.getByRole('button', { name: '生成图片' }))
 
@@ -942,7 +963,7 @@ describe('task-backed workbench', () => {
     })
   })
 
-  it('shows an in-progress task inside the right-side generation history', async () => {
+  it('shows an in-progress task inside the on-demand task center', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', createWorkbenchFetch())
 
@@ -965,13 +986,10 @@ describe('task-backed workbench', () => {
       'evt_history_running',
     )
 
-    const historyRail = screen.getByRole('complementary', {
-      name: '图片生成历史',
-    })
-    await waitFor(() => {
-      expect(within(historyRail).getByText('生成中')).toBeInTheDocument()
-      expect(within(historyRail).getByText('A task visible in the history rail')).toBeInTheDocument()
-    })
+    await user.click(await screen.findByRole('button', { name: /任务中心，1 个进行中任务/ }))
+    const taskCenter = await screen.findByRole('dialog', { name: '任务中心' })
+    expect(within(taskCenter).getByText('生成中')).toBeInTheDocument()
+    expect(within(taskCenter).getByText('A task visible in the history rail')).toBeInTheDocument()
   })
 
   it('shows operation feedback as an overlay instead of occupying the sticky header', async () => {
@@ -1037,7 +1055,8 @@ describe('task-backed workbench', () => {
       },
       'evt_1',
     )
-    expect(await screen.findByText(/RUNNING/)).toBeInTheDocument()
+    const resultRegion = screen.getByRole('region', { name: '主图候选' })
+    expect(await within(resultRegion).findByText('生成中')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '取消任务' }))
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -1047,7 +1066,7 @@ describe('task-backed workbench', () => {
         method: 'POST',
       }),
     )
-    expect(screen.getByText(/RUNNING/)).toBeInTheDocument()
+    expect(within(resultRegion).getByText('生成中')).toBeInTheDocument()
 
     stream.emit(
       'TASK_CANCELLED',
@@ -1060,7 +1079,7 @@ describe('task-backed workbench', () => {
       },
       'evt_2',
     )
-    expect(await screen.findByText(/CANCELLED/)).toBeInTheDocument()
+    expect(await within(resultRegion).findByText('已取消')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '重试任务' }))
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -1070,7 +1089,7 @@ describe('task-backed workbench', () => {
         method: 'POST',
       }),
     )
-    expect(screen.getByText(/CANCELLED/)).toBeInTheDocument()
+    expect(within(resultRegion).getByText('已取消')).toBeInTheDocument()
 
     stream.emit(
       'TASK_RETRIED',
@@ -1083,7 +1102,7 @@ describe('task-backed workbench', () => {
       },
       'evt_3',
     )
-    expect(await screen.findByText(/RETRYING/)).toBeInTheDocument()
+    expect(await within(resultRegion).findByText('重试中')).toBeInTheDocument()
   })
 })
 

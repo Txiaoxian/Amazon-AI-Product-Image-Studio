@@ -205,9 +205,17 @@ P7实施说明：
 
 存储使用情况和估计成本。
 
-关键字段: `id`、`tenant_id`、`task_id`、`user_id`、`project_id`、`provider_id`、`model_id`、 `input_tokens`、`output_tokens`、`image_count`、`estimated_cost`、`currency`、`raw_usage_json`、`created_at`。
+关键字段: `id`、`tenant_id`、`task_id`、`user_id`、`project_id`、`provider_id`、`model_id`、 `input_tokens`、`output_tokens`、`image_count`、`estimated_cost`、`currency`、`cost_status`、`pricing_snapshot_json`、`raw_usage_json`、`created_at`。
 
 P14 usage/cost 报告保持 `estimated_cost` 确定性、非负数，并格式化为小数点后 8 位。缺失、无效、负数或不完整的模型定价会产生零估计成本，而不是无法成功完成任务。使用记录仍然可以通过租户、用户、项目、Provider、模型和租户范围的聚合视图进行查询。摘要成本输出保留精确的十进制字符串并按货币分组。
+
+管理统计基础迁移 `202608110001_admin_analytics_foundation` 增加：
+
+- `cost_status`：`CALCULATED` 表示费用计算成功，`UNAVAILABLE` 表示缺少有效定价或用量，`LEGACY_UNKNOWN` 表示历史记录无法可靠判断。迁移不使用当前价格回填历史费用。
+- `pricing_snapshot_json`：任务产生用量时保存经过模型配置校验的定价快照；定价缺失或无效时保存空对象，不影响成功任务和出图落库。
+- 时间聚合索引：任务、任务输出、模型调用和用量记录均增加以 `tenant_id` 和 `created_at` 为前导的索引；任务/调用/用量另有中转站或模型维度的时间索引，调用日志另有状态时间索引。
+
+所有管理统计查询仍必须显式携带 `tenant_id`。任务成功率使用终态任务，实际出图张数使用 `task_outputs` 持久化行，费用只汇总 `usage_records.estimated_cost`，不得用当前模型定价回算历史记录。
 
 ### operation_logs
 

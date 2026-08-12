@@ -97,13 +97,13 @@ func (r Repository) UsageSummary(ctx context.Context, scope tenant.Scope, option
 	return rows, total, nil
 }
 
-func (r Repository) ListOperationLogs(ctx context.Context, scope tenant.Scope, options OperationLogListOptions) ([]database.OperationLog, int64, error) {
+func (r Repository) ListOperationLogs(ctx context.Context, scope tenant.Scope, options OperationLogListOptions) ([]OperationLogRecord, int64, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	query := db.Model(&database.OperationLog{}).Where("operation_logs.tenant_id = ?", scope.ID())
+	query := db.Table("operation_logs").Where("operation_logs.tenant_id = ?", scope.ID())
 	query = applyTimeRange(query, "operation_logs.created_at", options.TimeRange)
 	if options.ActorUserID != "" {
 		query = query.Where("operation_logs.actor_user_id = ?", options.ActorUserID)
@@ -123,8 +123,16 @@ func (r Repository) ListOperationLogs(ctx context.Context, scope tenant.Scope, o
 		return nil, 0, err
 	}
 
-	var records []database.OperationLog
+	var records []OperationLogRecord
 	if err := query.
+		Joins("LEFT JOIN users AS actor ON actor.tenant_id = operation_logs.tenant_id AND actor.id = operation_logs.actor_user_id").
+		Select(`
+			operation_logs.id, operation_logs.tenant_id, operation_logs.actor_user_id,
+			COALESCE(NULLIF(actor.display_name, ''), actor.email, '') AS actor_name,
+			COALESCE(actor.email, '') AS actor_email,
+			operation_logs.action, operation_logs.resource_type, operation_logs.resource_id,
+			operation_logs.ip, operation_logs.user_agent, operation_logs.metadata_json, operation_logs.created_at
+		`).
 		Order(createdAtOrder("operation_logs", options.SortOrder)).
 		Limit(options.PageSize).
 		Offset(pageOffset(options.PageNum, options.PageSize)).
@@ -134,7 +142,7 @@ func (r Repository) ListOperationLogs(ctx context.Context, scope tenant.Scope, o
 	return records, total, nil
 }
 
-func (r Repository) ListAPICallLogs(ctx context.Context, scope tenant.Scope, options APICallLogListOptions) ([]database.APICallLog, int64, error) {
+func (r Repository) ListAPICallLogs(ctx context.Context, scope tenant.Scope, options APICallLogListOptions) ([]APICallLogRecord, int64, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
 		return nil, 0, err
@@ -146,8 +154,15 @@ func (r Repository) ListAPICallLogs(ctx context.Context, scope tenant.Scope, opt
 		return nil, 0, err
 	}
 
-	var records []database.APICallLog
+	var records []APICallLogRecord
 	if err := query.
+		Joins("LEFT JOIN ai_providers AS call_provider ON call_provider.tenant_id = api_call_logs.tenant_id AND call_provider.id = api_call_logs.provider_id").
+		Joins("LEFT JOIN ai_models AS call_model ON call_model.tenant_id = api_call_logs.tenant_id AND call_model.id = api_call_logs.model_id").
+		Select(`
+			api_call_logs.*,
+			COALESCE(call_provider.name, '') AS provider_name,
+			COALESCE(NULLIF(call_model.display_name, ''), call_model.model_name, '') AS model_name
+		`).
 		Order(createdAtOrder("api_call_logs", options.SortOrder)).
 		Limit(options.PageSize).
 		Offset(pageOffset(options.PageNum, options.PageSize)).
@@ -157,22 +172,29 @@ func (r Repository) ListAPICallLogs(ctx context.Context, scope tenant.Scope, opt
 	return records, total, nil
 }
 
-func (r Repository) FindAPICallLog(ctx context.Context, scope tenant.Scope, id string) (database.APICallLog, error) {
+func (r Repository) FindAPICallLog(ctx context.Context, scope tenant.Scope, id string) (APICallLogRecord, error) {
 	db, err := r.base(ctx, scope)
 	if err != nil {
-		return database.APICallLog{}, err
+		return APICallLogRecord{}, err
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return database.APICallLog{}, ErrValidation
+		return APICallLogRecord{}, ErrValidation
 	}
 
-	var record database.APICallLog
-	err = db.Model(&database.APICallLog{}).
-		Where("tenant_id = ? AND id = ?", scope.ID(), id).
-		First(&record).Error
+	var record APICallLogRecord
+	err = db.Table("api_call_logs").
+		Joins("LEFT JOIN ai_providers AS call_provider ON call_provider.tenant_id = api_call_logs.tenant_id AND call_provider.id = api_call_logs.provider_id").
+		Joins("LEFT JOIN ai_models AS call_model ON call_model.tenant_id = api_call_logs.tenant_id AND call_model.id = api_call_logs.model_id").
+		Select(`
+			api_call_logs.*,
+			COALESCE(call_provider.name, '') AS provider_name,
+			COALESCE(NULLIF(call_model.display_name, ''), call_model.model_name, '') AS model_name
+		`).
+		Where("api_call_logs.tenant_id = ? AND api_call_logs.id = ?", scope.ID(), id).
+		Take(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return database.APICallLog{}, ErrNotFound
+		return APICallLogRecord{}, ErrNotFound
 	}
 	return record, err
 }
@@ -201,7 +223,7 @@ func usageRecordsQuery(db *gorm.DB, scope tenant.Scope, options UsageRecordListO
 func apiCallLogsQuery(db *gorm.DB, scope tenant.Scope, options APICallLogListOptions) *gorm.DB {
 	query := db.Model(&database.APICallLog{}).Where("api_call_logs.tenant_id = ?", scope.ID())
 	query = applyTimeRange(query, "api_call_logs.created_at", options.TimeRange)
-	if options.ProjectID != "" || options.UserID != "" {
+	if options.ProjectID != "" || options.UserID != "" || options.ImageType != "" {
 		query = query.Joins("JOIN generation_tasks AS gt ON gt.tenant_id = api_call_logs.tenant_id AND gt.id = api_call_logs.task_id")
 	}
 	if options.TaskID != "" {
@@ -224,6 +246,9 @@ func apiCallLogsQuery(db *gorm.DB, scope tenant.Scope, options APICallLogListOpt
 	}
 	if options.UserID != "" {
 		query = query.Where("gt.created_by = ?", options.UserID)
+	}
+	if options.ImageType != "" {
+		query = query.Where("gt.image_type = ?", options.ImageType)
 	}
 	return query
 }

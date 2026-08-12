@@ -8,6 +8,7 @@ interface ImageTypeTabsProps {
   imageType: WorkbenchImageType
   isDisabled?: boolean
   onChange: (imageType: WorkbenchImageType) => void
+  variant?: 'vertical' | 'horizontal'
 }
 
 export interface ImageTypeActivity {
@@ -15,19 +16,25 @@ export interface ImageTypeActivity {
   completedCount: number
 }
 
-export function ImageTypeTabs({ activityByType = {}, imageType, onChange }: ImageTypeTabsProps) {
+export function ImageTypeTabs({ activityByType = {}, imageType, onChange, variant = 'vertical' }: ImageTypeTabsProps) {
+  const isHorizontal = variant === 'horizontal'
+
   return (
     <nav
       aria-label="商品图片类型选项"
-      className="panel min-w-0 p-1.5 lg:max-h-full lg:self-start lg:overflow-y-auto"
-      data-desktop-position="left"
-      data-fill-axis="vertical"
-      data-layout="content-sized"
+      className={isHorizontal
+        ? 'canvas-image-type-nav'
+        : 'panel min-w-0 p-1.5 lg:max-h-full lg:self-start lg:overflow-y-auto'}
+      data-desktop-position={isHorizontal ? 'top' : 'left'}
+      data-fill-axis={isHorizontal ? 'horizontal' : 'vertical'}
+      data-layout={isHorizontal ? 'scrollable' : 'content-sized'}
     >
-      <p className="px-2 pb-1.5 pt-1 text-xs font-semibold text-ink-400 lg:text-center">图片类型</p>
+      {!isHorizontal ? <p className="px-2 pb-1.5 pt-1 text-xs font-semibold text-ink-400 lg:text-center">图片类型</p> : null}
       <div
         aria-label="选择图片类型"
-        className="flex min-w-0 gap-1 overflow-x-auto lg:flex-col lg:gap-1.5 lg:overflow-visible"
+        className={isHorizontal
+          ? 'flex min-w-max items-stretch gap-1 px-4'
+          : 'flex min-w-0 gap-1 overflow-x-auto lg:flex-col lg:gap-1.5 lg:overflow-visible'}
         role="tablist"
       >
         {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => {
@@ -48,11 +55,13 @@ export function ImageTypeTabs({ activityByType = {}, imageType, onChange }: Imag
               aria-describedby={hasActivity ? statusDescriptionId : undefined}
               aria-label={option.label}
               aria-selected={selected}
-              className={`flex min-h-11 shrink-0 flex-col items-center justify-center rounded-md border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-ink-300 lg:w-full lg:px-2 ${
-                selected
-                  ? 'border-ink-300 bg-ink-100 text-ink-900 shadow-sm'
-                  : 'border-transparent text-ink-600 hover:border-ink-200 hover:bg-ink-50 hover:text-ink-900'
-              }`}
+              className={isHorizontal
+                ? `canvas-image-type-tab ${selected ? 'is-selected' : ''}`
+                : `flex min-h-11 shrink-0 flex-col items-center justify-center rounded-md border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-ink-300 lg:w-full lg:px-2 ${
+                    selected
+                      ? 'border-ink-300 bg-ink-100 text-ink-900 shadow-sm'
+                      : 'border-transparent text-ink-600 hover:border-ink-200 hover:bg-ink-50 hover:text-ink-900'
+                  }`}
               key={option.value}
               onClick={() => onChange(option.value)}
               role="tab"
@@ -60,17 +69,17 @@ export function ImageTypeTabs({ activityByType = {}, imageType, onChange }: Imag
             >
               <span>{option.label}</span>
               {hasActivity ? (
-                <span aria-hidden="true" className="mt-1 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[10px] font-medium leading-4">
+                <span aria-hidden="true" className={`${isHorizontal ? 'absolute right-2 top-1.5' : 'mt-1'} flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[10px] font-medium leading-4`}>
                   {activeCount > 0 ? (
-                    <span className="inline-flex items-center gap-1 text-amber-700" title={`${activeCount} 个任务正在生成`}>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      生成中 {activeCount}
+                    <span className={isHorizontal ? 'inline-flex h-2 w-2 rounded-full bg-amazon-500' : 'inline-flex items-center gap-1 text-amber-700'} title={`${activeCount} 个任务正在生成`}>
+                      {isHorizontal ? null : <Loader2 className="h-3 w-3 animate-spin" />}
+                      {isHorizontal ? null : `生成中 ${activeCount}`}
                     </span>
                   ) : null}
                   {completedCount > 0 ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-700" title={`${completedCount} 个任务已完成`}>
-                      <CheckCircle2 className="h-3 w-3" />
-                      已完成 {completedCount}
+                    <span className={isHorizontal ? 'inline-flex h-2 w-2 rounded-full bg-emerald-500' : 'inline-flex items-center gap-1 text-emerald-700'} title={`${completedCount} 个任务已完成`}>
+                      {isHorizontal ? null : <CheckCircle2 className="h-3 w-3" />}
+                      {isHorizontal ? null : `已完成 ${completedCount}`}
                     </span>
                   ) : null}
                 </span>

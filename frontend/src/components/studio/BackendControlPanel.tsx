@@ -1,12 +1,12 @@
 import { RefreshCw, Sparkles } from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { IMAGE_COUNT_OPTIONS } from '../../lib/constants'
 import {
   labelForQualityPreset,
   labelForSizePreset,
   parameterLabelsForCapabilities,
 } from '../../lib/modelCapabilityPresets'
-import type { Model } from '../../types/platform'
+import type { Model, ProjectId } from '../../types/platform'
 import {
   DEFAULT_WORKBENCH_IMAGE_TYPE,
   WORKBENCH_IMAGE_TYPE_OPTIONS,
@@ -23,6 +23,13 @@ import { PromptEditor } from './PromptEditor'
 import type { WorkbenchModelStatus } from './useWorkbenchModels'
 
 type ImageCount = (typeof IMAGE_COUNT_OPTIONS)[number]
+type CanvasControlSection = 'prompt' | 'references' | 'settings'
+
+const CANVAS_CONTROL_SECTIONS: Array<{ label: string; value: CanvasControlSection }> = [
+  { label: '画面', value: 'prompt' },
+  { label: '参考', value: 'references' },
+  { label: '参数', value: 'settings' },
+]
 
 export interface BackendControlPanelDraft {
   prompt: string
@@ -39,6 +46,7 @@ interface BackendControlPanelProps {
   modelStatus: WorkbenchModelStatus
   models: Model[]
   imageType?: WorkbenchImageType
+  projectId?: ProjectId | null
   prompt?: string
   referenceToAdd?: WorkbenchReferenceInput | null
   editSourceReference?: AssetReferenceInput | null
@@ -49,8 +57,10 @@ interface BackendControlPanelProps {
   onReferenceAdded?: () => void
   onEditSourceRemoved?: () => void
   onRefreshModels: () => void
+  onOpenModelSettings?: () => void
   onSavePendingReferences?: (files: File[]) => Promise<WorkbenchReferenceInput[]>
   resetKey?: string | null
+  variant?: 'default' | 'canvas'
 }
 
 export function BackendControlPanel({
@@ -59,6 +69,7 @@ export function BackendControlPanel({
   modelStatus,
   models,
   imageType: controlledImageType,
+  projectId,
   prompt: controlledPrompt,
   draft,
   referenceToAdd,
@@ -68,10 +79,12 @@ export function BackendControlPanel({
   onGenerate,
   onError,
   onRefreshModels,
+  onOpenModelSettings,
   onReferenceAdded,
   onEditSourceRemoved,
   onSavePendingReferences,
   resetKey,
+  variant = 'default',
 }: BackendControlPanelProps) {
   const [internalPrompt, setInternalPrompt] = useState('')
   const [modelId, setModelId] = useState('')
@@ -81,7 +94,9 @@ export function BackendControlPanel({
   const [internalImageType, setInternalImageType] = useState<WorkbenchImageType>(DEFAULT_WORKBENCH_IMAGE_TYPE)
   const [imageCount, setImageCount] = useState<ImageCount>(1)
   const [references, setReferences] = useState<WorkbenchReferenceInput[]>([])
+  const [canvasSection, setCanvasSection] = useState<CanvasControlSection>('prompt')
   const previousResetKey = useRef(resetKey)
+  const canvasTabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const setImageTypeRef = useRef(onImageTypeChange ?? setInternalImageType)
   const setPromptRef = useRef(onPromptChange ?? setInternalPrompt)
   const selectedModel = useMemo(() => models.find((model) => model.id === modelId) ?? null, [modelId, models])
@@ -164,6 +179,18 @@ export function BackendControlPanel({
   }, [selectedModel])
 
   useEffect(() => {
+    if (variant === 'canvas' && isSelectedModelUnavailable) {
+      setCanvasSection('settings')
+    }
+  }, [isSelectedModelUnavailable, variant])
+
+  useEffect(() => {
+    if (variant === 'canvas' && editSourceReference) {
+      setCanvasSection('references')
+    }
+  }, [editSourceReference, variant])
+
+  useEffect(() => {
     if (!referenceToAdd) {
       return
     }
@@ -203,6 +230,289 @@ export function BackendControlPanel({
   const workbenchInput = selectedModel ? buildCurrentWorkbenchInput(selectedModel, references) : null
 
   const canSubmit = Boolean(workbenchInput) && !isSelectedModelUnavailable && !isGenerating && (!editSourceReference || selectedModel?.supportsEdit === true)
+  const canvasReferenceCount = references.length + (editSourceReference ? 1 : 0)
+  const canvasParameterSummary = selectedModel
+    ? `${selectedModel.displayName} · ${size ? labelForSizePreset(size) : '自动比例'} · ${imageCount} 张`
+    : '模型待选择'
+
+  const handleCanvasTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    let nextIndex: number
+
+    if (event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % CANVAS_CONTROL_SECTIONS.length
+    } else if (event.key === 'ArrowLeft') {
+      nextIndex = (currentIndex - 1 + CANVAS_CONTROL_SECTIONS.length) % CANVAS_CONTROL_SECTIONS.length
+    } else if (event.key === 'Home') {
+      nextIndex = 0
+    } else if (event.key === 'End') {
+      nextIndex = CANVAS_CONTROL_SECTIONS.length - 1
+    } else {
+      return
+    }
+
+    event.preventDefault()
+    setCanvasSection(CANVAS_CONTROL_SECTIONS[nextIndex].value)
+    canvasTabRefs.current[nextIndex]?.focus()
+  }
+
+  if (variant === 'canvas') {
+    return (
+      <aside className="canvas-control-panel">
+        <form
+          className="canvas-control-form"
+          data-can-submit={canSubmit ? 'true' : 'false'}
+          id="canvas-generation-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!selectedModel) {
+              setCanvasSection('settings')
+              onError('请先选择可用模型。')
+              return
+            }
+            if (!canSubmit) {
+              if (isSelectedModelUnavailable) {
+                setCanvasSection('settings')
+                onError('所选模型当前不可用，请刷新模型后重新选择。')
+              }
+              return
+            }
+            void submitGeneration(selectedModel)
+          }}
+        >
+          <label className="sr-only" htmlFor="workbench-image-type-accessibility">图片类型</label>
+          <select
+            className="sr-only"
+            id="workbench-image-type-accessibility"
+            onChange={(event) => setImageType(normalizeWorkbenchImageType(event.target.value))}
+            tabIndex={-1}
+            value={imageType}
+          >
+            {WORKBENCH_IMAGE_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+
+          <div aria-label="创作参数分区" className="canvas-control-tabs" role="tablist">
+            {CANVAS_CONTROL_SECTIONS.map((section, index) => {
+              const isSelected = canvasSection === section.value
+              const meta = section.value === 'references' && canvasReferenceCount > 0
+                ? String(canvasReferenceCount)
+                : section.value === 'settings' && !selectedModel
+                  ? '待选'
+                  : null
+
+              return (
+                <button
+                  aria-label={section.label}
+                  aria-controls={`canvas-control-panel-${section.value}`}
+                  aria-selected={isSelected}
+                  className={`canvas-control-tab ${isSelected ? 'is-selected' : ''}`}
+                  id={`canvas-control-tab-${section.value}`}
+                  key={section.value}
+                  onClick={() => setCanvasSection(section.value)}
+                  onKeyDown={(event) => handleCanvasTabKeyDown(event, index)}
+                  ref={(element) => {
+                    canvasTabRefs.current[index] = element
+                  }}
+                  role="tab"
+                  tabIndex={isSelected ? 0 : -1}
+                  type="button"
+                >
+                  <span>{section.label}</span>
+                  {meta ? <span aria-hidden="true" className="canvas-control-tab-meta">{meta}</span> : null}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="canvas-control-panes">
+            <section
+              aria-labelledby="canvas-control-tab-prompt"
+              className="canvas-control-pane"
+              hidden={canvasSection !== 'prompt'}
+              id="canvas-control-panel-prompt"
+              role="tabpanel"
+              tabIndex={0}
+            >
+              <PromptEditor
+                disabled={isGenerating}
+                imageType={imageType}
+                onChange={setPrompt}
+                onError={onError}
+                projectId={projectId}
+                value={prompt}
+                variant="compact"
+              />
+
+              <button
+                className="canvas-parameter-summary"
+                onClick={() => setCanvasSection('settings')}
+                title={canvasParameterSummary}
+                type="button"
+              >
+                <span>
+                  <span className="block text-xs font-semibold text-slate-200">当前生成参数</span>
+                  <span className="mt-1 block truncate text-[11px] text-slate-400">{canvasParameterSummary}</span>
+                </span>
+                <span className="shrink-0 text-xs font-semibold text-amazon-400">调整</span>
+              </button>
+            </section>
+
+            <section
+              aria-labelledby="canvas-control-tab-references"
+              className="canvas-control-pane"
+              hidden={canvasSection !== 'references'}
+              id="canvas-control-panel-references"
+              role="tabpanel"
+              tabIndex={0}
+            >
+              {!selectedModel || selectedModel.supportsEdit || editSourceReference ? (
+                <ImageDropzone
+                  allowUpload={!selectedModel || selectedModel.supportsEdit}
+                  availableReferences={availableReferences}
+                  disabled={isGenerating || Boolean(selectedModel && !selectedModel.supportsEdit)}
+                  editSourceReference={editSourceReference}
+                  maxReferences={!selectedModel || selectedModel.supportsMultiReference ? undefined : 1}
+                  onChange={setReferences}
+                  onError={onError}
+                  onEditSourceRemoved={onEditSourceRemoved}
+                  references={references}
+                  variant="canvas"
+                />
+              ) : (
+                <section>
+                  <h3 className="text-sm font-semibold text-white">参考素材</h3>
+                  <p className="mt-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-3 text-xs leading-5 text-slate-400">
+                    当前模型不支持参考图，可在参数中切换模型。
+                  </p>
+                </section>
+              )}
+
+              {references.some((reference) => reference.kind === 'pending') ? (
+                <Button disabled={isGenerating || !onSavePendingReferences} onClick={() => void savePendingReferences()} variant="secondary">
+                  保存为产品参考图
+                </Button>
+              ) : null}
+            </section>
+
+            <section
+              aria-labelledby="canvas-control-tab-settings"
+              className="canvas-control-pane canvas-control-pane-settings"
+              hidden={canvasSection !== 'settings'}
+              id="canvas-control-panel-settings"
+              role="tabpanel"
+              tabIndex={0}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">生成参数</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">仅显示当前模型支持的选项</p>
+                </div>
+                <button
+                  aria-label="刷新模型"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-white disabled:text-slate-600"
+                  disabled={modelStatus === 'loading'}
+                  onClick={onRefreshModels}
+                  type="button"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${modelStatus === 'loading' ? 'animate-spin' : ''}`} />
+                  刷新
+                </button>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-400" htmlFor="backend-model-id">模型</label>
+                  <select
+                    className="canvas-dark-field"
+                    disabled={isGenerating || modelStatus === 'loading' || models.length === 0}
+                    id="backend-model-id"
+                    onChange={(event) => setModelId(event.target.value)}
+                    value={selectedModel?.id ?? ''}
+                  >
+                    {!selectedModel ? <option value="">请选择模型</option> : null}
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>
+                    ))}
+                  </select>
+                  {models.length === 0 ? (
+                    onOpenModelSettings ? (
+                      <button
+                        className="inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-amazon-500/35 bg-amazon-500/10 px-3 text-xs font-semibold text-amazon-400 transition hover:bg-amazon-500/15"
+                        onClick={onOpenModelSettings}
+                        type="button"
+                      >
+                        配置可用模型
+                      </button>
+                    ) : (
+                      <p className="text-xs leading-5 text-slate-500">当前没有可用模型，请联系管理员完成配置。</p>
+                    )
+                  ) : null}
+                </div>
+
+              {isSelectedModelUnavailable ? (
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200" role="alert">
+                  所选模型当前不可用，请刷新模型后重新选择。
+                </div>
+              ) : null}
+
+              {selectedModel ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {supportedSizeOptions.length > 0 ? (
+                    <CanvasSelectField
+                      disabled={isGenerating}
+                      getOptionLabel={labelForSizePreset}
+                      id="image-size"
+                      label={parameterLabels.sizeLabel}
+                      onChange={setSize}
+                      options={supportedSizeOptions}
+                      value={size}
+                    />
+                  ) : null}
+                  {supportedQualityOptions.length > 0 ? (
+                    <CanvasSelectField
+                      disabled={isGenerating}
+                      getOptionLabel={(value) => labelForQualityPreset(value, { modelName: selectedModel.modelName })}
+                      id="image-quality"
+                      label={parameterLabels.qualityLabel}
+                      onChange={setQuality}
+                      options={supportedQualityOptions}
+                      value={quality}
+                    />
+                  ) : null}
+                  {selectedModel.supportedOutputFormats.length > 0 ? (
+                    <CanvasSelectField
+                      disabled={isGenerating}
+                      id="image-output-format"
+                      label="输出格式"
+                      onChange={setOutputFormat}
+                      options={selectedModel.supportedOutputFormats}
+                      value={outputFormat}
+                    />
+                  ) : null}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-400" htmlFor="backend-image-count">生成张数</label>
+                    <select
+                      className="canvas-dark-field"
+                      disabled={isGenerating || !selectedModel.supportsN || selectedModel.maxOutputCount <= 1}
+                      id="backend-image-count"
+                      onChange={(event) => setImageCount(Number(event.target.value) as ImageCount)}
+                      value={imageCount}
+                    >
+                      {getImageCountOptions(selectedModel).map((option) => (
+                        <option key={option} value={option}>{option} 张</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : null}
+              </div>
+            </section>
+          </div>
+        </form>
+      </aside>
+    )
+  }
 
   return (
     <PanelShell
@@ -254,7 +564,7 @@ export function BackendControlPanel({
         </div>
       ) : null}
 
-      <PromptEditor disabled={isGenerating} imageType={imageType} onChange={setPrompt} onError={onError} value={prompt} />
+      <PromptEditor disabled={isGenerating} imageType={imageType} onChange={setPrompt} onError={onError} projectId={projectId} value={prompt} />
 
       <section className="grid gap-4">
         <div className="space-y-2">
@@ -317,7 +627,7 @@ export function BackendControlPanel({
             {supportedQualityOptions.length > 0 ? (
               <SelectField
                 disabled={isGenerating}
-                getOptionLabel={labelForQualityPreset}
+                getOptionLabel={(value) => labelForQualityPreset(value, { modelName: selectedModel.modelName })}
                 id="image-quality"
                 label={parameterLabels.qualityLabel}
                 onChange={setQuality}
@@ -438,6 +748,25 @@ function SelectField({ disabled, getOptionLabel = identityOptionLabel, id, label
         ))}
       </select>
     </div>
+  )
+}
+
+function CanvasSelectField({ disabled, getOptionLabel = identityOptionLabel, id, label, options, value, onChange }: SelectFieldProps) {
+  return (
+    <label className="grid gap-1.5 text-xs font-semibold text-slate-400" htmlFor={id}>
+      {label}
+      <select
+        className="canvas-dark-field"
+        disabled={disabled}
+        id={id}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>{getOptionLabel(option)}</option>
+        ))}
+      </select>
+    </label>
   )
 }
 

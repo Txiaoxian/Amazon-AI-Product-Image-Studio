@@ -109,9 +109,10 @@ describe('legacy frontend retirement', () => {
   it('keeps sensitive storage, Provider authorization, and polling out of the production graph', () => {
     const source = readProductionSources(resolve(process.cwd(), 'src/App.tsx'))
 
-    expect(source).not.toMatch(/\blocalStorage\b|\bsessionStorage\b/)
+    // 登录页允许记住邮箱，但不得把密码、令牌或 Provider 凭据写入浏览器存储。
+    expect(source).toContain('REMEMBERED_LOGIN_EMAIL_KEY')
     expect(source).not.toMatch(/\bindexedDB\b/)
-    expect(source).not.toMatch(/(?:localStorage|sessionStorage)\s*\.[\s\S]{0,120}(?:apiKey|apiUrl|provider)/i)
+    expect(source).not.toMatch(/(?:localStorage|sessionStorage)\s*\.[\s\S]{0,120}(?:apiKey|apiUrl|provider|password|csrf|token)/i)
     expect(source).not.toMatch(/Authorization\s*:\s*['"`]Bearer|headers\s*:\s*{[^}]*Authorization/i)
     expect(source).not.toMatch(/\bsetInterval\b|\bsetTimeout\b/)
     expect(source).not.toMatch(/api\.openai\.com|generativelanguage\.googleapis\.com|api\.tutujin\.(?:app|com)|api\.flymux\.com/)
@@ -124,7 +125,7 @@ describe('legacy frontend retirement', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '打开设置' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看旧本地历史' })).not.toBeInTheDocument()
     expect(screen.queryByText('API Key')).not.toBeInTheDocument()
@@ -152,7 +153,7 @@ describe('legacy frontend retirement', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Admin User')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开账户菜单' })).toBeInTheDocument()
     expect(screen.queryByText('legacy-openai-key')).not.toBeInTheDocument()
     expect(screen.queryByText('legacy-gemini-key')).not.toBeInTheDocument()
   })

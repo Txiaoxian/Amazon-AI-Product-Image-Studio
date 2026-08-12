@@ -53,6 +53,8 @@ assert_contains "${SCRIPT_DIR}/build-package.sh" 'DIRECT_IMAGE_ARCHIVE=' \
   '构建脚本必须在输出根目录生成可直接导入极空间的镜像包'
 assert_contains "${SCRIPT_DIR}/build-package.sh" 'shasum -a 256 "\$\{IMAGE_ARCHIVE_NAME\}"' \
   'Docker 镜像校验文件必须使用可跨机器验证的相对文件名'
+assert_contains "${SCRIPT_DIR}/build-package.sh" 'npm test -- --no-file-parallelism' \
+  'Docker Desktop 中的前端发布测试必须串行运行，避免资源争用导致超时'
 assert_contains "${SCRIPT_DIR}/docker-compose.yml" '^[[:space:]]+studio:' \
   'Compose 必须只声明 studio 应用服务'
 assert_contains "${SCRIPT_DIR}/docker-compose.yml" '(target:[[:space:]]*/data|:/data([[:space:]]|$))' \

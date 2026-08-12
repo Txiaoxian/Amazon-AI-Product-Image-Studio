@@ -187,6 +187,7 @@ describe('admin observability and settings API wrappers', () => {
         pageSize: 20,
         projectId: 'project_1',
         userId: 'user_1',
+        imageType: 'MAIN',
         status: 'SUCCESS',
         requestId: 'provider_request_1',
       }),
@@ -197,7 +198,7 @@ describe('admin observability and settings API wrappers', () => {
       '/api/v1/admin/usage/summary?pageNum=1&pageSize=20&sortBy=createdAt&sortOrder=desc&createdAtFrom=2026-05-18&createdAtTo=2026-05-19&taskId=task_1&userId=user_1&projectId=project_1&providerId=provider_1&modelId=model_1&dimension=tenant',
       '/api/v1/admin/usage/records?pageNum=2&pageSize=10&createdAtFrom=2026-05-18&createdAtTo=2026-05-19&taskId=task_1&userId=user_1&projectId=project_1&providerId=provider_1&modelId=model_1',
       '/api/v1/admin/operation-logs?pageNum=1&pageSize=20&actorUserId=user_1&action=provider.test&resourceType=provider&resourceId=provider_1',
-      '/api/v1/admin/api-call-logs?pageNum=1&pageSize=20&userId=user_1&projectId=project_1&status=SUCCESS&requestId=provider_request_1',
+      '/api/v1/admin/api-call-logs?pageNum=1&pageSize=20&userId=user_1&projectId=project_1&imageType=MAIN&status=SUCCESS&requestId=provider_request_1',
       '/api/v1/admin/api-call-logs/api_log_1%2Fwith%20slash',
     ])
     for (const [, init] of fetchImpl.mock.calls) {
